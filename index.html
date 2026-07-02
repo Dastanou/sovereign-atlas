@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Project Sovereign — World Editor</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<header id="topbar">
+  <div class="brand">⟁ Sovereign Atlas</div>
+
+  <div class="topgroup">
+    <label class="mini">World</label>
+    <input id="worldName" class="txt" type="text" title="World name" />
+  </div>
+
+  <div class="topgroup">
+    <label class="mini">Age</label>
+    <select id="eraSelect" class="sel" title="Current age"></select>
+    <button id="manageEras" class="btn ghost" title="Manage ages">⚙</button>
+  </div>
+
+  <!-- Map-mode switching lives in the bottom-right button bar (#mapmodeBar);
+       this select is kept hidden only so existing code can read/sync it. -->
+  <div class="topgroup viewonly" id="mapmodeGroup" style="display:none">
+    <label class="mini">Map mode</label>
+    <select id="mapmode" class="sel" title="Map mode">
+      <option value="political">Political (realms)</option>
+      <optgroup label="Land &amp; economy">
+        <option value="terrain">Terrain</option>
+        <option value="resource">Resource</option>
+        <option value="settlement">Settlements</option>
+      </optgroup>
+      <optgroup label="People (dominant)">
+        <option value="religion">Religion (dominant)</option>
+        <option value="culture">Culture (dominant)</option>
+        <option value="race">Race (dominant)</option>
+        <option value="language">Language (dominant)</option>
+      </optgroup>
+      <optgroup label="Society">
+        <option value="population">Population</option>
+      </optgroup>
+      <optgroup label="Other">
+        <option value="imported">Imported colors</option>
+      </optgroup>
+    </select>
+  </div>
+
+  <!-- VIEW-mode tools -->
+  <div class="topgroup tools viewonly">
+    <label class="mini">Tool</label>
+    <button class="btn tool active" data-tool="select" title="Select / pan">▣ Select</button>
+    <button class="btn tool" data-tool="paint" title="Paint the current map mode's value onto provinces">🖌 Paint</button>
+  </div>
+
+  <!-- EDIT-mode (map drawing) tools -->
+  <div class="topgroup tools editonly">
+    <label class="mini">Draw</label>
+    <button class="btn tool" data-tool="select" title="Select / pan">▣ Select</button>
+    <button class="btn tool" data-tool="move" title="Move a whole province (snaps to neighbors)">✥ Move</button>
+    <button class="btn tool" data-tool="draw" title="Draw a new province (corners snap to neighbors)">✎ Province</button>
+    <button class="btn tool" data-tool="nodes" title="Reshape the selected province">✦ Nodes</button>
+    <button class="btn tool" data-tool="river" title="Draw a river (a line; Enter/double-click to finish)">〜 River</button>
+    <button class="btn tool" data-tool="lake" title="Draw a lake (a filled water polygon)">💧 Lake</button>
+    <button class="btn tool" data-tool="conform" title="Paint a shape; provinces straddling it conform to fit inside it">◇ Conform</button>
+    <button class="btn tool" data-tool="textlabel" title="Place a custom text label (drag to move, click to edit)">🅣 Label</button>
+  </div>
+
+  <div class="topgroup right">
+    <span id="worldPop" class="chip" title="Total population across the whole world">👥 0</span>
+    <button id="toggleTilt" class="btn ghost viewonly" title="Toggle floating 3D tilt">⊿ Tilt</button>
+    <button id="worldView" class="btn ghost" title="Recenter and fit the whole world in view">◎ Recenter</button>
+    <button id="btnNames" class="btn ghost" title="Show/hide landmass names (drag a name to move it)">🏷 Names</button>
+    <button id="btnPanels" class="btn ghost" title="Hide/show the side info panels for a clean map view">⇔ Panels</button>
+    <button id="btnPing" class="btn ghost" title="Ping / annotate the map — draw and drop pins to mark places">📍 Ping</button>
+    <button id="btnEdit" class="btn ghost" title="Switch between viewing and map-drawing tools">🛠 Edit Map</button>
+    <button class="btn ghost" id="btnUndo" title="Undo (Ctrl+Z)">↶</button>
+    <button class="btn ghost" id="btnRedo" title="Redo (Ctrl+Y)">↷</button>
+    <button id="btnLists" class="btn ghost viewonly" title="Manage cultures, religions, races, etc.">☰ Lists</button>
+    <button id="btnSave" class="btn primary" title="Save world to disk">💾 Save</button>
+    <button id="btnMenu" class="btn ghost" title="Worlds / import / export">⋯</button>
+    <button id="btnQuit" class="btn ghost" title="Save and close the app" style="color:var(--bad);border-color:#e6b3ad">⏻ Quit</button>
+  </div>
+</header>
+
+<div id="layout">
+  <!-- LEFT: continents + realms -->
+  <aside id="left">
+    <section class="pane" id="paneContinents">
+      <div class="paneHead">
+        <span>Continents</span>
+        <button id="addContinent" class="btn tiny" title="Add a floating continent">＋</button>
+      </div>
+      <div id="continentList" class="list"></div>
+    </section>
+
+    <section class="pane grow">
+      <div class="paneHead">
+        <span>Realms</span>
+        <button id="addRealm" class="btn tiny" title="Create a realm and start painting">＋ New</button>
+      </div>
+      <input id="realmSearch" class="searchbox" type="text" placeholder="Search realms…" />
+      <div id="realmList" class="list"></div>
+    </section>
+
+    <section class="pane">
+      <div class="paneHead"><span>Legend</span></div>
+      <div id="legend" class="legend"></div>
+    </section>
+  </aside>
+
+  <!-- CENTER: map -->
+  <main id="stage">
+    <div id="mapWrap">
+      <canvas id="map"></canvas>
+    </div>
+    <div id="hint" class="hint"></div>
+    <div id="zoomctl">
+      <button id="zin" class="btn tiny">＋</button>
+      <button id="zout" class="btn tiny">－</button>
+    </div>
+    <div id="mapmodeBar" title="Map modes"></div>
+    <div id="pingBar" class="hidden"></div>
+  </main>
+
+  <!-- RIGHT: inspector -->
+  <aside id="right">
+    <div id="inspector">
+      <div class="empty">Select a province or realm to edit, or use the <b>Draw</b> tool to create a province.</div>
+    </div>
+  </aside>
+</div>
+
+<!-- modal host -->
+<div id="modalHost" class="hidden"></div>
+
+<script>window.SOVEREIGN_VIEWER=true;</script>
+<script src="app.js"></script>
+</body>
+</html>

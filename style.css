@@ -1,0 +1,198 @@
+:root{
+  /* Light "Pastel Graphics for Anbennar"-inspired theme */
+  --bg:#e9eef3; --panel:#ffffff; --panel2:#f1f4f9; --line:#d6dde8;
+  --ink:#2b3038; --muted:#71798a; --accent:#6f8fc9; --accent2:#a98fd0;
+  --good:#69c2a0; --warn:#e0b24e; --bad:#d8746c;
+  --sea1:#dbe9f2; --sea2:#cfe0ee;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{
+  font:14px/1.45 system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+  background:var(--bg); color:var(--ink); overflow:hidden;
+  display:flex; flex-direction:column;
+}
+button{font:inherit;color:inherit;cursor:pointer}
+input,select,textarea{font:inherit}
+
+/* ---------- top bar ---------- */
+#topbar{
+  display:flex; align-items:center; gap:12px 14px; padding:8px 12px;
+  background:linear-gradient(180deg,#ffffff,#eef2f7);
+  border-bottom:1px solid var(--line); flex:0 0 auto; flex-wrap:wrap;
+  box-shadow:0 1px 4px #0000000d;
+}
+.brand{font-weight:700; letter-spacing:.5px; color:var(--accent); font-size:16px}
+.topgroup{display:flex; align-items:center; gap:6px}
+.topgroup.right{margin-left:auto}
+.topgroup.tools{gap:4px}
+.mini{font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px}
+
+.btn{
+  background:#fff; border:1px solid var(--line); color:var(--ink);
+  padding:6px 10px; border-radius:8px; line-height:1;
+}
+.btn:hover{border-color:var(--accent)}
+.btn.primary{background:var(--accent); color:#fff; border-color:var(--accent); font-weight:600}
+.btn.ghost{background:transparent}
+.btn.tiny{padding:2px 8px; font-size:13px; border-radius:6px}
+.btn.tool.active{background:var(--accent); color:#fff; border-color:var(--accent); font-weight:600}
+/* clearly-visible "toggled on" state for topbar toggles (Names, Panels) */
+.btn.on{background:#3f5480; color:#fff; border-color:#3f5480; font-weight:600}
+.chip{background:var(--panel2); border:1px solid var(--line); padding:5px 11px;
+  border-radius:20px; font-weight:600; font-size:13px; white-space:nowrap}
+/* View vs Edit map screens */
+.editonly{display:none}
+body.editing .editonly{display:inline-flex; align-items:center}
+body.editing .topgroup.editonly{display:flex}
+body.editing .viewonly{display:none !important}
+body.editing #btnEdit{background:var(--accent); color:#fff; border-color:var(--accent); font-weight:600}
+body.editing #topbar{background:linear-gradient(180deg,#eef4ec,#e3ece0)}
+.txt,.sel{
+  background:#fff; border:1px solid var(--line); color:var(--ink);
+  padding:6px 8px; border-radius:8px;
+}
+.txt{width:150px}
+
+/* ---------- layout ---------- */
+#layout{display:flex; flex:1 1 auto; min-height:0}
+#left,#right{width:280px; background:var(--panel); border-right:1px solid var(--line);
+  display:flex; flex-direction:column; overflow:hidden}
+#right{border-right:none; border-left:1px solid var(--line); width:340px}
+#stage{flex:1; position:relative; overflow:hidden;
+  background:radial-gradient(1200px 800px at 50% 35%, #eaf3fa 0%, var(--sea1) 55%, var(--sea2) 100%);}
+
+.pane{border-bottom:1px solid var(--line); display:flex; flex-direction:column; min-height:0}
+/* share the sidebar height so each list scrolls inside its own pane */
+#left > .pane:first-child{flex:1 1 0}      /* Continents */
+#left > .pane.grow{flex:2 1 0}             /* Realms (bigger share) */
+#left > .pane:last-child{flex:0 0 auto}    /* Legend (fixed) */
+.paneHead{flex:0 0 auto; display:flex; align-items:center; justify-content:space-between;
+  padding:8px 10px; font-weight:600; font-size:12px; text-transform:uppercase;
+  letter-spacing:.5px; color:var(--muted)}
+.searchbox{flex:0 0 auto}
+.list{flex:1 1 auto; min-height:0; overflow:auto; padding:4px 6px 8px}
+.searchbox{margin:0 8px 6px; width:calc(100% - 16px); background:var(--panel2);
+  border:1px solid var(--line); color:var(--ink); padding:5px 8px; border-radius:7px}
+
+.row{display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:8px; cursor:pointer}
+.row:hover{background:var(--panel2)}
+.row.sel{background:#dfe8f7; outline:1px solid var(--accent)}
+.swatch{width:14px; height:14px; border-radius:4px; border:1px solid #00000022; flex:none}
+.row .name{flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.row .sub{color:var(--muted); font-size:12px}
+
+.legend{padding:8px 10px; overflow:auto; max-height:170px}
+.legend .li{display:flex; align-items:center; gap:8px; padding:2px 0; font-size:13px}
+
+/* ---------- map ---------- */
+#mapWrap{position:absolute; inset:0; perspective:1400px}
+#map{width:100%; height:100%; display:block; touch-action:none}
+#map.tilt{transform:rotateX(34deg) scale(.92); transform-origin:50% 60%}
+#map.draw{cursor:crosshair}
+#map.paint{cursor:cell}
+
+.hint{position:absolute; left:50%; bottom:14px; transform:translateX(-50%);
+  background:#ffffffe6; border:1px solid var(--line); padding:6px 12px; border-radius:20px;
+  color:var(--muted); font-size:12px; pointer-events:none; opacity:0; transition:opacity .2s;
+  box-shadow:0 2px 8px #0000001a}
+.hint.show{opacity:1}
+#zoomctl{position:absolute; left:12px; bottom:12px; display:flex; flex-direction:column; gap:6px}
+
+/* map-mode button bar, bottom-right of the map — a single horizontal row */
+#mapmodeBar{position:absolute; right:12px; bottom:12px; display:flex;
+  flex-direction:row; gap:6px}
+.mmbtn{position:relative; width:40px; height:40px; font-size:18px; background:#ffffffee;
+  border:1px solid var(--line); border-radius:10px; display:flex; align-items:center;
+  justify-content:center; box-shadow:0 2px 7px #0000001c; transition:transform .06s}
+.mmbtn:hover{border-color:var(--accent); transform:translateY(-1px)}
+.mmbtn.active{background:var(--accent); color:#fff; border-color:var(--accent)}
+.mmkey{position:absolute; top:1px; right:3px; font-size:9px; font-weight:700;
+  color:var(--muted); line-height:1}
+.mmbtn.active .mmkey{color:#eaf0fb}
+
+/* clean map view — hide the side info panels */
+body.panels-hidden #left, body.panels-hidden #right{display:none}
+
+/* ping / annotation toolbar (top-centre of the map) */
+#map.pinging{cursor:crosshair}
+#pingBar{position:absolute; top:12px; left:50%; transform:translateX(-50%); display:flex;
+  gap:10px; align-items:center; background:#fffffff2; border:1px solid var(--line);
+  border-radius:12px; padding:6px 10px; box-shadow:0 4px 16px #0000001f; flex-wrap:wrap; z-index:5}
+#pingBar.hidden{display:none}
+.pgrp{display:flex; gap:5px; align-items:center}
+.pbtn{width:32px; height:32px; background:#fff; border:1px solid var(--line); border-radius:8px;
+  display:flex; align-items:center; justify-content:center; font-size:15px}
+.pbtn:hover{border-color:var(--accent)}
+.pbtn.active{background:var(--accent); color:#fff; border-color:var(--accent)}
+.psw{width:20px; height:20px; border-radius:6px; border:2px solid #fff; box-shadow:0 0 0 1px var(--line); cursor:pointer}
+.psw.active{box-shadow:0 0 0 2px var(--ink)}
+#pingBar #pcolor{width:30px; height:30px; padding:1px; border:1px solid var(--line); border-radius:8px; background:#fff}
+#pingBar #pwidth{width:90px}
+
+/* ---------- inspector ---------- */
+#inspector{overflow:auto; height:100%; padding:12px}
+.empty{color:var(--muted); padding:24px 10px; text-align:center; line-height:1.6}
+.insTitle{display:flex; align-items:center; gap:8px; margin:0 0 10px}
+.insTitle input{flex:1; font-size:16px; font-weight:600}
+.field{margin:8px 0}
+.field>label{display:block; font-size:11px; text-transform:uppercase; letter-spacing:.5px;
+  color:var(--muted); margin-bottom:3px}
+.field input,.field select,.field textarea{width:100%; background:#fff;
+  border:1px solid var(--line); color:var(--ink); padding:7px 8px; border-radius:8px}
+.field textarea{resize:vertical; min-height:54px}
+.field2{display:flex; gap:8px}
+.field2>div{flex:1}
+.sectionH{margin:16px 0 6px; font-size:12px; text-transform:uppercase; letter-spacing:.5px;
+  color:var(--accent); border-bottom:1px solid var(--line); padding-bottom:4px}
+.tag{display:inline-flex; align-items:center; gap:6px; background:var(--panel2);
+  border:1px solid var(--line); padding:3px 8px; border-radius:20px; margin:3px 4px 0 0; font-size:13px}
+.tag b{font-weight:600}
+.tag .x{color:var(--bad); cursor:pointer}
+.breakdown .brow{display:flex; gap:6px; align-items:center; margin:4px 0}
+.breakdown .brow select{flex:1}
+.breakdown .brow input{width:64px}
+.breakdown .brow .x{color:var(--bad); cursor:pointer; padding:0 4px}
+.bar{height:8px; border-radius:6px; background:var(--panel2); overflow:hidden; display:flex; margin-top:4px}
+.bar span{height:100%}
+.hist .h{border-left:2px solid var(--accent); padding:4px 0 4px 8px; margin:6px 0}
+.hist .h .meta{font-size:11px; color:var(--muted)}
+.btnrow{display:flex; gap:8px; margin-top:10px; flex-wrap:wrap}
+.danger{color:var(--bad); border-color:#e6b3ad}
+.note{color:var(--muted); font-size:12px; margin-top:6px}
+
+/* ---------- modal ---------- */
+#modalHost{position:fixed; inset:0; background:#2b30385c; display:flex;
+  align-items:center; justify-content:center; z-index:50; padding:20px}
+#modalHost.hidden{display:none}
+.modal{background:var(--panel); border:1px solid var(--line); border-radius:14px;
+  width:min(720px,96vw); max-height:88vh; overflow:auto; padding:18px 20px;
+  box-shadow:0 20px 60px #00000033}
+.modal h2{margin:0 0 12px; font-size:18px}
+.modal .close{position:sticky; top:0; float:right}
+.gridlists{display:grid; grid-template-columns:1fr 1fr; gap:14px}
+.listcard{background:var(--panel2); border:1px solid var(--line); border-radius:10px; padding:10px}
+.listcard h3{margin:0 0 8px; font-size:13px; text-transform:uppercase; letter-spacing:.5px; color:var(--accent)}
+.listcard .li{display:flex; gap:6px; align-items:center; margin:3px 0}
+.listcard .li input{flex:1; background:#fff; border:1px solid var(--line); color:var(--ink); padding:4px 6px; border-radius:6px}
+.listcard .li .x{color:var(--bad); cursor:pointer}
+/* population pop-groups */
+.popRow{border:1px solid var(--line); border-radius:8px; padding:6px; margin:6px 0; background:var(--panel2)}
+.popHead{display:flex; gap:6px; align-items:center}
+.popHead .psize{flex:1; background:#fff; border:1px solid var(--line); color:var(--ink); padding:5px 7px; border-radius:6px}
+.popHead .x{color:var(--bad); cursor:pointer; padding:0 4px}
+.popAxes{display:grid; grid-template-columns:1fr 1fr; gap:4px; margin-top:5px}
+.popAxes select{width:100%; min-width:0; background:#fff; border:1px solid var(--line); color:var(--ink); padding:4px 5px; border-radius:6px; font-size:12px}
+
+/* clickable world-population breakdown dropdown */
+#worldPop{cursor:pointer}
+#popPanel{position:fixed; z-index:60; background:var(--panel); border:1px solid var(--line);
+  border-radius:12px; box-shadow:0 14px 44px #00000030; padding:12px 14px; width:300px; max-height:70vh; overflow:auto}
+#popPanel h4{margin:8px 0 4px; font-size:11px; text-transform:uppercase; letter-spacing:.5px; color:var(--accent)}
+#popPanel .prow{display:flex; align-items:center; gap:8px; margin:3px 0; font-size:13px}
+#popPanel .prow .sw{width:11px; height:11px; border-radius:3px; flex:none}
+#popPanel .prow .nm{flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+#popPanel .prow .vv{color:var(--muted); font-size:12px}
+
+.hidden{display:none}
+.kbd{background:var(--panel2); border:1px solid var(--line); border-radius:5px; padding:1px 6px; font-size:12px}
