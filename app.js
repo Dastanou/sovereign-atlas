@@ -788,7 +788,7 @@ function drawFrame(){
   // zoomed out → realm / region names; zoomed in → province names.
   const KEY_SZ=6;                          // capital/admin marker size (small, fixed)
   const PROV_CAP=16;                       // max province-name font (px) — keeps them uniform
-  const nameZoom = 72/_medProvW;
+  const nameZoom = 58/_medProvW;           // lower = province names appear earlier when zooming in
   const band = nameZoom*0.3;               // fade width around the threshold
   const provAlpha = clamp01((s-(nameZoom-band))/(2*band));
   const regionAlpha = 1-provAlpha;
@@ -2374,8 +2374,15 @@ async function publishViewer(){
   try{
     const res=await fetch("/api/publish",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({folder:_viewerPublishDir,world})});
     const j=await res.json();
-    if(j.ok)flash("Published player viewer → "+j.folder+". Upload that folder to any static host.");
-    else flash("Error: "+(j.error||"publish failed"));
+    if(!j.ok){flash("Error: "+(j.error||"publish failed"));return;}
+    flash("Published player viewer → "+j.folder);
+    if(confirm("Files written. Push to GitHub now (players see the update in ~1 min)?")){
+      flash("Pushing to GitHub…");
+      const gr=await fetch("/api/gitpush",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({folder:_viewerPublishDir,message:"Update viewer "+tstamp()})});
+      const gj=await gr.json();
+      if(gj.ok) flash("Pushed to GitHub ✓ — live in ~1 minute.");
+      else alert("Publish succeeded, but the git push didn't complete:\n\n"+(gj.output||gj.error||"unknown")+"\n\nIf this is your first time, do the one-time git setup in "+_viewerPublishDir+" (see instructions), then try again.");
+    }
   }catch(e){flash("Error: "+e.message);}
 }
 async function archiveDataToDisk(){
