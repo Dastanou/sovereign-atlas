@@ -261,7 +261,12 @@ function normalize(w){
     p.pops.forEach(q=>{ if(!q.economy) q.economy = oldEcon || (r&&r.economy?r.economy:"Primitive"); });   // seed Mode of Production
     deriveProvince(p);                                          // keep population + %s in sync with pops
   });
-  w.realms.forEach(r=>{r.adminCenters=r.adminCenters||[];r.dominantLanguage=r.dominantLanguage||"";});
+  w.realms.forEach(r=>{r.adminCenters=r.adminCenters||[];r.dominantLanguage=r.dominantLanguage||"";
+    // racial administration (was single "dominantRace") + new racial military — both are race lists
+    if(!Array.isArray(r.adminRaces)) r.adminRaces = r.dominantRace ? [r.dominantRace] : [];
+    if(!Array.isArray(r.militaryRaces)) r.militaryRaces = [];
+    r.dominantRace = r.adminRaces[0] || "";   // keep the single field in sync for pop defaults/state-group logic
+  });
   w.forces=w.forces||[];   // military units
   w.forces.forEach(f=>{ if(f.scale==null)f.scale=1; });
   // army element-type library (editable in the GM screen)
@@ -2058,19 +2063,50 @@ function renderRealmView(){
   const pop=provs.reduce((a,p)=>a+(p.population||0),0);
   const cap=r.capitalId&&world.provinces.find(p=>p.id===r.capitalId);
   const admins=(r.adminCenters||[]).map(id=>world.provinces.find(p=>p.id===id)).filter(Boolean);
-  const f=(l,v)=>`<div class="field"><label>${l}</label><div>${v||"—"}</div></div>`;
+  const leader=[r.leaderTitle,r.leaderName].filter(Boolean).join(" ");
+  const row=(l,v)=>`<div class="rvRow"><span class="rvLbl">${l}</span><span class="rvVal">${v||"—"}</span></div>`;
+  const raceTags=(arr)=>(arr&&arr.length)
+    ? arr.map(x=>`<span class="rvRace"><span class="sw" style="background:${catColor('races',x)}"></span>${esc(x)}</span>`).join("")
+    : `<span class="rvVal">—</span>`;
+  const chip=(v,cls)=>`<span class="rvChip ${cls||''}">${esc(v)}</span>`;
   ins.innerHTML=`
-    <div class="insTitle" style="font-weight:700;font-size:17px"><span class="swatch" style="background:${r.color}"></span> ${esc(r.name)}</div>
-    <div class="note">${provs.length} provinces · ${pop.toLocaleString()} people</div>
-    <div class="field2">${f("Government",esc(r.government))}${f("Mode of Production",esc(r.economy))}</div>
-    <div class="field2">${f("State religion",esc(r.stateReligion))}${f("Capital",cap?esc(cap.name):"—")}</div>
-    <div class="field2">${f("Dominant culture",esc(r.dominantCulture))}${f("Dominant race",esc(r.dominantRace))}</div>
-    <div class="field2">${f("Dominant language",esc(r.dominantLanguage))}${f("Leader",esc([r.leaderTitle,r.leaderName].filter(Boolean).join(" ")))}</div>
-    ${admins.length?`<div class="field"><label>Administrative centres</label><div>${admins.map(p=>`<span class="tag">◆ ${esc(p.name)}</span>`).join(" ")}</div></div>`:""}
-    <div class="sectionH">Provinces (${provs.length})</div>
-    <div class="list">${provs.map(p=>`<div class="li pvp" data-pid="${p.id}" style="cursor:pointer;display:flex">${esc(p.name)}<span class="note" style="margin-left:auto">${(p.population||0).toLocaleString()}</span></div>`).join("")||'<div class="note">None</div>'}</div>
+    <div class="realmCard" style="--rc:${r.color}">
+      <div class="realmName">${esc(r.name)}</div>
+      <div class="rvSub">${provs.length} provinces · ${pop.toLocaleString()} people</div>
+
+      <div class="rvBlock rvGov">
+        ${row("Government", r.government?chip(r.government):"—")}
+        ${row("Mode of Production", r.economy?chip(r.economy):"—")}
+        ${row("Current leader", leader?esc(leader):"—")}
+      </div>
+
+      <div class="rvBlock rvSociety">
+        ${row("Religion", r.stateReligion?`<span class="rvDot" style="background:${catColor('religions',r.stateReligion)}"></span>${esc(r.stateReligion)}`:"—")}
+        ${row("Culture", r.dominantCulture?`<span class="rvDot" style="background:${catColor('cultures',r.dominantCulture)}"></span>${esc(r.dominantCulture)}`:"—")}
+        ${row("Language", r.dominantLanguage?`<span class="rvDot" style="background:${catColor('languages',r.dominantLanguage)}"></span>${esc(r.dominantLanguage)}`:"—")}
+      </div>
+
+      <div class="rvBlock rvRacial">
+        <div class="rvRow"><span class="rvLbl">Racial Admin</span><span class="rvVal rvRaces">${raceTags(r.adminRaces)}</span></div>
+        <div class="rvRow"><span class="rvLbl">Racial Mil.</span><span class="rvVal rvRaces">${raceTags(r.militaryRaces)}</span></div>
+      </div>
+
+      <div class="rvBlock rvGeo">
+        ${row("Capital", cap?`⭐ ${esc(cap.name)}`:"—")}
+        <div class="rvRow"><span class="rvLbl">Admin centres</span><span class="rvVal">${admins.length?admins.map(p=>`<span class="rvChip">◆ ${esc(p.name)}</span>`).join(""):"—"}</span></div>
+      </div>
+
+      <details class="rvProvinces">
+        <summary>Provinces (${provs.length})</summary>
+        <input id="rvProvSearch" class="rvSearch" type="text" placeholder="🔍 Search provinces…" autocomplete="off"/>
+        <div class="list" id="rvProvList">${provs.map(p=>`<div class="li pvp" data-pid="${p.id}" data-name="${esc((p.name||'').toLowerCase())}" style="cursor:pointer;display:flex">${esc(p.name)}<span class="note" style="margin-left:auto">${(p.population||0).toLocaleString()}</span></div>`).join("")||'<div class="note">None</div>'}</div>
+      </details>
+    </div>
   `;
   $$(".pvp").forEach(el=>el.onclick=()=>selectProvince(el.dataset.pid));
+  const srch=$("#rvProvSearch");
+  if(srch)srch.addEventListener("input",e=>{const q=e.target.value.trim().toLowerCase();
+    $$("#rvProvList .pvp").forEach(el=>{ el.style.display = (!q||el.dataset.name.includes(q))?"flex":"none"; });});
 }
 function renderContinentView(){
   const c=world.continents.find(x=>x.id===state.focusedContinent); const ins=$("#inspector");
@@ -2317,12 +2353,16 @@ function renderRealmEditor(){
       <div class="field"><label>Capital</label><select id="rcap">${capOpts}</select></div>
     </div>
     <div class="field2">
-      <div class="field"><label>Dominant culture</label><select id="rcul"><option value="">—</option>${opt(world.lists.cultures,r.dominantCulture)}</select></div>
-      <div class="field"><label>Dominant race</label><select id="rrace"><option value="">—</option>${opt(world.lists.races,r.dominantRace)}</select></div>
+      <div class="field"><label>Culture</label><select id="rcul"><option value="">—</option>${opt(world.lists.cultures,r.dominantCulture)}</select></div>
+      <div class="field"><label>Language</label><select id="rlang"><option value="">—</option>${opt(world.lists.languages,r.dominantLanguage)}</select></div>
     </div>
     <div class="field2">
-      <div class="field"><label>Dominant language</label><select id="rlang"><option value="">—</option>${opt(world.lists.languages,r.dominantLanguage)}</select></div>
-      <div class="field"></div>
+      <div class="field"><label>Racial Administration (one or more)</label>
+        <div id="radminRaces" class="raceMulti"></div>
+        <select id="radminSelRace"><option value="">＋ add race…</option>${world.lists.races.map(x=>`<option>${esc(x)}</option>`).join("")}</select></div>
+      <div class="field"><label>Racial Military (one or more)</label>
+        <div id="rmilRaces" class="raceMulti"></div>
+        <select id="rmilSelRace"><option value="">＋ add race…</option>${world.lists.races.map(x=>`<option>${esc(x)}</option>`).join("")}</select></div>
     </div>
     <div class="field2">
       <div class="field"><label>Leader title</label><input id="rltitle" value="${esc(r.leaderTitle||"")}"/></div>
@@ -2394,8 +2434,17 @@ function renderRealmEditor(){
   $("#rname").addEventListener("input",e=>{r.name=e.target.value;renderLeft();renderMap();markDirty();});
   $("#rcolor").addEventListener("input",e=>{r.color=e.target.value;renderMap();renderLeft();markDirty();});
   b("rgov",v=>r.government=v);b("recon",v=>r.economy=v);b("rrel",v=>r.stateReligion=v);
-  b("rcul",v=>r.dominantCulture=v);b("rrace",v=>r.dominantRace=v);b("rlang",v=>r.dominantLanguage=v);
+  b("rcul",v=>r.dominantCulture=v);b("rlang",v=>r.dominantLanguage=v);
   b("rltitle",v=>r.leaderTitle=v);b("rlname",v=>r.leaderName=v);
+  // multi-race pickers: Racial Administration (keeps dominantRace in sync) + Racial Military
+  const renderRaceMulti=(key,listId)=>{
+    const wrap=$("#"+listId); if(!wrap)return; const arr=r[key]||(r[key]=[]);
+    wrap.innerHTML = arr.length ? arr.map((x,i)=>`<span class="tag" data-i="${i}" style="border-color:${catColor('races',x)}"><span class="swatch" style="background:${catColor('races',x)}"></span>${esc(x)} <span class="x">✕</span></span>`).join(" ") : '<span class="note">None</span>';
+    wrap.querySelectorAll(".tag .x").forEach(xb=>xb.onclick=()=>{ const i=+xb.parentElement.dataset.i; arr.splice(i,1); if(key==="adminRaces")r.dominantRace=arr[0]||""; renderRaceMulti(key,listId); renderMap(); renderLeft(); markDirty(); });
+  };
+  renderRaceMulti("adminRaces","radminRaces"); renderRaceMulti("militaryRaces","rmilRaces");
+  { const s=$("#radminSelRace"); if(s)s.addEventListener("change",e=>{ const v=e.target.value; e.target.value=""; if(!v)return; r.adminRaces=r.adminRaces||[]; if(!r.adminRaces.includes(v))r.adminRaces.push(v); r.dominantRace=r.adminRaces[0]||""; renderRaceMulti("adminRaces","radminRaces"); renderMap(); renderLeft(); markDirty(); }); }
+  { const s=$("#rmilSelRace"); if(s)s.addEventListener("change",e=>{ const v=e.target.value; e.target.value=""; if(!v)return; r.militaryRaces=r.militaryRaces||[]; if(!r.militaryRaces.includes(v))r.militaryRaces.push(v); renderRaceMulti("militaryRaces","rmilRaces"); markDirty(); }); }
   $("#rcap").addEventListener("change",e=>{r.capitalId=e.target.value||null;renderMap();markDirty();});
   $("#rnote").addEventListener("input",e=>{r.note=e.target.value;markDirty();});
   // administrative centres list
@@ -3196,7 +3245,8 @@ function applyListRename(k,ov,nv){
   const ax=key=>P.forEach(p=>{let ch=false;(p.pops||[]).forEach(q=>{if(q[key]===ov){q[key]=nv;ch=true;}});if(ch)deriveProvince(p);});
   if(k==="religions"){ax("religion");R.forEach(r=>{if(r.stateReligion===ov)r.stateReligion=nv;});}
   else if(k==="cultures"){ax("culture");R.forEach(r=>{if(r.dominantCulture===ov)r.dominantCulture=nv;});}
-  else if(k==="races"){ax("race");R.forEach(r=>{if(r.dominantRace===ov)r.dominantRace=nv;});}
+  else if(k==="races"){ax("race");R.forEach(r=>{if(r.dominantRace===ov)r.dominantRace=nv;
+    ["adminRaces","militaryRaces"].forEach(kk=>{ if(Array.isArray(r[kk])) r[kk]=r[kk].map(x=>x===ov?nv:x); });});}
   else if(k==="languages"){ax("language");R.forEach(r=>{if(r.dominantLanguage===ov)r.dominantLanguage=nv;});}
   else if(k==="terrains"){P.forEach(p=>{if(p.terrain===ov)p.terrain=nv;});}
   else if(k==="settlements"){P.forEach(p=>{if(p.settlement===ov)p.settlement=nv;});}
@@ -3230,7 +3280,8 @@ function applyListDelete(k,v){
   const axDel=key=>P.forEach(p=>{let ch=false;(p.pops||[]).forEach(q=>{if(q[key]===v){q[key]="";ch=true;}});if(ch)deriveProvince(p);});
   if(k==="religions"){axDel("religion");R.forEach(r=>{if(r.stateReligion===v)r.stateReligion="";});}
   else if(k==="cultures"){axDel("culture");R.forEach(r=>{if(r.dominantCulture===v)r.dominantCulture="";});}
-  else if(k==="races"){axDel("race");R.forEach(r=>{if(r.dominantRace===v)r.dominantRace="";});}
+  else if(k==="races"){axDel("race");R.forEach(r=>{if(r.dominantRace===v)r.dominantRace="";
+    ["adminRaces","militaryRaces"].forEach(kk=>{ if(Array.isArray(r[kk])) r[kk]=r[kk].filter(x=>x!==v); }); if(r.adminRaces&&r.adminRaces.length)r.dominantRace=r.adminRaces[0];});}
   else if(k==="languages"){axDel("language");R.forEach(r=>{if(r.dominantLanguage===v)r.dominantLanguage="";});}
   else if(k==="features"){P.forEach(p=>p.features=p.features.filter(f=>f!==v));if(world.featureCats)delete world.featureCats[v];}
   else if(k==="terrains"){const fb=(world.lists.terrains.find(x=>x!==v))||"Plains";P.forEach(p=>{if(p.terrain===v)p.terrain=fb;});}

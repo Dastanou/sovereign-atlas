@@ -136,6 +136,44 @@ details.histBox>summary::-webkit-details-marker{display:none}
 details.histBox>summary::before{content:"▸"; display:inline-block; width:14px; color:var(--muted)}
 details.histBox[open]>summary::before{content:"▾"}
 details.histBox .histBody, details.histBox .hist{margin-top:4px}
+/* ===== realm viewer panel (read-only) ===== */
+.realmCard{--rc:#6f8fc9; border:2px solid var(--rc); border-radius:14px; padding:12px 12px 14px;
+  background:linear-gradient(180deg, color-mix(in srgb, var(--rc) 12%, var(--panel)), var(--panel) 60%);
+  box-shadow:0 3px 14px color-mix(in srgb, var(--rc) 22%, transparent)}
+.realmName{text-align:center; font-family:"Georgia","Iowan Old Style","Palatino Linotype",serif;
+  font-weight:700; font-size:23px; line-height:1.15; letter-spacing:.5px; margin:2px 0 1px;
+  color:color-mix(in srgb, var(--rc) 72%, #23262e); text-shadow:0 1px 0 rgba(255,255,255,.6)}
+.rvSub{text-align:center; font-size:12px; color:var(--muted); margin-bottom:10px}
+.rvBlock{border-radius:10px; padding:7px 10px; margin:7px 0; border-left:4px solid var(--line);
+  background:var(--panel2)}
+.rvBlock.rvGov{border-left-color:#6f8fc9; background:rgba(111,143,201,.10)}
+.rvBlock.rvSociety{border-left-color:#a98fd0; background:rgba(169,143,208,.11)}
+.rvBlock.rvRacial{border-left-color:#3fae9e; background:rgba(63,174,158,.12)}
+.rvBlock.rvGeo{border-left-color:#e0b34e; background:rgba(224,179,78,.12)}
+.rvRow{display:flex; align-items:baseline; gap:10px; padding:3px 0; font-size:13.5px}
+.rvRow .rvLbl{flex:0 0 auto; min-width:96px; color:var(--muted); font-size:11px;
+  text-transform:uppercase; letter-spacing:.4px}
+.rvRow .rvVal{flex:1; text-align:right; font-weight:600; display:flex; flex-wrap:wrap;
+  gap:4px; justify-content:flex-end; align-items:center}
+.rvRow .rvVal.rvRaces{gap:5px}
+.rvChip{display:inline-block; background:color-mix(in srgb, var(--rc) 14%, var(--panel));
+  border:1px solid color-mix(in srgb, var(--rc) 35%, var(--line)); border-radius:20px;
+  padding:1px 9px; font-size:12.5px; font-weight:600}
+.rvDot{display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:5px;
+  vertical-align:middle; border:1px solid rgba(0,0,0,.2)}
+.rvRace{display:inline-flex; align-items:center; gap:4px; background:var(--panel);
+  border:1px solid var(--line); border-radius:20px; padding:1px 8px; font-size:12.5px; font-weight:600}
+.rvRace .sw{width:10px; height:10px; border-radius:3px; border:1px solid rgba(0,0,0,.2)}
+details.rvProvinces{margin-top:10px; border:1px solid var(--line); border-radius:10px; padding:6px 8px}
+details.rvProvinces>summary{cursor:pointer; list-style:none; font-weight:700; color:var(--accent); font-size:13px}
+details.rvProvinces>summary::-webkit-details-marker{display:none}
+details.rvProvinces>summary::before{content:"▸"; display:inline-block; width:14px; color:var(--muted)}
+details.rvProvinces[open]>summary::before{content:"▾"}
+.rvSearch{width:100%; margin:6px 0; padding:5px 8px; border:1px solid var(--line);
+  border-radius:8px; background:var(--panel); font-size:13px; box-sizing:border-box}
+/* editor multi-race picker */
+.raceMulti{display:flex; flex-wrap:wrap; gap:4px; min-height:22px; margin-bottom:2px}
+.raceMulti .tag .swatch{width:10px; height:10px; border-radius:3px; display:inline-block; margin-right:4px; vertical-align:middle}
 .mmkey{position:absolute; top:1px; right:3px; font-size:9px; font-weight:700;
   color:var(--muted); line-height:1}
 .mmbtn.active .mmkey{color:#eaf0fb}
