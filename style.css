@@ -59,6 +59,8 @@ body.editing #topbar{background:linear-gradient(180deg,#eef4ec,#e3ece0)}
 #left,#right{width:280px; background:var(--panel); border-right:1px solid var(--line);
   display:flex; flex-direction:column; overflow:hidden}
 #right{border-right:none; border-left:1px solid var(--line); width:340px}
+/* right inspector only appears once something is selected */
+body:not(.has-sel) #right{display:none}
 #stage{flex:1; position:relative; overflow:hidden;
   background:radial-gradient(1200px 800px at 50% 35%, #eaf3fa 0%, var(--sea1) 55%, var(--sea2) 100%);}
 
@@ -198,6 +200,14 @@ body.panels-hidden #left, body.panels-hidden #right{display:none}
 .hidden{display:none}
 .kbd{background:var(--panel2); border:1px solid var(--line); border-radius:5px; padding:1px 6px; font-size:12px}
 
+/* province finder dropdown */
+#provFind{width:170px}
+#provFindResults{position:fixed; z-index:70; min-width:210px; max-width:300px;
+  background:var(--panel); border:1px solid var(--line); border-radius:10px; box-shadow:0 12px 30px #00000026;
+  max-height:340px; overflow:auto; padding:4px}
+.pfrow{padding:8px 9px; border-radius:7px; cursor:pointer; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.pfrow:hover{background:var(--panel2)}
+
 /* viewer: world name & current age are read-only, so show them as plain text */
 body.viewer #worldName{border:none; background:transparent; padding:0 2px; font-weight:600;
   color:var(--ink); pointer-events:none; width:auto; max-width:190px}
@@ -228,6 +238,7 @@ body.viewer #eraSelect{appearance:none; -webkit-appearance:none; border:none; ba
     transform:translateY(105%); transition:transform .25s ease; box-shadow:0 -8px 30px #00000033; display:flex}
   body.has-sel #right{transform:none}
   body.panels-hidden #right{display:flex}
+  body:not(.has-sel) #right{display:flex}   /* keep it present (off-screen) so the sheet can animate */
 
   #insClose{display:block; position:absolute; top:8px; right:10px; z-index:3; width:36px; height:36px;
     background:var(--panel); border:1px solid var(--line); border-radius:9px; font-size:16px; color:var(--ink)}

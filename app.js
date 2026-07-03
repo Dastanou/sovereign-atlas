@@ -44,17 +44,17 @@ const RES_MIGRATE={Grain:"Grains",Gold:"Silver",Gems:"Semi-Precious Gems",Wine:"
 
 /* ---------- default lists ---------- */
 const DEFAULT_LISTS = {
-  religions: ["The Old Faith", "Lumenism", "Ancestor Cult", "The Deep Pact", "Unbelief"],
-  cultures: ["Veshkan", "Aurelian", "Highland Clans", "Skyborn", "Marsh-folk"],
+  religions: ["No Religion", "The Old Faith", "Lumenism", "Ancestor Cult", "The Deep Pact", "Unbelief"],
+  cultures: ["No Culture", "Veshkan", "Aurelian", "Highland Clans", "Skyborn", "Marsh-folk"],
   races: ["Human", "Elf", "Dwarf", "Orc", "Halfling", "Goblin", "Dragonborn", "Tiefling", "Aarakocra"],
-  languages: ["Common", "Old Veshkan", "High Aurelian", "Cant", "Draconic"],
+  languages: ["No Language", "Common", "Old Veshkan", "High Aurelian", "Cant", "Draconic"],
   terrains: ["Plains", "Farmlands", "Steppe", "Savannah", "Forest", "Taiga", "Jungle", "Hills", "Mountains", "Desert", "Marsh", "Tundra", "Glacial", "Coast", "Wasteland", "Floating Reef"],
   settlements: ["Uninhabited", "Nomadic", "Village", "Town", "City", "Megalopolis"],
   resources: RESOURCE_LIST.slice(),
   hiddenResources: HIDDEN_RESOURCES.slice(),
   features: ["Impact Crater", "Arcane Scar", "Ancient Ruin", "Ley-line Nexus", "Floating Monolith", "Sunken City", "Volcanic Rift", "Sacred Grove"],
   governments: ["Feudal Monarchy", "Absolute Monarchy", "Merchant Republic", "Theocracy", "Magocracy", "Tribal Confederation", "City-State", "Hegemony", "Imperial", "Council"],
-  economies: ["Primitive", "Agrarian", "Trade", "Mercantile", "Industrial", "Arcane-Industrial", "Pastoral", "Plunder", "Mixed"]
+  economies: ["Uninhabited", "Primitive", "Agrarian", "Trade", "Mercantile", "Industrial", "Arcane-Industrial", "Pastoral", "Plunder", "Mixed"]
 };
 
 /* ---------- color helpers ---------- */
@@ -191,9 +191,14 @@ function normalize(w){
   if(!w.lists.settlements.includes("Nomadic")){ const i=w.lists.settlements.indexOf("Uninhabited"); w.lists.settlements.splice(i<0?0:i+1,0,"Nomadic"); }
   { const pc=w.lists.economies.indexOf("Primitive Communism"); if(pc>=0)w.lists.economies[pc]="Primitive"; }
   if(!w.lists.economies.includes("Primitive")) w.lists.economies.unshift("Primitive");
+  if(!w.lists.economies.includes("Uninhabited")) w.lists.economies.unshift("Uninhabited");
   w.realms.forEach(r=>{ if(r.economy==="Primitive Communism")r.economy="Primitive"; });
   // ensure newer terrain types exist in older worlds
   ["Farmlands","Steppe","Savannah","Taiga","Glacial"].forEach(t=>{ if(!w.lists.terrains.includes(t)) w.lists.terrains.push(t); });
+  // "unsettled" defaults for lands with no organised society
+  if(!w.lists.religions.includes("No Religion")) w.lists.religions.unshift("No Religion");
+  if(!w.lists.cultures.includes("No Culture")) w.lists.cultures.unshift("No Culture");
+  if(!w.lists.languages.includes("No Language")) w.lists.languages.unshift("No Language");
   // feature categories (Wonder / Resource / Misc)
   w.featureCats=w.featureCats||{};
   (w.lists.features||[]).forEach(f=>{ if(!w.featureCats[f]) w.featureCats[f]=FEATURE_CATS_DEFAULT[f]||"misc"; });
@@ -209,7 +214,10 @@ function normalize(w){
   w.provinces.forEach(p=>{
     ["religion","culture","race","language"].forEach(k=>p[k]=p[k]||[]);
     p.features=p.features||[]; p.history=p.history||[];
+    const oldEcon=(typeof p.economy==="string" && p.economy)?p.economy:null;   // old per-province override
     if(!Array.isArray(p.pops)) p.pops=migratePops(p,w.lists);   // one-time migration from the old model
+    const r=p.realmId?w.realms.find(x=>x.id===p.realmId):null;
+    p.pops.forEach(q=>{ if(!q.economy) q.economy = oldEcon || (r&&r.economy?r.economy:"Primitive"); });   // seed Mode of Production
     deriveProvince(p);                                          // keep population + %s in sync with pops
   });
   w.realms.forEach(r=>{r.adminCenters=r.adminCenters||[];r.dominantLanguage=r.dominantLanguage||"";});
@@ -246,32 +254,51 @@ function dominant(arr){if(!arr||!arr.length)return null;return arr.slice().sort(
    A province's population is a list of pop chunks; each chunk has a size and a
    religion, culture, race and language. The old per-axis %s and p.population are
    kept in sync (derived) so map modes and exports keep working. */
-function newPop(size,rel,cul,race,lang){return {id:uid(),size:Math.max(0,Math.round(size||0)),religion:rel||"",culture:cul||"",race:race||"",language:lang||""};}
+const POP_AXES=["religion","culture","race","language","economy"];
+function newPop(size,rel,cul,race,lang,econ){return {id:uid(),size:Math.max(0,Math.round(size||0)),religion:rel||"",culture:cul||"",race:race||"",language:lang||"",economy:econ||""};}
+// [religion,culture,race,language,economy] a new pop should get: a realm's identity, or "unsettled" defaults
+function defaultPopIdentity(r){
+  return r ? [r.stateReligion, r.dominantCulture, r.dominantRace, r.dominantLanguage, r.economy||"Primitive"]
+           : ["No Religion", "No Culture", (world.lists.races[0]||""), "No Language", "Primitive"];
+}
 function axisFromPops(pops,key){
   const m={}; let tot=0;
   for(const q of pops){const v=q[key]||""; if(!v||!(q.size>0))continue; m[v]=(m[v]||0)+q.size; tot+=q.size;}
   if(tot<=0)return [];
   return Object.entries(m).map(([name,sz])=>({name,pct:Math.round(sz/tot*100)})).sort((a,b)=>b.pct-a.pct);
 }
+// combine pop groups identical in every category (sizes summed) — for optimisation
+function mergePops(p){
+  const by=new Map(), out=[];
+  for(const q of (p.pops||[])){
+    const key=JSON.stringify([q.religion||"",q.culture||"",q.race||"",q.language||"",q.economy||""]);
+    if(by.has(key)) by.get(key).size+=(q.size||0);
+    else { const c={id:q.id||uid(),size:Math.max(0,Math.round(q.size||0)),religion:q.religion||"",culture:q.culture||"",race:q.race||"",language:q.language||"",economy:q.economy||""}; by.set(key,c); out.push(c); }
+  }
+  p.pops=out;
+}
 function deriveProvince(p){
   p.pops=Array.isArray(p.pops)?p.pops:[];
+  mergePops(p);
   p.population=p.pops.reduce((a,q)=>a+(q.size||0),0);
   p.religion=axisFromPops(p.pops,"religion");
   p.culture=axisFromPops(p.pops,"culture");
   p.race=axisFromPops(p.pops,"race");
   p.language=axisFromPops(p.pops,"language");
+  p.economy=axisFromPops(p.pops,"economy");
 }
 function migratePops(p,lists){
   const pop=p.population||0; if(pop<=0)return [];
-  const def={religion:(lists.religions[0]||""),culture:(lists.cultures[0]||""),race:(lists.races[0]||""),language:(lists.languages[0]||"")};
+  const def={religion:"No Religion",culture:"No Culture",race:(lists.races[0]||""),language:"No Language"};
   const ax=key=>(p[key]&&p[key].length)?p[key]:[{name:def[key],pct:100}];
   const rels=ax("religion"),culs=ax("culture"),races=ax("race"),langs=ax("language");
+  const econ = (typeof p.economy==="string" && p.economy) ? p.economy : "Primitive";   // old string override, else Primitive
   const out=[];
   for(const r of rels)for(const c of culs)for(const ra of races)for(const l of langs){
     const size=Math.round(pop*(r.pct/100)*(c.pct/100)*(ra.pct/100)*(l.pct/100));
-    if(size>0)out.push(newPop(size,r.name,c.name,ra.name,l.name));
+    if(size>0)out.push(newPop(size,r.name,c.name,ra.name,l.name,econ));
   }
-  if(!out.length)out.push(newPop(pop,dominant(p.religion),dominant(p.culture),dominant(p.race),dominant(p.language)));
+  if(!out.length)out.push(newPop(pop,dominant(p.religion),dominant(p.culture),dominant(p.race),dominant(p.language),econ));
   return out;
 }
 // Scale a province's pops so their total equals `target` (used by realm Distribute).
@@ -281,8 +308,7 @@ function setProvincePopulation(p,target){
   if(target<=0){ p.pops=[]; deriveProvince(p); return; }
   const cur=p.pops.reduce((a,q)=>a+(q.size||0),0);
   if(!p.pops.length){
-    if(target>0){const r=world.realms.find(x=>x.id===p.realmId);
-      p.pops=[newPop(target, r?r.stateReligion:(world.lists.religions[0]||""), r?r.dominantCulture:(world.lists.cultures[0]||""), r?r.dominantRace:(world.lists.races[0]||""), r?r.dominantLanguage:(world.lists.languages[0]||""))];}
+    if(target>0){const id=defaultPopIdentity(world.realms.find(x=>x.id===p.realmId)); p.pops=[newPop(target, id[0], id[1], id[2], id[3], id[4])];}
   } else if(cur<=0){
     p.pops[0].size=target; for(let i=1;i<p.pops.length;i++)p.pops[i].size=0;
   } else {
@@ -341,7 +367,7 @@ function ensureStatePop(p, r, axes){   // give the state group a foothold if it 
   p.pops=p.pops||[];
   if(p.pops.some(q=>q.size>0 && matchesState(q,r,axes))) return;
   const cur=p.pops.reduce((a,q)=>a+(q.size||0),0);
-  p.pops.push(newPop(Math.max(50,Math.round(cur*0.02)), r.stateReligion, r.dominantCulture, r.dominantRace, r.dominantLanguage));
+  p.pops.push(newPop(Math.max(50,Math.round(cur*0.02)), r.stateReligion, r.dominantCulture, r.dominantRace, r.dominantLanguage, r.economy||"Primitive"));
 }
 function growRealmPops(p, growPct, variance, opt, r, prio){
   if(prio.seed) ensureStatePop(p, r, prio.axes);
@@ -412,10 +438,8 @@ function labelKeyer(mode){
     default: return null;
   }
 }
-function economyOf(p){
-  if(p.economy) return p.economy;                                  // per-province override (e.g. unclaimed tribes)
-  if(p.realmId){ const r=world.realms.find(x=>x.id===p.realmId); return (r&&r.economy)?r.economy:"Primitive"; }
-  return "Primitive";
+function economyOf(p){   // dominant Mode of Production across this province's pops
+  return dominant(p.economy) || ((p.population>0) ? "Primitive" : "Uninhabited");
 }
 function labelText(mode,val){ if(mode==="political"){const r=world.realms.find(r=>r.id===val);return r?r.name:"";} return val; }
 function clamp01(x){return x<0?0:x>1?1:x;}
@@ -1063,6 +1087,8 @@ function drawFrame(){
 // resolve a category entry's colour: custom override if set, else the default
 function catColor(key,name){
   if(!name)return "#39415e";
+  if(name==="No Religion"||name==="No Culture"||name==="No Language")return "#8a93a6";   // unsettled = neutral grey
+  if(key==="economies"&&name==="Uninhabited")return "#2b3348";   // empty land
   const cm=world.colors&&world.colors[key]; if(cm&&cm[name])return cm[name];
   if(key==="terrains")return TERRAIN_COLORS[name]||hashColor(name);
   if(key==="settlements")return SETTLE_COLORS[name]||"#39415e";
@@ -1106,7 +1132,7 @@ function colorByAxis(arr,key){const d=dominant(arr);return d?catColor(key,d):"#3
    AUTOMATIC HISTORY TRACKER
    Logs a dated entry whenever a tracked, map-mode attribute changes.
    ============================================================ */
-const FIELD_TITLES={realm:"Ownership",terrain:"Terrain",settlement:"Settlement",resource:"Resource",religion:"Religion",culture:"Culture",race:"Race",language:"Language",economy:"Economy"};
+const FIELD_TITLES={realm:"Ownership",terrain:"Terrain",settlement:"Settlement",resource:"Resource",religion:"Religion",culture:"Culture",race:"Race",language:"Language",economy:"Mode of Production"};
 function provTrackedValue(p,field){
   if(field==="realm")return p.realmId?(world.realms.find(r=>r.id===p.realmId)?.name||"Unknown realm"):"Unclaimed";
   if(field==="terrain")return p.terrain||"—";
@@ -1182,7 +1208,7 @@ function waterAt(wx,wy){
       if((ax+dx*t-wx)**2+(ay+dy*t-wy)**2 < thr*thr)return {type:"river",id:rv.id};}}
   return null;
 }
-function selectWater(type,id){state.selWater={type,id};state.selProvince=null;state.selRealm=null;renderMap();renderWaterEditor();}
+function selectWater(type,id){state.selWater={type,id};state.selProvince=null;state.selRealm=null;document.body.classList.add("has-sel");renderMap();renderWaterEditor();}
 function renderWaterEditor(){
   const ins=$("#inspector"),w=state.selWater; if(!w)return;
   const arr=w.type==="lake"?world.lakes:world.rivers, obj=arr.find(x=>x.id===w.id);
@@ -1278,7 +1304,7 @@ function joinRealmDefaults(p, realmId){
   const cur=(p.pops||[]).reduce((a,q)=>a+(q.size||0),0);
   if(cur<=0){
     const oR=provTrackedValue(p,"religion"),oC=provTrackedValue(p,"culture"),oL=provTrackedValue(p,"language");
-    p.pops=[newPop(0,r.stateReligion,r.dominantCulture,r.dominantRace,r.dominantLanguage)];
+    p.pops=[newPop(0,r.stateReligion,r.dominantCulture,r.dominantRace,r.dominantLanguage,r.economy||"Primitive")];
     deriveProvince(p);
     autoLog(p,"religion",oR);autoLog(p,"culture",oC);autoLog(p,"language",oL);
     ch=true;
@@ -1291,7 +1317,7 @@ function expandPaint(p, r){
   if(mode==="conquer") return;                      // add to realm, change nothing else
   if(mode==="override"){                            // wipe pops, replace with same-size realm-identity pop
     const total=(p.pops||[]).reduce((a,q)=>a+(q.size||0),0);
-    p.pops = total>0 ? [newPop(total, r.stateReligion, r.dominantCulture, r.dominantRace, r.dominantLanguage)] : [];
+    p.pops = total>0 ? [newPop(total, r.stateReligion, r.dominantCulture, r.dominantRace, r.dominantLanguage, r.economy||"Primitive")] : [];
     deriveProvince(p);
     return;
   }
@@ -1312,13 +1338,13 @@ function expandPaint(p, r){
         if(!(q.size>0) || !match(q)) continue;
         const take=Math.floor(q.size*pct); if(take<=0) continue;
         q.size-=take; took=true;
-        const key=[q.religion,q.culture,q.race,q.language].join("");
+        const key=[q.religion,q.culture,q.race,q.language,q.economy].join("");
         migrants[key]=(migrants[key]||0)+take;
       }
       if(took) deriveProvince(src);
     }
     p.pops=p.pops||[];
-    for(const key in migrants){ const [rel,cul,rac,lan]=key.split(""); p.pops.push(newPop(migrants[key],rel,cul,rac,lan)); }
+    for(const key in migrants){ const [rel,cul,rac,lan,econ]=key.split(""); p.pops.push(newPop(migrants[key],rel,cul,rac,lan,econ)); }
     deriveProvince(p);
   }
 }
@@ -1363,11 +1389,7 @@ function paintProvince(p){   // returns true if it changed something (and auto-l
       if(state.hiddenResMode){ const nv=(v==="__none__"?"":v); if(p.hidden!==nv){p.hidden=nv;changed=true;} }
       else if(p.resource!==v){p.resource=v;changed=true;}
     }
-    else if(m==="economy"){ // set the realm's economy if claimed, else a per-province override
-      if(p.realmId){const r=world.realms.find(x=>x.id===p.realmId); if(r&&r.economy!==v){r.economy=v;changed=true;}}
-      else if(p.economy!==v){p.economy=v;changed=true;}
-    }
-    else{ // religion/culture/race/language — convert every pop group in the province
+    else{ // religion/culture/race/language/economy — convert every pop group in the province
       if(!(p.pops&&p.pops.length))return false;   // no people here to convert
       let any=false; p.pops.forEach(q=>{if(q[m]!==v){q[m]=v;any=true;}});
       if(any){deriveProvince(p);changed=true;}
@@ -1398,11 +1420,18 @@ function selectRealm(id){
 }
 function selectContinent(id){
   state.focusedContinent=id;state.selProvince=null;state.selRealm=null;state.selWater=null;state.selLabel=null;
+  document.body.classList.add("has-sel");
   renderMap();renderLeft();renderContinentEditor();
 }
 function selectCustomLabel(id){
   state.selLabel=id;state.selProvince=null;state.selRealm=null;state.selWater=null;
+  document.body.classList.add("has-sel");
   renderMap();renderLabelEditor();
+}
+function clearSelection(){   // click on empty void: deselect and hide the inspector
+  state.selProvince=null;state.selRealm=null;state.selWater=null;state.selLabel=null;
+  document.body.classList.remove("has-sel");
+  renderMap();
 }
 function renderLabelEditor(){
   const ins=$("#inspector"),lb=world.labels.find(x=>x.id===state.selLabel);
@@ -1449,7 +1478,7 @@ function renderLeft(){
   else if(!shown){rl.innerHTML='<div class="note" style="padding:8px 10px">No realms match your search.</div>';}
   renderLegend();
 }
-const MODE_TITLES={political:"Realms",provincemap:"Province Map",terrain:"Terrain",settlement:"Settlements",religion:"Religion",culture:"Culture",race:"Race",language:"Language",population:"Population",resource:"Resource",economy:"Economy",imported:"Imported colors"};
+const MODE_TITLES={political:"Realms",provincemap:"Province Map",terrain:"Terrain",settlement:"Settlements",religion:"Religion",culture:"Culture",race:"Race",language:"Language",population:"Population",resource:"Resource",economy:"Mode of Production",imported:"Imported colors"};
 function legendEntries(mode){           // [color, label, paintValue]
   const L=world.lists, e=[];
   if(mode==="political"){e.push(["#39415e","Unclaimed","__none__"]);world.realms.forEach(r=>e.push([r.color,r.name,r.id]));}
@@ -1530,7 +1559,7 @@ function renderProvinceView(){
     <div class="insTitle" style="font-weight:700;font-size:17px">${esc(p.name)}</div>
     ${row(["Realm", realm?`<a href="#" id="pvRealm" style="color:var(--accent);text-decoration:none"><span class="swatch" style="background:${realm.color}"></span>${esc(realm.name)}</a>`:'<span class="note">Unclaimed</span>'], ["Continent", cont?esc(cont.name):"—"])}
     ${row(["Terrain", esc(p.terrain||"—")], ["Settlement", esc(p.settlement||"—")])}
-    ${row(["Top resource", (isPrestige(p.resource)?"★ ":"")+esc(p.resource||"—")+(isPrestige(p.resource)?" (prestige)":"")], ["Economy", esc(economyOf(p))])}
+    ${row(["Top resource", (isPrestige(p.resource)?"★ ":"")+esc(p.resource||"—")+(isPrestige(p.resource)?" (prestige)":"")], ["Mode of Production", esc(economyOf(p))])}
     ${p.hidden?row(["Strategic resource",(HIDDEN_RES_GLYPH[p.hidden]||"⛏")+" "+esc(p.hidden)],["",""]):""}
     ${row(["Population", (p.population||0).toLocaleString()], ["", ""])}
     <div class="sectionH">Notable features</div><div>${feats}</div>
@@ -1554,7 +1583,7 @@ function renderRealmView(){
   ins.innerHTML=`
     <div class="insTitle" style="font-weight:700;font-size:17px"><span class="swatch" style="background:${r.color}"></span> ${esc(r.name)}</div>
     <div class="note">${provs.length} provinces · ${pop.toLocaleString()} people</div>
-    <div class="field2">${f("Government",esc(r.government))}${f("Economy",esc(r.economy))}</div>
+    <div class="field2">${f("Government",esc(r.government))}${f("Mode of Production",esc(r.economy))}</div>
     <div class="field2">${f("State religion",esc(r.stateReligion))}${f("Capital",cap?esc(cap.name):"—")}</div>
     <div class="field2">${f("Dominant culture",esc(r.dominantCulture))}${f("Dominant race",esc(r.dominantRace))}</div>
     <div class="field2">${f("Dominant language",esc(r.dominantLanguage))}${f("Leader",esc([r.leaderTitle,r.leaderName].filter(Boolean).join(" ")))}</div>
@@ -1592,11 +1621,7 @@ function renderProvinceEditor(){
     </div>
     <div class="field2">
       <div class="field"><label>Top resource</label><select id="pres">${opt(world.lists.resources,p.resource)}</select></div>
-      <div class="field"><label>Economy</label><select id="pecon"><option value="" ${!p.economy?"selected":""}>— ${p.realmId?"from realm":"Primitive"} —</option>${world.lists.economies.map(o=>`<option ${o===p.economy?"selected":""}>${esc(o)}</option>`).join("")}</select></div>
-    </div>
-    <div class="field2">
       <div class="field"><label>Strategic resource (hidden)</label><select id="phidden"><option value="" ${!p.hidden?"selected":""}>— none —</option>${(world.lists.hiddenResources||[]).map(o=>`<option ${o===p.hidden?"selected":""}>${esc(o)}</option>`).join("")}</select></div>
-      <div class="field"></div>
     </div>
 
     <div class="sectionH">Notable features</div>
@@ -1638,7 +1663,6 @@ function renderProvinceEditor(){
   bindTracked("pterr","terrain",v=>p.terrain=v);
   bindTracked("psett","settlement",v=>p.settlement=v);
   bindTracked("pres","resource",v=>p.resource=v);
-  bindTracked("pecon","economy",v=>p.economy=v||"");
   { const ph=$("#phidden"); if(ph)ph.addEventListener("change",e=>{p.hidden=e.target.value;renderMap();markDirty();}); }
   $("#prealm").addEventListener("change",e=>{
     const old=provTrackedValue(p,"realm");p.realmId=e.value||null;autoLog(p,"realm",old);joinRealmDefaults(p,p.realmId);renderHistory(p);renderMap();renderLeft();renderProvinceEditor();markDirty();
@@ -1675,12 +1699,8 @@ function renderProvinceEditor(){
   renderPops(p);
   $("#ppopAdd").addEventListener("click",()=>{
     beginEdit();
-    const rlm=world.realms.find(x=>x.id===p.realmId);
-    p.pops.push(newPop(1000,
-      rlm?rlm.stateReligion:(world.lists.religions[0]||""),
-      rlm?rlm.dominantCulture:(world.lists.cultures[0]||""),
-      rlm?rlm.dominantRace:(world.lists.races[0]||""),
-      rlm?rlm.dominantLanguage:(world.lists.languages[0]||"")));
+    const id=defaultPopIdentity(world.realms.find(x=>x.id===p.realmId));
+    p.pops.push(newPop(1000, id[0], id[1], id[2], id[3], id[4]));
     deriveProvince(p); renderProvinceEditor(); renderMap(); renderLeft(); markDirty();
   });
   // history
@@ -1725,18 +1745,21 @@ function drawBar(key,p){
 }
 function renderPops(p){
   const wrap=$("#ppops"); if(!wrap)return; wrap.innerHTML="";
-  const sel=(list,v,cls)=>`<select class="${cls}"><option value="">—</option>${list.map(o=>`<option value="${esc(o)}" ${o===v?"selected":""}>${esc(o)}</option>`).join("")}</select>`;
+  const sel=(list,v,cls,title)=>`<select class="${cls}" title="${title||''}"><option value="">—</option>${list.map(o=>`<option value="${esc(o)}" ${o===v?"selected":""}>${esc(o)}</option>`).join("")}</select>`;
   if(!p.pops.length){wrap.innerHTML='<div class="note">No people here yet — add a pop group.</div>';return;}
+  const totals=()=>{const t=$("#ppopTot");if(t)t.textContent=(p.population||0).toLocaleString();const n=$("#ppopN");if(n)n.textContent=p.pops.length;};
   p.pops.forEach((q,i)=>{
     const row=div("popRow");
     row.innerHTML=`<div class="popHead"><input class="psize" type="number" min="0" value="${q.size||0}" title="People in this group"/><span class="x" title="Remove group">✕</span></div>
-      <div class="popAxes">${sel(world.lists.religions,q.religion,"prel")}${sel(world.lists.cultures,q.culture,"pcul")}${sel(world.lists.races,q.race,"prace")}${sel(world.lists.languages,q.language,"plang")}</div>`;
-    const upd=()=>{deriveProvince(p);const t=$("#ppopTot");if(t)t.textContent=(p.population||0).toLocaleString();const n=$("#ppopN");if(n)n.textContent=p.pops.length;renderMap();renderLeft();markDirty();};
-    row.querySelector(".psize").addEventListener("input",e=>{q.size=Math.max(0,+e.target.value||0);upd();});
-    row.querySelector(".prel").addEventListener("change",e=>{q.religion=e.target.value;upd();});
-    row.querySelector(".pcul").addEventListener("change",e=>{q.culture=e.target.value;upd();});
-    row.querySelector(".prace").addEventListener("change",e=>{q.race=e.target.value;upd();});
-    row.querySelector(".plang").addEventListener("change",e=>{q.language=e.target.value;upd();});
+      <div class="popAxes">${sel(world.lists.religions,q.religion,"prel","Religion")}${sel(world.lists.cultures,q.culture,"pcul","Culture")}${sel(world.lists.races,q.race,"prace","Race")}${sel(world.lists.languages,q.language,"plang","Language")}${sel(world.lists.economies,q.economy,"pecon2","Mode of Production")}</div>`;
+    const updSize=()=>{deriveProvince(p);totals();renderMap();renderLeft();markDirty();};
+    const updAxis=(k,val)=>{q[k]=val;deriveProvince(p);renderPops(p);totals();renderMap();renderLeft();markDirty();};   // re-render so identical groups merge visibly
+    row.querySelector(".psize").addEventListener("input",e=>{q.size=Math.max(0,+e.target.value||0);updSize();});
+    row.querySelector(".prel").addEventListener("change",e=>updAxis("religion",e.target.value));
+    row.querySelector(".pcul").addEventListener("change",e=>updAxis("culture",e.target.value));
+    row.querySelector(".prace").addEventListener("change",e=>updAxis("race",e.target.value));
+    row.querySelector(".plang").addEventListener("change",e=>updAxis("language",e.target.value));
+    row.querySelector(".pecon2").addEventListener("change",e=>updAxis("economy",e.target.value));
     row.querySelector(".x").onclick=()=>{beginEdit();p.pops.splice(i,1);deriveProvince(p);renderProvinceEditor();renderMap();renderLeft();markDirty();};
     wrap.appendChild(row);
   });
@@ -1807,7 +1830,7 @@ function renderRealmEditor(){
     <div class="note">${provs.length} provinces · ${pop.toLocaleString()} people</div>
     <div class="field2">
       <div class="field"><label>Government</label><select id="rgov">${opt(world.lists.governments,r.government)}</select></div>
-      <div class="field"><label>Economy</label><select id="recon">${opt(world.lists.economies,r.economy)}</select></div>
+      <div class="field"><label>Mode of Production (realm default)</label><select id="recon">${opt(world.lists.economies,r.economy)}</select></div>
     </div>
     <div class="field2">
       <div class="field"><label>State religion</label><select id="rrel"><option value="">— none —</option>${opt(world.lists.religions,r.stateReligion)}</select></div>
@@ -2065,10 +2088,10 @@ function finishDraft(){
     }
     if(t==="province" && state.draft.length>=3){
       beginEdit();
-      const rlm=world.realms.find(x=>x.id===state.selRealm);
+      const rid=defaultPopIdentity(world.realms.find(x=>x.id===state.selRealm));
       const p={id:uid(),name:"New Province",continentId:c.id,points:state.draft.slice(),
         terrain:world.lists.terrains[0],settlement:"Village",resource:world.lists.resources[0],features:[],
-        pops:[newPop(1000, rlm?rlm.stateReligion:(world.lists.religions[0]||""), rlm?rlm.dominantCulture:(world.lists.cultures[0]||""), rlm?rlm.dominantRace:(world.lists.races[0]||""), rlm?rlm.dominantLanguage:(world.lists.languages[0]||""))],
+        pops:[newPop(1000, rid[0], rid[1], rid[2], rid[3], rid[4])],
         religion:[],culture:[],race:[],language:[],realmId:state.selRealm||null,history:[],notes:""};
       deriveProvince(p);
       world.provinces.push(p);
@@ -2253,7 +2276,8 @@ function setupMapInteraction(){
     const p=provinceAt(wx,wy);
     if(p){ onProvinceClick(p); return; }
     const c=continentAt(wx,wy);
-    if(c){ state.focusedContinent=c.id; selectContinent(c.id); }
+    if(c){ state.focusedContinent=c.id; selectContinent(c.id); return; }
+    clearSelection();   // clicked empty void → deselect and hide the inspector
   });
   cv.addEventListener("dblclick",ev=>{
     if(state.rulerOn){ ev.preventDefault();
@@ -2385,6 +2409,40 @@ function fitTo(b,padFrac){
   requestRender();
 }
 function worldView(){ fitTo(contentBounds(),0.08); }
+/* ---------- province finder ---------- */
+function matchProvinces(q){
+  q=(q||"").trim().toLowerCase(); if(!q)return [];
+  const starts=[],incl=[];
+  for(const p of world.provinces){ const n=(p.name||"").toLowerCase(); if(!n)continue;
+    if(n.startsWith(q))starts.push(p); else if(n.includes(q))incl.push(p); }
+  starts.sort((a,b)=>a.name.localeCompare(b.name));
+  return starts.concat(incl).slice(0,10);
+}
+function zoomToProvince(p){
+  const g=_provGeo.find(x=>x.p.id===p.id); if(!g)return;
+  const cv=$("#map"); const cw=cv.clientWidth||800, ch=cv.clientHeight||600;
+  const w=Math.max(4,g.maxx-g.minx), h=Math.max(4,g.maxy-g.miny), pad=4;
+  const sc=Math.max(0.05,Math.min(20,Math.min(cw/(w*pad), ch/(h*pad))));
+  state.cam.scale=sc; state.cam.x=g.cx-cw/(2*sc); state.cam.y=g.cy-ch/(2*sc);
+  state.selProvince=p.id; state.focusedContinent=p.continentId;
+  renderMap();
+  if(!document.body.classList.contains("mobile")) renderProvinceEditor();
+  flash("→ "+p.name);
+}
+function hideProvFind(){ const b=$("#provFindResults"); if(b){b.classList.add("hidden");b.innerHTML="";} }
+function renderProvFind(q){
+  const box=$("#provFindResults"); if(!box)return;
+  const list=matchProvinces(q);
+  if(!list.length){ hideProvFind(); return; }
+  const pf=$("#provFind"); if(pf){const r=pf.getBoundingClientRect(); box.style.top=(r.bottom+4)+"px"; box.style.left=Math.min(r.left,window.innerWidth-260)+"px";}
+  box.innerHTML=""; box.classList.remove("hidden");
+  list.forEach(p=>{
+    const realm=world.realms.find(r=>r.id===p.realmId);
+    const d=div("pfrow"); d.innerHTML=`<b>${esc(p.name)}</b>${realm?` <span class="note">— ${esc(realm.name)}</span>`:""}`;
+    d.onclick=()=>{ const pf=$("#provFind"); if(pf)pf.value=p.name; zoomToProvince(p); hideProvFind(); };
+    box.appendChild(d);
+  });
+}
 function focusContinent(cid){ fitTo(contBoxC(cid),0.25); }
 function zoomBy(f){
   const cv=$("#map"); const cw=(cv.clientWidth||800)/2, ch=(cv.clientHeight||600)/2;
@@ -2638,7 +2696,7 @@ function applyListRename(k,ov,nv){
   else if(k==="hiddenResources"){P.forEach(p=>{if(p.hidden===ov)p.hidden=nv;});}
   else if(k==="features"){P.forEach(p=>p.features=p.features.map(f=>f===ov?nv:f));if(world.featureCats&&world.featureCats[ov]!==undefined){world.featureCats[nv]=world.featureCats[ov];delete world.featureCats[ov];}}
   else if(k==="governments"){R.forEach(r=>{if(r.government===ov)r.government=nv;});}
-  else if(k==="economies"){R.forEach(r=>{if(r.economy===ov)r.economy=nv;});}
+  else if(k==="economies"){ax("economy");R.forEach(r=>{if(r.economy===ov)r.economy=nv;});}
 }
 function listUsageCount(k,v){
   const P=world.provinces,R=world.realms; let n=0;
@@ -2667,9 +2725,9 @@ function applyListDelete(k,v){
   else if(k==="resources"){const fb=(world.lists.resources.find(x=>x!==v))||"Grains";P.forEach(p=>{if(p.resource===v)p.resource=fb;});}
   else if(k==="hiddenResources"){P.forEach(p=>{if(p.hidden===v)p.hidden="";});}
   else if(k==="governments"){const fb=(world.lists.governments.find(x=>x!==v))||"";R.forEach(r=>{if(r.government===v)r.government=fb;});}
-  else if(k==="economies"){const fb=(world.lists.economies.find(x=>x!==v))||"";R.forEach(r=>{if(r.economy===v)r.economy=fb;});}
+  else if(k==="economies"){const fb=(world.lists.economies.find(x=>x!==v))||"Primitive";R.forEach(r=>{if(r.economy===v)r.economy=fb;});P.forEach(p=>{let ch=false;(p.pops||[]).forEach(q=>{if(q.economy===v){q.economy=fb;ch=true;}});if(ch)deriveProvince(p);});}
 }
-const LIST_KEYS=[["religions","Religions"],["cultures","Cultures"],["races","Races"],["languages","Languages"],["terrains","Terrains"],["settlements","Settlement tiers"],["resources","Resources"],["hiddenResources","Strategic resources"],["features","Features"],["governments","Government types"],["economies","Economy types"]];
+const LIST_KEYS=[["religions","Religions"],["cultures","Cultures"],["races","Races"],["languages","Languages"],["terrains","Terrains"],["settlements","Settlement tiers"],["resources","Resources"],["hiddenResources","Strategic resources"],["features","Features"],["governments","Government types"],["economies","Modes of Production"]];
 const MODE_LIST={religion:"religions",culture:"cultures",race:"races",language:"languages",terrain:"terrains",settlement:"settlements",resource:"resources",economy:"economies"};
 function randomizeCategory(k){
   world.colors[k]=world.colors[k]||{};
@@ -2927,7 +2985,7 @@ const MAPMODE_BAR=[
   ["language","🗣","Language (dominant)"],
   ["population","👥","Population"],
   ["settlement","🏘","Settlements"],
-  ["economy","💰","Economy — by country (unclaimed = Primitive)"],
+  ["economy","💰","Mode of Production (dominant pop)"],
 ];
 let _mmOpen=false;   // mobile: is the map-mode picker expanded?
 function buildMapmodeBar(){
@@ -2964,7 +3022,7 @@ function updateWorldPop(){
   el.textContent="👥 "+total.toLocaleString();
   if($("#popPanel")) buildWorldPopPanel();   // keep an open breakdown fresh
 }
-const POP_PANEL_AXES=[["race","races","Race"],["religion","religions","Religion"],["culture","cultures","Culture"],["language","languages","Language"]];
+const POP_PANEL_AXES=[["race","races","Race"],["religion","religions","Religion"],["culture","cultures","Culture"],["language","languages","Language"],["economy","economies","Mode of Production"]];
 function buildWorldPopPanel(){
   const panel=$("#popPanel"); if(!panel)return;
   const grand=world.provinces.reduce((a,p)=>a+(p.population||0),0);
@@ -3004,6 +3062,16 @@ function wireTopbar(){
   const bp=$("#btnPing"); if(bp)bp.onclick=togglePing; buildPingBar();
   const br=$("#btnRuler"); if(br)br.onclick=toggleRuler;
   $$(".btn.tool").forEach(b=>b.onclick=()=>setTool(b.dataset.tool));
+  const pf=$("#provFind");
+  if(pf){
+    pf.addEventListener("input",()=>renderProvFind(pf.value));
+    pf.addEventListener("focus",()=>{ if(pf.value)renderProvFind(pf.value); });
+    pf.addEventListener("blur",()=>setTimeout(hideProvFind,180));
+    pf.addEventListener("keydown",e=>{
+      if(e.key==="Enter"){ const list=matchProvinces(pf.value); if(list[0]){ pf.value=list[0].name; zoomToProvince(list[0]); hideProvFind(); pf.blur(); } }
+      else if(e.key==="Escape"){ hideProvFind(); pf.blur(); }
+    });
+  }
   $("#worldView").onclick=()=>{worldView();};
   $("#btnNames").onclick=()=>{state.showNames=!state.showNames;$("#btnNames").classList.toggle("on",state.showNames);renderMap();flash(state.showNames?"Landmass names shown — drag a name to reposition it.":"Landmass names hidden.");};
   $("#btnNames").classList.toggle("on",state.showNames);
