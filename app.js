@@ -2437,6 +2437,12 @@ function exportRender(rect,outW,mode,legend,legendPos,provNames=true){
       ctx.drawImage(lc.canvas,lc.x,lc.y,lc.w,lc.h);}});
   if(s>0.12){ctx.lineWidth=1/s;ctx.strokeStyle="rgba(90,98,112,.45)";}
   for(const gp of _provGeo){const pts=gp.pts;if(!pts.length)continue;ctx.beginPath();ctx.moveTo(pts[0][0],pts[0][1]);for(let i=1;i<pts.length;i++)ctx.lineTo(pts[i][0],pts[i][1]);ctx.closePath();ctx.fillStyle=provinceFill(gp.p);ctx.fill();if(s>0.12)ctx.stroke();}
+  // resource map: gold outline on prestige-good provinces (no icons — outline only, to distinguish them)
+  if(mode==="resource"){
+    ctx.lineWidth=2.5/s; ctx.strokeStyle="#e8b21f"; ctx.lineJoin="round";
+    for(const gp of _provGeo){ if(!isPrestige(gp.p.resource))continue; const pts=gp.pts; if(!pts.length)continue;
+      ctx.beginPath(); ctx.moveTo(pts[0][0],pts[0][1]); for(let i=1;i<pts.length;i++)ctx.lineTo(pts[i][0],pts[i][1]); ctx.closePath(); ctx.stroke(); }
+  }
   drawWater(ctx,s);
   if(renderMode!=="political") drawRealmBorders(ctx);
   ctx.setTransform(1,0,0,1,0,0);ctx.textAlign="center";ctx.textBaseline="middle";
@@ -2495,7 +2501,8 @@ function exportRender(rect,outW,mode,legend,legendPos,provNames=true){
 }
 function doExport(rect,outW,mode,legend,legendPos){
   if(rect.w<=0||rect.h<=0){flash("Nothing to export.");return;}
-  const cv=exportRender(rect,outW,mode,legend,legendPos);
+  // only the Province map labels every province; all other maps export without province names
+  const cv=exportRender(rect,outW,mode,legend,legendPos,mode==="provincemap");
   const a=document.createElement("a");a.href=cv.toDataURL("image/png");a.download=`${world.name}-${mode}.png`;a.click();
   flash("Exported "+(MODE_TITLES[mode]||mode)+" map as PNG.");
 }
