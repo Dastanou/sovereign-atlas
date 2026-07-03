@@ -1555,7 +1555,16 @@ function renderRealmEditor(){
     <div class="btnrow"><button class="btn danger" id="rdel">Delete realm</button></div>
     <div class="note">Tip: with Paint active, click or drag across provinces to assign them here.</div>
   `;
-  const b=(id,fn)=>{$("#"+id).addEventListener("input",e=>{fn(e.target.value);renderMap();renderLeft();markDirty();});};
+  // Attach delete first so nothing later in the wiring can block it.
+  $("#rdel").addEventListener("click",()=>{
+    if(!confirm("Delete realm? Provinces become unclaimed."))return;
+    beginEdit();
+    world.provinces.forEach(p=>{if(p.realmId===r.id){const old=provTrackedValue(p,"realm");p.realmId=null;autoLog(p,"realm",old);}});
+    world.realms=world.realms.filter(x=>x.id!==r.id);state.selRealm=null;
+    renderMap();renderLeft();$("#inspector").innerHTML='<div class="empty">Realm deleted.</div>';markDirty();
+    flash("Realm deleted — its provinces are now unclaimed.");
+  });
+  const b=(id,fn)=>{const e=$("#"+id); if(e)e.addEventListener("input",ev=>{fn(ev.target.value);renderMap();renderLeft();markDirty();});};
   $("#rname").addEventListener("input",e=>{r.name=e.target.value;renderLeft();renderMap();markDirty();});
   $("#rcolor").addEventListener("input",e=>{r.color=e.target.value;renderMap();renderLeft();markDirty();});
   b("rgov",v=>r.government=v);b("recon",v=>r.economy=v);b("rrel",v=>r.stateReligion=v);
@@ -1615,13 +1624,6 @@ function renderRealmEditor(){
     if(!r.capitalId && other.capitalId)r.capitalId=other.capitalId;
     world.realms=world.realms.filter(x=>x.id!==oid);
     renderMap();renderLeft();renderRealmEditor();markDirty();flash(`Merged ${other.name} into ${r.name}.`);
-  });
-  $("#rdel").addEventListener("click",()=>{
-    if(!confirm("Delete realm? Provinces become unclaimed."))return;
-    beginEdit();
-    world.provinces.forEach(p=>{if(p.realmId===r.id){const old=provTrackedValue(p,"realm");p.realmId=null;autoLog(p,"realm",old);}});
-    world.realms=world.realms.filter(x=>x.id!==r.id);state.selRealm=null;
-    renderMap();renderLeft();ins.innerHTML='<div class="empty">Realm deleted.</div>';markDirty();
   });
 }
 
