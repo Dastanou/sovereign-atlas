@@ -197,3 +197,41 @@ body.panels-hidden #left, body.panels-hidden #right{display:none}
 
 .hidden{display:none}
 .kbd{background:var(--panel2); border:1px solid var(--line); border-radius:5px; padding:1px 6px; font-size:12px}
+
+/* ---------- mobile ---------- */
+#insClose{display:none}
+@media (max-width:760px){
+  /* compact, horizontally scrollable top bar with bigger tap targets */
+  #topbar{gap:6px 6px; padding:6px 8px; flex-wrap:nowrap; overflow-x:auto; -webkit-overflow-scrolling:touch}
+  #topbar > *{flex:0 0 auto}
+  .brand{font-size:14px}
+  .mini{display:none}
+  .txt{width:120px}
+  .btn{padding:9px 11px}
+  .sel{padding:8px 8px}
+
+  /* map is full-screen; side panels become overlays */
+  #left{position:absolute; z-index:30; top:0; bottom:0; left:0; width:82vw; max-width:320px;
+    transform:translateX(-104%); transition:transform .25s ease; box-shadow:4px 0 26px #00000033; display:flex}
+  body.m-drawer #left{transform:none}
+  body.panels-hidden #left{display:flex}
+
+  #right{position:absolute; z-index:30; left:0; right:0; bottom:0; top:auto; width:auto;
+    border-left:none; border-top:1px solid var(--line); border-radius:16px 16px 0 0; max-height:66vh;
+    transform:translateY(105%); transition:transform .25s ease; box-shadow:0 -8px 30px #00000033; display:flex}
+  body.has-sel #right{transform:none}
+  body.panels-hidden #right{display:flex}
+
+  #insClose{display:block; position:absolute; top:8px; right:10px; z-index:3; width:36px; height:36px;
+    background:var(--panel); border:1px solid var(--line); border-radius:9px; font-size:16px; color:var(--ink)}
+  #inspector{padding-top:46px}
+
+  /* map-mode buttons wrap into a centred cluster along the bottom */
+  #mapmodeBar{left:8px; right:8px; bottom:8px; justify-content:center; flex-wrap:wrap-reverse; gap:7px}
+  .mmbtn{width:46px; height:46px; font-size:19px}
+  .mmkey{font-size:10px}
+  #zoomctl{left:8px; bottom:8px}
+  #zoomctl .btn{width:40px; height:40px; font-size:18px}
+  #pingBar{top:8px; gap:6px; padding:5px 7px; max-width:96vw}
+  .modal{width:96vw; padding:14px 14px}
+}

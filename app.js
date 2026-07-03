@@ -1388,10 +1388,12 @@ function selectProvince(id){
   state.selProvince=id;state.selRealm=null;state.selWater=null;state.selLabel=null;
   const p=world.provinces.find(p=>p.id===id);
   if(p) state.focusedContinent=p.continentId;
+  document.body.classList.add("has-sel");
   renderMap();renderLeft();renderProvinceEditor();
 }
 function selectRealm(id){
   state.selRealm=id;state.selProvince=null;state.selWater=null;state.selLabel=null;state.paintUnclaim=false;
+  document.body.classList.add("has-sel");
   renderLeft();renderRealmEditor();
 }
 function selectContinent(id){
@@ -2298,6 +2300,64 @@ function setupMapInteraction(){
     if(ev.key==="e")setTool("nodes");
   });
   window.addEventListener("resize",requestRender);
+  setupTouch(cv);
+}
+// ---- touch controls (mobile): one-finger pan, pinch zoom, tap to select ----
+function setupTouch(cv){
+  let t={};
+  const worldAt=(cx,cy)=>{const r=cv.getBoundingClientRect();return [state.cam.x+(cx-r.left)/state.cam.scale, state.cam.y+(cy-r.top)/state.cam.scale];};
+  cv.addEventListener("touchstart",ev=>{
+    if(ev.touches.length===2){
+      const a=ev.touches[0],b=ev.touches[1];
+      t={mode:"pinch",dist:Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY),mx:(a.clientX+b.clientX)/2,my:(a.clientY+b.clientY)/2};
+      return;
+    }
+    if(ev.touches.length!==1)return;
+    const tt=ev.touches[0];
+    if(state.pingOn && state.pingTool==="brush"){ const w=worldAt(tt.clientX,tt.clientY); _curStroke={color:state.pingColor,width:state.pingWidth/state.cam.scale,pts:[[w[0],w[1]]]}; pingLayer.strokes.push(_curStroke); t={mode:"draw"}; return; }
+    if(state.pingOn && state.pingTool==="erase"){ t={mode:"erase"}; const w=worldAt(tt.clientX,tt.clientY); pingEraseAtWorld(w[0],w[1]); return; }
+    t={mode:"pan",x:tt.clientX,y:tt.clientY,sx:tt.clientX,sy:tt.clientY,moved:false};
+  },{passive:false});
+  cv.addEventListener("touchmove",ev=>{
+    ev.preventDefault();
+    if(t.mode==="pinch" && ev.touches.length===2){
+      const a=ev.touches[0],b=ev.touches[1];
+      const dist=Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY), mx=(a.clientX+b.clientX)/2, my=(a.clientY+b.clientY)/2;
+      const r=cv.getBoundingClientRect(), px=mx-r.left, py=my-r.top;
+      const wx=state.cam.x+px/state.cam.scale, wy=state.cam.y+py/state.cam.scale;
+      state.cam.scale=Math.max(0.02,Math.min(40,state.cam.scale*(dist/(t.dist||dist))));
+      state.cam.x=wx-px/state.cam.scale-(mx-t.mx)/state.cam.scale;
+      state.cam.y=wy-py/state.cam.scale-(my-t.my)/state.cam.scale;
+      t.dist=dist; t.mx=mx; t.my=my; requestRender(); return;
+    }
+    if(ev.touches.length!==1)return; const tt=ev.touches[0];
+    if(t.mode==="draw" && _curStroke){ const w=worldAt(tt.clientX,tt.clientY); _curStroke.pts.push([w[0],w[1]]); requestRender(); return; }
+    if(t.mode==="erase"){ const w=worldAt(tt.clientX,tt.clientY); pingEraseAtWorld(w[0],w[1]); return; }
+    if(t.mode==="pan"){ const dx=tt.clientX-t.x, dy=tt.clientY-t.y; if(Math.hypot(tt.clientX-t.sx,tt.clientY-t.sy)>7)t.moved=true;
+      state.cam.x-=dx/state.cam.scale; state.cam.y-=dy/state.cam.scale; t.x=tt.clientX; t.y=tt.clientY; requestRender(); }
+  },{passive:false});
+  cv.addEventListener("touchend",ev=>{
+    if(t.mode==="draw"){ _curStroke=null; savePings(); }
+    else if(t.mode==="erase"){ savePings(); }
+    else if(t.mode==="pan" && !t.moved && ev.changedTouches.length){ const tt=ev.changedTouches[0]; const [wx,wy]=worldAt(tt.clientX,tt.clientY); handleTapWorld(wx,wy); }
+    t={};
+  });
+}
+function pingEraseAtWorld(wx,wy){
+  const r=(state.pingWidth*2+12)/state.cam.scale, r2=r*r;
+  pingLayer.strokes=pingLayer.strokes.filter(st=>!(st.pts||[]).some(pt=>{const dx=pt[0]-wx,dy=pt[1]-wy;return dx*dx+dy*dy<r2;}));
+  pingLayer.pins=pingLayer.pins.filter(pn=>{const dx=pn.x-wx,dy=pn.y-wy;return dx*dx+dy*dy>r2;});
+  requestRender();
+}
+function handleTapWorld(wx,wy){
+  if(state.rulerOn){ if(state.rulerDone){state.rulerPts=[];state.rulerDone=false;} state.rulerPts.push([wx,wy]); state.rulerCur=null; requestRender(); return; }
+  if(state.pingOn && state.pingTool==="pin"){ pingLayer.pins.push({x:wx,y:wy,color:state.pingColor}); savePings(); requestRender(); return; }
+  const p=provinceAt(wx,wy);
+  if(p){ if(state.tool==="paint"&&paintReady()){ if(paintProvince(p)){_labelsDirty=true;renderMap();renderLeft();markDirty();} } else selectProvince(p.id); return; }
+  // tapped empty space: on mobile this dismisses the bottom sheet
+  document.body.classList.remove("has-sel");
+  const c=continentAt(wx,wy); if(c) state.focusedContinent=c.id;
+  requestRender();
 }
 
 /* ============================================================
@@ -2908,6 +2968,7 @@ function _popPanelDismiss(ev){
   if(panel.contains(ev.target)||ev.target.id==="worldPop")return;
   panel.remove(); document.removeEventListener("click",_popPanelDismiss,true);
 }
+function updateMobile(){ document.body.classList.toggle("mobile", window.innerWidth<=760); }
 function wireTopbar(){
   $("#worldName").addEventListener("input",e=>{world.name=e.target.value;markDirty();});
   $("#eraSelect").addEventListener("change",e=>{world.currentEraId=e.target.value;markDirty();});
@@ -2921,7 +2982,11 @@ function wireTopbar(){
   $("#worldView").onclick=()=>{worldView();};
   $("#btnNames").onclick=()=>{state.showNames=!state.showNames;$("#btnNames").classList.toggle("on",state.showNames);renderMap();flash(state.showNames?"Landmass names shown — drag a name to reposition it.":"Landmass names hidden.");};
   $("#btnNames").classList.toggle("on",state.showNames);
-  $("#btnPanels").onclick=()=>{const hidden=document.body.classList.toggle("panels-hidden");$("#btnPanels").classList.toggle("on",hidden);renderMap();flash(hidden?"Side panels hidden — click Panels again to bring them back.":"Side panels shown.");};
+  $("#btnPanels").onclick=()=>{
+    if(document.body.classList.contains("mobile")){ const open=document.body.classList.toggle("m-drawer"); $("#btnPanels").classList.toggle("on",open); return; }
+    const hidden=document.body.classList.toggle("panels-hidden");$("#btnPanels").classList.toggle("on",hidden);renderMap();flash(hidden?"Side panels hidden — click Panels again to bring them back.":"Side panels shown.");};
+  const insClose=$("#insClose"); if(insClose)insClose.onclick=()=>{document.body.classList.remove("has-sel");document.body.classList.remove("m-drawer");};
+  updateMobile(); window.addEventListener("resize",updateMobile);
   $("#btnLists").onclick=openLists;
   $("#manageEras").onclick=openEras;
   $("#btnSave").onclick=()=>saveWorld(false);
