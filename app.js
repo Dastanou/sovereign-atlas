@@ -3492,6 +3492,7 @@ async function openMenu(){
       <button class="btn" id="mExport">⬇ Export JSON</button>
       <button class="btn" id="mArchiveData">🗄 Archive full data to disk…</button>
       <button class="btn" id="mPublish">🌐 Publish player viewer…</button>
+      <button class="btn" id="mGitStatus">🔎 Check publish/git status…</button>
       <button class="btn" id="mExportSvg">⬇ Export map (PNG)…</button>
       <button class="btn" id="mExportAll">⬇ Export maps (Herald)…</button>
       <button class="btn" id="mImport">⬆ Import / restore JSON</button>
@@ -3518,6 +3519,7 @@ async function openMenu(){
   $("#mPopulate").onclick=()=>{closeModal();openGMScreen();};
   $("#mArchiveData").onclick=archiveDataToDisk;
   $("#mPublish").onclick=publishViewer;
+  $("#mGitStatus").onclick=checkGitStatus;
   $("#mExportSvg").onclick=()=>{closeModal();openExport();};
   $("#mExportAll").onclick=()=>{closeModal();openExportAll();};
   $("#mImport").onclick=()=>$("#fileInput").click();
@@ -3561,6 +3563,16 @@ async function archiveDataToDisk(){
     if(j.ok)flash("Archived full data → "+j.folder+"\\"+name);
     else flash("Error: "+(j.error||"archive failed"));
   }catch(e){flash("Error: "+e.message);}
+}
+async function checkGitStatus(){
+  const folder=prompt("Check the git/publish status of this folder:",_viewerPublishDir);
+  if(!folder)return; _viewerPublishDir=folder.trim();
+  flash("Checking git status…");
+  try{
+    const r=await fetch("/api/gitstatus",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({folder:_viewerPublishDir})});
+    const j=await r.json();
+    alert(j.output||j.error||"No response.");
+  }catch(e){alert("Error: "+e.message);}
 }
 let flashTimer=null;
 function flash(msg){const h=$("#hint");h.textContent=msg;h.classList.add("show");clearTimeout(flashTimer);flashTimer=setTimeout(()=>h.classList.remove("show"),2600);}
