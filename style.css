@@ -64,7 +64,7 @@ body.editing #topbar{background:linear-gradient(180deg,#eef4ec,#e3ece0)}
 
 .pane{border-bottom:1px solid var(--line); display:flex; flex-direction:column; min-height:0}
 /* share the sidebar height so each list scrolls inside its own pane */
-#left > .pane:first-child{flex:1 1 0}      /* Continents */
+#left > .pane:first-child{flex:0.5 1 0}    /* Continents (smaller) */
 #left > .pane.grow{flex:2 1 0}             /* Realms (bigger share) */
 #left > .pane:last-child{flex:0 0 auto}    /* Legend (fixed) */
 .paneHead{flex:0 0 auto; display:flex; align-items:center; justify-content:space-between;
@@ -82,7 +82,7 @@ body.editing #topbar{background:linear-gradient(180deg,#eef4ec,#e3ece0)}
 .row .name{flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
 .row .sub{color:var(--muted); font-size:12px}
 
-.legend{padding:8px 10px; overflow:auto; max-height:170px}
+.legend{padding:8px 10px; overflow:auto; max-height:340px}
 .legend .li{display:flex; align-items:center; gap:8px; padding:2px 0; font-size:13px}
 
 /* ---------- map ---------- */
@@ -116,6 +116,7 @@ body.panels-hidden #left, body.panels-hidden #right{display:none}
 
 /* ping / annotation toolbar (top-centre of the map) */
 #map.pinging{cursor:crosshair}
+#map.measuring{cursor:crosshair}
 #pingBar{position:absolute; top:12px; left:50%; transform:translateX(-50%); display:flex;
   gap:10px; align-items:center; background:#fffffff2; border:1px solid var(--line);
   border-radius:12px; padding:6px 10px; box-shadow:0 4px 16px #0000001f; flex-wrap:wrap; z-index:5}

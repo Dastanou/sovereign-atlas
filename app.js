@@ -29,15 +29,29 @@ window.onerror = function(msg, src, line, col){
   const m=document.getElementById("errbannermsg"); if(m)m.textContent="⚠ "+msg+"  ("+line+":"+col+")";
 };
 
+/* ---------- resources: regular, prestige (enhanced tiers) & hidden/strategic ---------- */
+const REGULAR_RESOURCES=["Grains","Stone","Timber","Fish","Livestock","Cloth","Copper","Stimulants","Semi-Precious Gems","Dyes","Silver","Salt"];
+// prestige good -> its base regular resource
+const RESOURCE_PRESTIGE={Fruit:"Grains",Sugar:"Grains",Marble:"Stone",Obsidian:"Stone",Hardwood:"Timber",Pitch:"Timber",Whales:"Fish",Honey:"Livestock",Ivory:"Livestock",Papyrus:"Cloth",Silk:"Cloth",Tin:"Copper",Intoxicants:"Stimulants","Precious Gems":"Semi-Precious Gems","Royal Dyes":"Dyes",Gold:"Silver",Spices:"Salt"};
+function isPrestige(res){ return RESOURCE_PRESTIGE[res]!==undefined; }
+function prestigeOf(base){ return Object.keys(RESOURCE_PRESTIGE).filter(k=>RESOURCE_PRESTIGE[k]===base); }
+// canonical resource list, ordered base-then-its-prestige-goods
+const RESOURCE_LIST=(()=>{const out=[];REGULAR_RESOURCES.forEach(b=>{out.push(b);prestigeOf(b).forEach(p=>out.push(p));});return out;})();
+const HIDDEN_RESOURCES=["Horses","Iron","Coal","Saltpeter","Oil","Uranium"];
+const HIDDEN_RES_GLYPH={Horses:"🐎",Iron:"⛓️",Coal:"◾",Saltpeter:"🧨",Oil:"🛢️",Uranium:"☢️"};
+// migrate old default resource names to the new set
+const RES_MIGRATE={Grain:"Grains",Gold:"Silver",Gems:"Semi-Precious Gems",Wine:"Stimulants",Skystone:"Stone","Magical Reagents":"Dyes","Enchanted Items":"Gold","Aether Crystals":"Precious Gems",Iron:"Copper"};
+
 /* ---------- default lists ---------- */
 const DEFAULT_LISTS = {
   religions: ["The Old Faith", "Lumenism", "Ancestor Cult", "The Deep Pact", "Unbelief"],
   cultures: ["Veshkan", "Aurelian", "Highland Clans", "Skyborn", "Marsh-folk"],
   races: ["Human", "Elf", "Dwarf", "Orc", "Halfling", "Goblin", "Dragonborn", "Tiefling", "Aarakocra"],
   languages: ["Common", "Old Veshkan", "High Aurelian", "Cant", "Draconic"],
-  terrains: ["Plains", "Forest", "Hills", "Mountains", "Desert", "Marsh", "Tundra", "Jungle", "Coast", "Wasteland", "Floating Reef"],
+  terrains: ["Plains", "Farmlands", "Steppe", "Savannah", "Forest", "Taiga", "Jungle", "Hills", "Mountains", "Desert", "Marsh", "Tundra", "Glacial", "Coast", "Wasteland", "Floating Reef"],
   settlements: ["Uninhabited", "Nomadic", "Village", "Town", "City", "Megalopolis"],
-  resources: ["Grain", "Livestock", "Fish", "Timber", "Iron", "Gold", "Gems", "Wine", "Spices", "Cloth", "Magical Reagents", "Enchanted Items", "Skystone", "Aether Crystals"],
+  resources: RESOURCE_LIST.slice(),
+  hiddenResources: HIDDEN_RESOURCES.slice(),
   features: ["Impact Crater", "Arcane Scar", "Ancient Ruin", "Ley-line Nexus", "Floating Monolith", "Sunken City", "Volcanic Rift", "Sacred Grove"],
   governments: ["Feudal Monarchy", "Absolute Monarchy", "Merchant Republic", "Theocracy", "Magocracy", "Tribal Confederation", "City-State", "Hegemony", "Imperial", "Council"],
   economies: ["Primitive", "Agrarian", "Trade", "Mercantile", "Industrial", "Arcane-Industrial", "Pastoral", "Plunder", "Mixed"]
@@ -49,8 +63,19 @@ function hashColor(str){let h=0;for(let i=0;i<(str||"").length;i++)h=(h*31+str.c
 function listColor(list, name){const i=list.indexOf(name);return i>=0?PALETTE[i%PALETTE.length]:hashColor(name);}
 function ramp(t){t=Math.max(0,Math.min(1,t));const a=[239,122,95],b=[95,208,160];return `rgb(${a.map((v,i)=>Math.round(v+(b[i]-v)*t)).join(",")})`;}
 
-const TERRAIN_COLORS={Plains:"#a7c957",Forest:"#386641",Hills:"#9c8246",Mountains:"#8d99ae",Desert:"#e9c46a",Marsh:"#52796f",Tundra:"#cad2c5",Jungle:"#2d6a4f",Coast:"#76c7c0",Wasteland:"#6d597a","Floating Reef":"#48bfe3"};
+const TERRAIN_COLORS={Plains:"#a7c957",Farmlands:"#c9d76a",Steppe:"#cabf76",Savannah:"#d3a24a",Forest:"#386641",Taiga:"#566f4d",Jungle:"#2d6a4f",Hills:"#9c8246",Mountains:"#8d99ae",Desert:"#e9c46a",Marsh:"#52796f",Tundra:"#cad2c5",Glacial:"#cfe3ec",Coast:"#76c7c0",Wasteland:"#6d597a","Floating Reef":"#48bfe3"};
 const SETTLE_COLORS={Uninhabited:"#26304a",Nomadic:"#b79b6a",Village:"#9bb25f",Town:"#e9c46a",City:"#f4a261",Megalopolis:"#e76f51"};
+// terrain hospitability (population multiplier): grassland/coast thrive, mountains/desert/tundra are harsh
+const TERRAIN_HAB={Plains:1.0,Farmlands:1.25,Steppe:0.55,Savannah:0.6,Coast:1.0,Forest:0.65,Taiga:0.3,Jungle:0.6,Hills:0.5,Marsh:0.4,Desert:0.22,Mountains:0.2,Tundra:0.2,Glacial:0.08,Wasteland:0.1,"Floating Reef":0.5};
+function terrainHab(t){ const v=TERRAIN_HAB[t]; return v!=null?v:0.6; }
+// province feature categories: Wonders (structures), Resource features, and Misc
+const FEATURE_CATS_DEFAULT={"Ancient Ruin":"wonder","Floating Monolith":"wonder","Sunken City":"wonder","Sacred Grove":"wonder","Ley-line Nexus":"resource","Volcanic Rift":"resource","Impact Crater":"misc","Arcane Scar":"misc"};
+const FEATURE_CAT_COLORS={wonder:"#e0b34e",resource:"#5fb26a",misc:"#8a93a6"};
+const FEATURE_CAT_ORDER=["wonder","resource","misc"];
+const FEATURE_CAT_LABEL={wonder:"Wonder",resource:"Resource feature",misc:"Misc"};
+const FEATURE_CAT_GLYPH={wonder:"🏛️",resource:"💎",misc:"❖"};
+function featureCat(name){ return (world.featureCats&&world.featureCats[name])||"misc"; }
+function setFeatureCat(name,cat){ world.featureCats=world.featureCats||{}; world.featureCats[name]=cat; }
 
 /* ============================================================
    STATE
@@ -73,10 +98,17 @@ let state = {
   editMode: false,          // map-drawing screen on/off
   showNames: true,          // show landmass names on the map
   terrainOverlay: false,    // resource mode: overlay terrain-region outlines as a painting aid
+  hiddenResMode: false,     // resource mode: show & paint hidden/strategic resources
   pingOn: false,            // annotation/ping overlay active
   pingTool: "brush",        // brush | pin | erase | pan
   pingColor: "#e23b3b",
   pingWidth: 6,
+  rulerOn: false,           // distance measuring tool
+  rulerPts: [],             // world-coord points of the current measurement
+  rulerCur: null,           // live cursor point (world coords)
+  rulerDone: false,         // measurement finished (frozen) — next click starts a new one
+  expandMode: "conquer",    // realm painting: conquer | settle | override
+  settleParams: {pct:8, byReligion:false, byCulture:false, byLanguage:false, byRace:false},
   labelDrag: null,          // continentId whose name is being dragged
   customDrag: null,         // custom label id being dragged
   selLabel: null,           // selected custom label id
@@ -160,6 +192,20 @@ function normalize(w){
   { const pc=w.lists.economies.indexOf("Primitive Communism"); if(pc>=0)w.lists.economies[pc]="Primitive"; }
   if(!w.lists.economies.includes("Primitive")) w.lists.economies.unshift("Primitive");
   w.realms.forEach(r=>{ if(r.economy==="Primitive Communism")r.economy="Primitive"; });
+  // ensure newer terrain types exist in older worlds
+  ["Farmlands","Steppe","Savannah","Taiga","Glacial"].forEach(t=>{ if(!w.lists.terrains.includes(t)) w.lists.terrains.push(t); });
+  // feature categories (Wonder / Resource / Misc)
+  w.featureCats=w.featureCats||{};
+  (w.lists.features||[]).forEach(f=>{ if(!w.featureCats[f]) w.featureCats[f]=FEATURE_CATS_DEFAULT[f]||"misc"; });
+  // resource overhaul: one-time swap to the canonical regular+prestige list + province migration
+  w.lists.hiddenResources=(w.lists.hiddenResources&&w.lists.hiddenResources.length)?w.lists.hiddenResources:HIDDEN_RESOURCES.slice();
+  if(!w.resourcesV2){
+    w.lists.resources=RESOURCE_LIST.slice();
+    const resSet=new Set(w.lists.resources);
+    w.provinces.forEach(p=>{ if(!resSet.has(p.resource)) p.resource=RES_MIGRATE[p.resource]||"Grains"; });
+    w.resourcesV2=true;
+  }
+  w.provinces.forEach(p=>{ p.hidden=p.hidden||""; });
   w.provinces.forEach(p=>{
     ["religion","culture","race","language"].forEach(k=>p[k]=p[k]||[]);
     p.features=p.features||[]; p.history=p.history||[];
@@ -232,6 +278,7 @@ function migratePops(p,lists){
 function setProvincePopulation(p,target){
   target=Math.max(0,Math.round(target||0));
   p.pops=Array.isArray(p.pops)?p.pops:[];
+  if(target<=0){ p.pops=[]; deriveProvince(p); return; }
   const cur=p.pops.reduce((a,q)=>a+(q.size||0),0);
   if(!p.pops.length){
     if(target>0){const r=world.realms.find(x=>x.id===p.realmId);
@@ -248,6 +295,64 @@ function worldPopBreakdown(key){
   for(const p of world.provinces)for(const q of (p.pops||[])){const v=q[key]||"—"; if(!(q.size>0))continue; m[v]=(m[v]||0)+q.size; tot+=q.size;}
   const rows=Object.entries(m).map(([name,size])=>({name,size,pct:tot?size/tot*100:0})).sort((a,b)=>b.size-a.size);
   return {rows,total:tot};
+}
+// ---- population simulation ----
+function settlePopFactor(s){                 // 0 = no people; higher tiers hold more
+  const idx=world.lists.settlements.indexOf(s);
+  const table=[0,0.4,1,1.8,3,4.5];           // Uninhabited, Nomadic, Village, Town, City, Megalopolis
+  if(idx<=0) return 0;
+  return table[idx]!=null?table[idx]:1.8;
+}
+function keyLocPopFactor(p){
+  const role=_keyLocMap[p.id];
+  if(role==="capital") return world.capitalBoost??1.8;
+  if(role==="admin")   return world.adminBoost??1.3;
+  return 1;
+}
+function genProvincePop(p, baseline, variance, opt){
+  let f=baseline;
+  if(opt.terrain) f*=terrainHab(p.terrain);
+  if(opt.settle){ const sf=settlePopFactor(p.settlement); if(sf<=0) return 0; f*=sf; }
+  if(opt.key) f*=keyLocPopFactor(p);
+  f*= 1 + (Math.random()*2-1)*(variance||0);
+  return Math.max(0, Math.round(f));
+}
+function growProvincePop(p, growPct, variance, opt){
+  const cur=(p.pops||[]).reduce((a,q)=>a+(q.size||0),0);
+  if(cur<=0) return 0;                        // people only grow where people already are
+  let g=growPct/100;
+  if(opt.terrain) g*=terrainHab(p.terrain);   // hospitable places grow faster
+  g*= 1 + (Math.random()*2-1)*(variance||0);
+  return Math.max(0, Math.round(cur*(1+g)));
+}
+function provsInRect(rect){
+  const out=[]; for(const g of _provGeo){ if(g.cx>=rect.x&&g.cx<=rect.x+rect.w&&g.cy>=rect.y&&g.cy<=rect.y+rect.h)out.push(g.p); }
+  return out;
+}
+// realm growth with state-group prioritisation
+function matchesState(q, r, axes){
+  if(axes.religion && q.religion!==r.stateReligion) return false;
+  if(axes.culture  && q.culture !==r.dominantCulture) return false;
+  if(axes.language && q.language!==r.dominantLanguage) return false;
+  if(axes.race     && q.race    !==r.dominantRace) return false;
+  return true;
+}
+function ensureStatePop(p, r, axes){   // give the state group a foothold if it isn't present
+  p.pops=p.pops||[];
+  if(p.pops.some(q=>q.size>0 && matchesState(q,r,axes))) return;
+  const cur=p.pops.reduce((a,q)=>a+(q.size||0),0);
+  p.pops.push(newPop(Math.max(50,Math.round(cur*0.02)), r.stateReligion, r.dominantCulture, r.dominantRace, r.dominantLanguage));
+}
+function growRealmPops(p, growPct, variance, opt, r, prio){
+  if(prio.seed) ensureStatePop(p, r, prio.axes);
+  p.pops=p.pops||[];
+  const base=growPct/100 * (opt.terrain?terrainHab(p.terrain):1);
+  for(const q of p.pops){
+    let g=base*(1+(Math.random()*2-1)*variance);
+    if(prio.on && matchesState(q,r,prio.axes)) g=g*1.5+0.03;   // a slight edge for the state group
+    q.size=Math.max(0,Math.round(q.size*(1+g)));
+  }
+  deriveProvince(p);
 }
 
 /* ============================================================
@@ -554,6 +659,36 @@ function drawKeyLocations(ctx,ox,oy,s,cw,ch,sz){
       star(X,Y,sz);ctx.fillStyle="#f4c430";ctx.fill();ctx.lineWidth=Math.max(1.4,sz*0.18);ctx.strokeStyle="#6e5210";ctx.stroke();}
   });
 }
+// Feature icons: wonders on the Settlements map, resource features on the Resource map.
+function drawFeatureIcons(ctx,cam,s,cw,ch,cat){
+  const glyph=FEATURE_CAT_GLYPH[cat]||"❖", col=FEATURE_CAT_COLORS[cat]||"#8a93a6";
+  ctx.save(); ctx.font='15px "Segoe UI Emoji",system-ui,sans-serif'; ctx.textAlign="center"; ctx.textBaseline="middle";
+  for(const g of _provGeo){
+    if((g.maxx-g.minx)*s<12) continue;                 // skip tiny provinces at overview zoom
+    const p=g.p; if(!(p.features && p.features.some(f=>featureCat(f)===cat))) continue;
+    const X=(g.cx-cam.x)*s, Y=(g.cy-cam.y)*s-8; if(X<-20||Y<-20||X>cw+20||Y>ch+20) continue;
+    ctx.beginPath(); ctx.arc(X,Y,10,0,7); ctx.fillStyle="rgba(255,255,255,.85)"; ctx.fill();
+    ctx.lineWidth=1.6; ctx.strokeStyle=col; ctx.stroke();
+    ctx.fillText(glyph,X,Y);
+  }
+  ctx.restore();
+}
+// Resource-map icons: ✦ on prestige-good provinces, and (when toggled) hidden/strategic resource glyphs.
+function drawResourceIcons(ctx,cam,s,cw,ch){
+  const hid=state.hiddenResMode;
+  ctx.save(); ctx.font='14px "Segoe UI Emoji",system-ui,sans-serif'; ctx.textAlign="center"; ctx.textBaseline="middle";
+  for(const g of _provGeo){
+    if((g.maxx-g.minx)*s<12) continue;
+    const p=g.p, pres=isPrestige(p.resource), h=hid&&p.hidden;
+    if(!pres && !h) continue;
+    const feat=p.features&&p.features.some(f=>featureCat(f)==="resource");
+    const X=(g.cx-cam.x)*s, Y=(g.cy-cam.y)*s-8-(feat?15:0); if(X<-20||Y<-20||X>cw+20||Y>ch+20) continue;
+    ctx.beginPath(); ctx.arc(X,Y,10,0,7); ctx.fillStyle="rgba(255,255,255,.85)"; ctx.fill(); ctx.lineWidth=1.6;
+    if(h){ ctx.strokeStyle="#5a4a2a"; ctx.stroke(); ctx.fillStyle="#2b3038"; ctx.fillText(HIDDEN_RES_GLYPH[p.hidden]||"⛏",X,Y); }
+    else { ctx.strokeStyle="#c9930f"; ctx.stroke(); ctx.fillStyle="#c9930f"; ctx.fillText("✦",X,Y); }
+  }
+  ctx.restore();
+}
 // Wrap a set of words into lines that each fit maxW (measured in the current ctx.font).
 function wrapToWidth(ctx,words,maxW){
   if(words.length<=1)return words.slice();
@@ -701,11 +836,52 @@ function refreshPingBar(){
 }
 function togglePing(){
   state.pingOn=!state.pingOn;
+  if(state.pingOn && state.rulerOn){ state.rulerOn=false; state.rulerPts=[]; state.rulerCur=null; const br=$("#btnRuler"); if(br)br.classList.remove("on"); const mm=$("#map"); if(mm)mm.classList.remove("measuring"); }
   const b=$("#btnPing"); if(b)b.classList.toggle("on",state.pingOn);
   const bar=$("#pingBar"); if(bar)bar.classList.toggle("hidden",!state.pingOn);
   if(state.pingOn){ if(state.pingTool==="pan")state.pingTool="brush"; refreshPingBar(); flash("Ping mode on — draw to mark the map; ✋ to pan. Pings stay until the map is updated."); }
   else flash("Ping mode off.");
   const m=$("#map"); if(m)m.classList.toggle("pinging",state.pingOn && state.pingTool!=="pan");
+  renderMap();
+}
+/* ---------- ruler / distance measuring ---------- */
+function fmtDist(d){ return d>=100?Math.round(d).toLocaleString():(d>=10?d.toFixed(0):d.toFixed(1)); }
+function drawRuler(ctx,cam,s,cw,ch){
+  const pts=state.rulerPts||[]; if(!pts.length)return;
+  const all=pts.slice(); if(state.rulerOn && state.rulerCur) all.push(state.rulerCur);
+  const scr=p=>[(p[0]-cam.x)*s,(p[1]-cam.y)*s];
+  const per=distPerWorldUnit(), unit=unitLabel();
+  ctx.save(); ctx.lineCap="round"; ctx.lineJoin="round";
+  // dashed connecting line
+  if(all.length>=2){ ctx.setLineDash([7,5]); ctx.lineWidth=2.5; ctx.strokeStyle="#1c6fd6";
+    ctx.beginPath(); const [x0,y0]=scr(all[0]); ctx.moveTo(x0,y0);
+    for(let i=1;i<all.length;i++){const [X,Y]=scr(all[i]); ctx.lineTo(X,Y);} ctx.stroke(); ctx.setLineDash([]); }
+  // vertices
+  for(let i=0;i<all.length;i++){ const [X,Y]=scr(all[i]); ctx.beginPath(); ctx.arc(X,Y,4.5,0,7);
+    ctx.fillStyle="#fff"; ctx.fill(); ctx.lineWidth=2; ctx.strokeStyle="#1c6fd6"; ctx.stroke(); }
+  // segment distance labels + running total
+  ctx.font="600 12px system-ui,sans-serif"; ctx.textAlign="center"; ctx.textBaseline="middle";
+  let total=0;
+  for(let i=1;i<all.length;i++){ const a=all[i-1], b=all[i];
+    const d=Math.hypot(b[0]-a[0],b[1]-a[1])*per; total+=d;
+    const A=scr(a), B=scr(b), X=(A[0]+B[0])/2, Y=(A[1]+B[1])/2, label=fmtDist(d)+" "+unit;
+    ctx.lineWidth=3.5; ctx.strokeStyle="rgba(255,255,255,.92)"; ctx.strokeText(label,X,Y-9);
+    ctx.fillStyle="#14477e"; ctx.fillText(label,X,Y-9); }
+  if(all.length>=2){ const L=scr(all[all.length-1]), label="Σ "+fmtDist(total)+" "+unit;
+    ctx.font="700 13px system-ui,sans-serif";
+    ctx.lineWidth=4; ctx.strokeStyle="rgba(255,255,255,.92)"; ctx.strokeText(label,L[0],L[1]+18);
+    ctx.fillStyle="#0f3a6b"; ctx.fillText(label,L[0],L[1]+18); }
+  ctx.restore();
+}
+function toggleRuler(){
+  state.rulerOn=!state.rulerOn;
+  if(state.rulerOn){
+    if(state.pingOn){ state.pingOn=false; const pb=$("#pingBar"); if(pb)pb.classList.add("hidden"); const bpg=$("#btnPing"); if(bpg)bpg.classList.remove("on"); }
+    state.rulerPts=[]; state.rulerCur=null; state.rulerDone=false;
+    flash("Ruler on — click points to measure; double-click to finish, drag to pan, Esc to clear.");
+  } else { state.rulerPts=[]; state.rulerCur=null; state.rulerDone=false; flash("Ruler off."); }
+  const b=$("#btnRuler"); if(b)b.classList.toggle("on",state.rulerOn);
+  const m=$("#map"); if(m)m.classList.toggle("measuring",state.rulerOn);
   renderMap();
 }
 function ensureImg(href){
@@ -763,6 +939,12 @@ function drawFrame(){
     ctx.beginPath(); ctx.moveTo(pts[0][0],pts[0][1]); for(let i=1;i<pts.length;i++)ctx.lineTo(pts[i][0],pts[i][1]); ctx.closePath();
     ctx.fillStyle=provinceFill(gp.p); ctx.fill();
     if(drawStroke)ctx.stroke();
+  }
+  // prestige goods get a gold outline on the resource map
+  if(state.mapmode==="resource"){
+    ctx.lineWidth=2.5/s; ctx.strokeStyle="#e8b21f"; ctx.lineJoin="round";
+    for(const gp of _provGeo){ if(!isPrestige(gp.p.resource))continue; const pts=gp.pts; if(!pts.length)continue;
+      ctx.beginPath(); ctx.moveTo(pts[0][0],pts[0][1]); for(let i=1;i<pts.length;i++)ctx.lineTo(pts[i][0],pts[i][1]); ctx.closePath(); ctx.stroke(); }
   }
 
   // lakes & rivers on top of land
@@ -839,6 +1021,10 @@ function drawFrame(){
     ctx.globalAlpha=1;
   }
 
+  // feature icons: wonders on the Settlements map, resource features on the Resource map
+  if(state.mapmode==="settlement") drawFeatureIcons(ctx,cam,s,cw,ch,"wonder");
+  else if(state.mapmode==="resource"){ drawFeatureIcons(ctx,cam,s,cw,ch,"resource"); drawResourceIcons(ctx,cam,s,cw,ch); }
+
   // landmass names (toggleable, draggable, hidden for small landmasses)
   _contLabelRects={};
   if(state.showNames){
@@ -859,6 +1045,8 @@ function drawFrame(){
   drawCustomLabels(ctx, cam.x, cam.y, s, cw, ch, true);
   // ping pins (device space, constant size)
   drawPingsDevice(ctx, cam, s, cw, ch);
+  // ruler / distance measurement
+  drawRuler(ctx, cam, s, cw, ch);
 
   // distance scale bar, bottom-right
   drawScaleBar(ctx, s/distPerWorldUnit(), cw-16, ch-62, 12, unitLabel());   // sits above the map-mode bar
@@ -1097,16 +1285,84 @@ function joinRealmDefaults(p, realmId){
   }
   return ch;
 }
+// Realm expansion applied when a province is painted into realm r.
+function expandPaint(p, r){
+  const mode=state.expandMode||"conquer";
+  if(mode==="conquer") return;                      // add to realm, change nothing else
+  if(mode==="override"){                            // wipe pops, replace with same-size realm-identity pop
+    const total=(p.pops||[]).reduce((a,q)=>a+(q.size||0),0);
+    p.pops = total>0 ? [newPop(total, r.stateReligion, r.dominantCulture, r.dominantRace, r.dominantLanguage)] : [];
+    deriveProvince(p);
+    return;
+  }
+  if(mode==="settle"){                              // migrate % of realm pops into this province
+    const sp=state.settleParams||{}; const pct=Math.max(0,Math.min(100,sp.pct??8))/100; if(pct<=0)return;
+    const match=q=>{
+      if(sp.byReligion && q.religion!==r.stateReligion) return false;
+      if(sp.byCulture  && q.culture !==r.dominantCulture) return false;
+      if(sp.byLanguage && q.language!==r.dominantLanguage) return false;
+      if(sp.byRace     && q.race    !==r.dominantRace) return false;
+      return true;
+    };
+    const migrants={};
+    for(const src of world.provinces){
+      if(src===p || src.realmId!==r.id) continue;
+      let took=false;
+      for(const q of (src.pops||[])){
+        if(!(q.size>0) || !match(q)) continue;
+        const take=Math.floor(q.size*pct); if(take<=0) continue;
+        q.size-=take; took=true;
+        const key=[q.religion,q.culture,q.race,q.language].join("");
+        migrants[key]=(migrants[key]||0)+take;
+      }
+      if(took) deriveProvince(src);
+    }
+    p.pops=p.pops||[];
+    for(const key in migrants){ const [rel,cul,rac,lan]=key.split(""); p.pops.push(newPop(migrants[key],rel,cul,rac,lan)); }
+    deriveProvince(p);
+  }
+}
+function openExpandPopup(r){
+  const sp=state.settleParams||{pct:8}, m=state.expandMode||"conquer";
+  openModal(`<button class="btn close" onclick="closeModal()">✕ Close</button><h2>Expand ${esc(r.name)}</h2>
+    <p class="note">Choose what painting provinces into this realm does. This stays active until you change it.</p>
+    <div class="field"><label><input type="radio" name="exm" value="conquer" ${m==="conquer"?"checked":""}/> <b>Conquer</b> — add provinces to the realm and change nothing else (keep their people & details).</label></div>
+    <div class="field"><label><input type="radio" name="exm" value="settle" ${m==="settle"?"checked":""}/> <b>Settle</b> — add the province and move settlers into it from across the realm.</label></div>
+    <div id="exSettle" class="${m==="settle"?"":"hidden"}" style="margin:2px 0 8px 22px">
+      <div class="field2"><div class="field"><label>Settlers: % of matching pops taken from each realm province</label><input id="exPct" type="number" min="0" max="100" value="${sp.pct??8}"/></div><div class="field"></div></div>
+      <div class="note">Only pops matching the ticked traits migrate (tick none = anyone can settle):</div>
+      <label style="font-size:13px"><input type="checkbox" id="exRel" ${sp.byReligion?"checked":""}/> Religion</label>
+      <label style="font-size:13px;margin-left:10px"><input type="checkbox" id="exCul" ${sp.byCulture?"checked":""}/> Culture</label>
+      <label style="font-size:13px;margin-left:10px"><input type="checkbox" id="exLan" ${sp.byLanguage?"checked":""}/> Language</label>
+      <label style="font-size:13px;margin-left:10px"><input type="checkbox" id="exRac" ${sp.byRace?"checked":""}/> Race</label>
+    </div>
+    <div class="field"><label><input type="radio" name="exm" value="override" ${m==="override"?"checked":""}/> <b>Override</b> — replace the province's population with an equal number of the realm's own religion, culture, language & race.</label></div>
+    <div class="btnrow"><button class="btn primary" id="exGo">🖌 Start painting</button></div>`);
+  const syncSettle=()=>{const val=document.querySelector('input[name="exm"]:checked').value; $("#exSettle").classList.toggle("hidden",val!=="settle");};
+  $$('input[name="exm"]').forEach(el=>el.addEventListener("change",syncSettle));
+  $("#exGo").onclick=()=>{
+    state.expandMode=document.querySelector('input[name="exm"]:checked').value;
+    state.settleParams={pct:Math.max(0,Math.min(100,+$("#exPct").value||0)), byReligion:$("#exRel").checked, byCulture:$("#exCul").checked, byLanguage:$("#exLan").checked, byRace:$("#exRac").checked};
+    closeModal();
+    if(state.mapmode==="imported"){state.mapmode="political";const ms=$("#mapmode");if(ms)ms.value="political";}
+    selectRealm(r.id); setTool("paint");
+    flash("Painting "+r.name+" — "+state.expandMode+" mode. Click or drag across provinces.");
+    renderMap();
+  };
+}
 function paintProvince(p){   // returns true if it changed something (and auto-logs it)
   const m=state.mapmode;
   const fieldMap={political:"realm",terrain:"terrain",settlement:"settlement",resource:"resource",religion:"religion",culture:"culture",race:"race",language:"language",economy:"economy"};
   const field=fieldMap[m]; if(!field)return false;
   const old=provTrackedValue(p,field); let changed=false;
-  if(m==="political"){const v=state.paintUnclaim?null:state.selRealm; if(p.realmId!==v){p.realmId=v;changed=true; if(v)joinRealmDefaults(p,v);}}
+  if(m==="political"){const v=state.paintUnclaim?null:state.selRealm; if(p.realmId!==v){p.realmId=v;changed=true; if(v){const rr=world.realms.find(x=>x.id===v); if(rr)expandPaint(p,rr);}}}
   else{ const v=state.paintValue; if(v==null||v==="")return false;
     if(m==="terrain"){if(p.terrain!==v){p.terrain=v;changed=true;}}
     else if(m==="settlement"){if(p.settlement!==v){p.settlement=v;changed=true;}}
-    else if(m==="resource"){if(p.resource!==v){p.resource=v;changed=true;}}
+    else if(m==="resource"){
+      if(state.hiddenResMode){ const nv=(v==="__none__"?"":v); if(p.hidden!==nv){p.hidden=nv;changed=true;} }
+      else if(p.resource!==v){p.resource=v;changed=true;}
+    }
     else if(m==="economy"){ // set the realm's economy if claimed, else a per-province override
       if(p.realmId){const r=world.realms.find(x=>x.id===p.realmId); if(r&&r.economy!==v){r.economy=v;changed=true;}}
       else if(p.economy!==v){p.economy=v;changed=true;}
@@ -1201,7 +1457,14 @@ function legendEntries(mode){           // [color, label, paintValue]
   else if(mode==="culture")L.cultures.forEach(x=>e.push([catColor("cultures",x),x,x]));
   else if(mode==="race")L.races.forEach(x=>e.push([catColor("races",x),x,x]));
   else if(mode==="language")L.languages.forEach(x=>e.push([catColor("languages",x),x,x]));
-  else if(mode==="resource")L.resources.forEach(x=>e.push([catColor("resources",x),x,x]));
+  else if(mode==="resource"){
+    if(state.hiddenResMode){
+      e.push(["#39415e","— none —","__none__"]);
+      (L.hiddenResources||[]).forEach(x=>e.push([catColor("resources",x),(HIDDEN_RES_GLYPH[x]||"⛏")+" "+x,x]));
+    } else {
+      L.resources.forEach(x=>e.push([catColor("resources",x), isPrestige(x)?("★ "+x):x, x]));
+    }
+  }
   else if(mode==="economy")L.economies.forEach(x=>e.push([catColor("economies",x),x,x]));
   else if(mode==="population"){[[0,"Uninhabited"],[1000,"~1,000"],[5000,"~5,000"],[10000,"~10,000 (high)"],[50000,"~50,000"],[150000,"100,000+ (metropolis)"]].forEach(([v,l])=>e.push([popColor(v),l]));}
   return e;
@@ -1232,6 +1495,11 @@ function renderLegend(){
       tb.title="Overlay terrain-region outlines to help place resources";
       tb.onclick=()=>{state.terrainOverlay=!state.terrainOverlay;renderLegend();renderMap();};
       box.appendChild(tb);
+      const hb=document.createElement("button");hb.className="btn tiny"+(state.hiddenResMode?" primary":"");hb.style.marginTop="6px";hb.style.marginLeft="6px";
+      hb.textContent=(state.hiddenResMode?"✓ ":"")+"⛏ Strategic (hidden) resources";
+      hb.title="Show and paint hidden strategic resources (Iron, Coal, Oil…) on top of the normal resources";
+      hb.onclick=()=>{state.hiddenResMode=!state.hiddenResMode;state.paintValue=null;renderLegend();renderMap();flash(state.hiddenResMode?"Painting strategic resources — pick one from the legend.":"Back to normal resources.");};
+      box.appendChild(hb);
     }
   }
 }
@@ -1252,7 +1520,7 @@ function renderProvinceView(){
   if(!p){ins.innerHTML='<div class="empty">No province selected.</div>';return;}
   const realm=world.realms.find(r=>r.id===p.realmId);
   const cont=world.continents.find(c=>c.id===p.continentId);
-  const feats=(p.features&&p.features.length)?p.features.map(f=>`<span class="tag">${esc(f)}</span>`).join(" "):'<span class="note">None</span>';
+  const feats=(p.features&&p.features.length)?p.features.map(f=>{const c=FEATURE_CAT_COLORS[featureCat(f)];return `<span class="tag" style="border-color:${c}"><span style="width:9px;height:9px;border-radius:2px;background:${c};display:inline-block"></span> ${esc(f)}</span>`;}).join(" "):'<span class="note">None</span>';
   const hist=(p.history&&p.history.length)?p.history.map(h=>{const era=world.eras.find(e=>e.id===h.eraId);
     return `<div class="h"><div class="meta">${era?esc(era.name):""}${h.auto?" · auto":""}</div><div style="font-weight:600">${esc(h.title)}</div>${h.text?`<div class="note">${esc(h.text)}</div>`:""}</div>`;}).join(""):'<div class="note">No recorded history.</div>';
   const row=(a,b)=>`<div class="field2"><div class="field"><label>${a[0]}</label><div>${a[1]}</div></div><div class="field"><label>${b[0]}</label><div>${b[1]}</div></div></div>`;
@@ -1260,7 +1528,8 @@ function renderProvinceView(){
     <div class="insTitle" style="font-weight:700;font-size:17px">${esc(p.name)}</div>
     ${row(["Realm", realm?`<a href="#" id="pvRealm" style="color:var(--accent);text-decoration:none"><span class="swatch" style="background:${realm.color}"></span>${esc(realm.name)}</a>`:'<span class="note">Unclaimed</span>'], ["Continent", cont?esc(cont.name):"—"])}
     ${row(["Terrain", esc(p.terrain||"—")], ["Settlement", esc(p.settlement||"—")])}
-    ${row(["Top resource", esc(p.resource||"—")], ["Economy", esc(economyOf(p))])}
+    ${row(["Top resource", (isPrestige(p.resource)?"★ ":"")+esc(p.resource||"—")+(isPrestige(p.resource)?" (prestige)":"")], ["Economy", esc(economyOf(p))])}
+    ${p.hidden?row(["Strategic resource",(HIDDEN_RES_GLYPH[p.hidden]||"⛏")+" "+esc(p.hidden)],["",""]):""}
     ${row(["Population", (p.population||0).toLocaleString()], ["", ""])}
     <div class="sectionH">Notable features</div><div>${feats}</div>
     <div class="sectionH">Population breakdown</div>
@@ -1323,6 +1592,10 @@ function renderProvinceEditor(){
       <div class="field"><label>Top resource</label><select id="pres">${opt(world.lists.resources,p.resource)}</select></div>
       <div class="field"><label>Economy</label><select id="pecon"><option value="" ${!p.economy?"selected":""}>— ${p.realmId?"from realm":"Primitive"} —</option>${world.lists.economies.map(o=>`<option ${o===p.economy?"selected":""}>${esc(o)}</option>`).join("")}</select></div>
     </div>
+    <div class="field2">
+      <div class="field"><label>Strategic resource (hidden)</label><select id="phidden"><option value="" ${!p.hidden?"selected":""}>— none —</option>${(world.lists.hiddenResources||[]).map(o=>`<option ${o===p.hidden?"selected":""}>${esc(o)}</option>`).join("")}</select></div>
+      <div class="field"></div>
+    </div>
 
     <div class="sectionH">Notable features</div>
     <div id="pfeat"></div>
@@ -1364,6 +1637,7 @@ function renderProvinceEditor(){
   bindTracked("psett","settlement",v=>p.settlement=v);
   bindTracked("pres","resource",v=>p.resource=v);
   bindTracked("pecon","economy",v=>p.economy=v||"");
+  { const ph=$("#phidden"); if(ph)ph.addEventListener("change",e=>{p.hidden=e.target.value;renderMap();markDirty();}); }
   $("#prealm").addEventListener("change",e=>{
     const old=provTrackedValue(p,"realm");p.realmId=e.value||null;autoLog(p,"realm",old);joinRealmDefaults(p,p.realmId);renderHistory(p);renderMap();renderLeft();renderProvinceEditor();markDirty();
   });
@@ -1467,11 +1741,20 @@ function renderPops(p){
 }
 function renderFeatures(p){
   const wrap=$("#pfeat");wrap.innerHTML="";
-  p.features.forEach((f,i)=>{const t=document.createElement("span");t.className="tag";t.innerHTML=`<b>${esc(f)}</b> <span class="x">✕</span>`;t.querySelector(".x").onclick=()=>{p.features.splice(i,1);renderFeatures(p);markDirty();};wrap.appendChild(t);});
+  p.features.forEach((f,i)=>{
+    const cat=featureCat(f), col=FEATURE_CAT_COLORS[cat];
+    const t=document.createElement("span");t.className="tag";t.style.borderColor=col;
+    t.innerHTML=`<span class="fcat" title="${FEATURE_CAT_LABEL[cat]} — click to change type" style="width:11px;height:11px;border-radius:3px;background:${col};display:inline-block;cursor:pointer"></span> <b>${esc(f)}</b> <span class="x">✕</span>`;
+    t.querySelector(".fcat").onclick=()=>{const cur=featureCat(f);setFeatureCat(f,FEATURE_CAT_ORDER[(FEATURE_CAT_ORDER.indexOf(cur)+1)%FEATURE_CAT_ORDER.length]);renderFeatures(p);renderMap();markDirty();};
+    t.querySelector(".x").onclick=()=>{p.features.splice(i,1);renderFeatures(p);renderMap();markDirty();};
+    wrap.appendChild(t);
+  });
   const sel=document.createElement("select");sel.className="sel";sel.style.marginTop="6px";
   sel.innerHTML=`<option value="">＋ add feature…</option>`+world.lists.features.map(f=>`<option>${esc(f)}</option>`).join("")+`<option value="__custom">Custom…</option>`;
-  sel.onchange=()=>{let v=sel.value;if(v==="__custom"){v=prompt("Feature name:")||"";}if(v){p.features.push(v);renderFeatures(p);markDirty();}sel.value="";};
+  sel.onchange=()=>{let v=sel.value;if(v==="__custom"){v=(prompt("Feature name:")||"").trim();}if(v){p.features.push(v);if(!world.lists.features.includes(v))world.lists.features.push(v);if(!world.featureCats[v])world.featureCats[v]="misc";renderFeatures(p);renderMap();markDirty();}sel.value="";};
   wrap.appendChild(sel);
+  const note=div("note");note.style.marginTop="4px";note.innerHTML=`Types: <span style="color:${FEATURE_CAT_COLORS.wonder}">■ Wonder</span> (🏛️ on Settlements map) · <span style="color:${FEATURE_CAT_COLORS.resource}">■ Resource feature</span> (💎 on Resource map) · <span style="color:${FEATURE_CAT_COLORS.misc}">■ Misc</span>. Click a feature's colour to change its type.`;
+  wrap.appendChild(note);
 }
 function renderHistory(p){
   const wrap=$("#phist");wrap.innerHTML="";
@@ -1562,6 +1845,21 @@ function renderRealmEditor(){
       </div>
     </div>
 
+    <div class="sectionH">Expand this realm</div>
+    <div class="field"><label>When you paint provinces into this realm, they are…</label>
+      <select id="rexmode">
+        <option value="conquer" ${state.expandMode==="conquer"?"selected":""}>Conquered — added, nothing else changes</option>
+        <option value="settle" ${state.expandMode==="settle"?"selected":""}>Settled — migrate settlers into them</option>
+        <option value="override" ${state.expandMode==="override"?"selected":""}>Overridden — replace pops with realm identity</option>
+      </select></div>
+    <div id="rexSettle" class="${state.expandMode==="settle"?"":"hidden"}" style="margin:2px 0 6px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel2)">
+      <div class="field2"><div class="field"><label>Settlers: % of matching pops from each realm province</label><input id="rexPct" type="number" min="0" max="100" value="${state.settleParams.pct??8}"/></div><div class="field"></div></div>
+      <div class="note">Only pops matching the ticked traits migrate (tick none = anyone can settle):</div>
+      <label style="font-size:13px"><input type="checkbox" id="rexRel" ${state.settleParams.byReligion?"checked":""}/> Religion</label>
+      <label style="font-size:13px;margin-left:10px"><input type="checkbox" id="rexCul" ${state.settleParams.byCulture?"checked":""}/> Culture</label>
+      <label style="font-size:13px;margin-left:10px"><input type="checkbox" id="rexLan" ${state.settleParams.byLanguage?"checked":""}/> Language</label>
+      <label style="font-size:13px;margin-left:10px"><input type="checkbox" id="rexRac" ${state.settleParams.byRace?"checked":""}/> Race</label>
+    </div>
     <div class="btnrow">
       <button class="btn primary" id="rpaint">🖌 Paint with this realm</button>
       <button class="btn" id="rrecolor">🎨 Random color</button>
@@ -1628,9 +1926,15 @@ function renderRealmEditor(){
   });
   $("#rcapw").addEventListener("input",e=>{world.capitalBoost=Math.max(1,+e.target.value||1);markDirty();});
   $("#radmw").addEventListener("input",e=>{world.adminBoost=Math.max(1,+e.target.value||1);markDirty();});
+  const rexUpd=()=>{state.settleParams={pct:Math.max(0,Math.min(100,+($("#rexPct")?.value)||0)),byReligion:$("#rexRel")?.checked,byCulture:$("#rexCul")?.checked,byLanguage:$("#rexLan")?.checked,byRace:$("#rexRac")?.checked};};
+  const rexm=$("#rexmode"); if(rexm)rexm.addEventListener("change",e=>{state.expandMode=e.target.value;const rs=$("#rexSettle");if(rs)rs.classList.toggle("hidden",e.target.value!=="settle");});
+  ["rexPct","rexRel","rexCul","rexLan","rexRac"].forEach(id=>{const el=$("#"+id); if(el)el.addEventListener("input",rexUpd);});
   $("#rpaint").addEventListener("click",()=>{
+    if(rexm)state.expandMode=rexm.value; rexUpd();
     if(state.mapmode==="imported"){state.mapmode="political";const ms=$("#mapmode");if(ms)ms.value="political";}
-    setTool("paint");flash("Paint mode: click or drag across provinces to assign to "+r.name);renderMap();
+    state.selRealm=r.id; setTool("paint");
+    flash("Paint mode ("+state.expandMode+"): click or drag across provinces to expand "+r.name+".");
+    renderMap();
   });
   $("#rerase").addEventListener("click",()=>{
     if(state.mapmode==="imported"){state.mapmode="political";const ms=$("#mapmode");if(ms)ms.value="political";}
@@ -1858,6 +2162,7 @@ function setupMapInteraction(){
     if(state.regionSel&&state.regionSel.active){ state.regionSel.start=rel(ev); state.regionSel.cur=state.regionSel.start.slice(); return; }
     if(state.split){ const w=screenToWorld(ev); state.split.pts.push([w[0],w[1]]); if(state.split.pts.length>=2)performSplit(); else requestRender(); return; }
     if(state.tilt)return;            // tilt = look-only mode
+    if(state.rulerOn){ down=true; dragged=false; sx0=ev.clientX; sy0=ev.clientY; camStart={x:state.cam.x,y:state.cam.y}; return; }
     if(state.pingOn && state.pingTool!=="pan"){
       if(state.pingTool==="brush"){ const w=screenToWorld(ev); _curStroke={color:state.pingColor,width:state.pingWidth/state.cam.scale,pts:[[w[0],w[1]]]}; pingLayer.strokes.push(_curStroke); down=true; dragged=true; requestRender(); return; }
       if(state.pingTool==="pin"){ const w=screenToWorld(ev); pingLayer.pins.push({x:w[0],y:w[1],color:state.pingColor}); savePings(); requestRender(); return; }
@@ -1871,6 +2176,7 @@ function setupMapInteraction(){
     down=true; dragged=false; painted=false; sx0=ev.clientX; sy0=ev.clientY; camStart={x:state.cam.x,y:state.cam.y};
   });
   window.addEventListener("mousemove",ev=>{
+    if(state.rulerOn && !state.rulerDone && state.rulerPts.length && !down){ const w=screenToWorld(ev); state.rulerCur=[w[0],w[1]]; requestRender(); }
     if(_curStroke && down){ const w=screenToWorld(ev); _curStroke.pts.push([w[0],w[1]]); requestRender(); return; }
     if(state.pingOn && state.pingTool==="erase" && down){ pingEraseAt(ev); return; }
     if(state.regionSel&&state.regionSel.active&&state.regionSel.start){ state.regionSel.cur=rel(ev); requestRender(); return; }
@@ -1926,6 +2232,7 @@ function setupMapInteraction(){
     if(painted){ _labelsDirty=true; renderLeft(); markDirty(); requestRender(); painted=false; }
     if(state.tilt||dragged)return;   // a drag was a pan or a paint-stroke, not a click
     const [wx,wy]=screenToWorld(ev);
+    if(state.rulerOn){ if(state.rulerDone){ state.rulerPts=[]; state.rulerDone=false; } state.rulerPts.push([wx,wy]); state.rulerCur=null; requestRender(); return; }
     if(state.tool==="textlabel"){
       const t=prompt("Label text:","");
       if(t&&t.trim()){ beginEdit(); const lb={id:uid(),x:Math.round(wx),y:Math.round(wy),text:t.trim(),size:38,color:"#2b3038"}; world.labels.push(lb); setTool("select"); selectCustomLabel(lb.id); markDirty(); }
@@ -1947,6 +2254,12 @@ function setupMapInteraction(){
     if(c){ state.focusedContinent=c.id; selectContinent(c.id); }
   });
   cv.addEventListener("dblclick",ev=>{
+    if(state.rulerOn){ ev.preventDefault();
+      // the double-click's two clicks add a duplicate point — drop it, then freeze
+      if(state.rulerPts.length>=2){const a=state.rulerPts[state.rulerPts.length-1],b=state.rulerPts[state.rulerPts.length-2]; if(Math.hypot(a[0]-b[0],a[1]-b[1])<6/state.cam.scale)state.rulerPts.pop();}
+      state.rulerDone=true; state.rulerCur=null; requestRender();
+      flash(state.rulerPts.length>=2?"Measurement finished — click to start a new one, Esc to clear.":"Measurement cleared.");
+      return; }
     if(state.tool==="select" && state.showNames){ const cid=continentLabelAt(ev); if(cid){ const c=world.continents.find(x=>x.id===cid); if(c&&c.labelPos){beginEdit();delete c.labelPos;renderMap();markDirty();flash("Name position reset.");} return; } }
     if(DRAW_TOOLS.includes(state.tool)){ev.preventDefault();finishDraft();return;}
     if(state.tool==="nodes"){ ev.preventDefault();
@@ -1976,7 +2289,7 @@ function setupMapInteraction(){
       if(k==="y"||(k==="z"&&ev.shiftKey)){ev.preventDefault();doRedo();return;}
     }
     if(ev.key==="Enter"&&DRAW_TOOLS.includes(state.tool))finishDraft();
-    if(ev.key==="Escape"){if(state.regionSel){state.regionSel=null;_regionCb=null;flash("Region export cancelled.");}if(state.split){state.split=null;flash("Split cancelled.");}state.draft=null;state.nodeDrag=null;requestRender();}
+    if(ev.key==="Escape"){if(state.regionSel){state.regionSel=null;_regionCb=null;flash("Region export cancelled.");}if(state.split){state.split=null;flash("Split cancelled.");}if(state.rulerOn&&state.rulerPts.length){state.rulerPts=[];state.rulerCur=null;state.rulerDone=false;flash("Measurement cleared.");}state.draft=null;state.nodeDrag=null;requestRender();}
     if(inField)return;
     if(/^[0-9]$/.test(ev.key)){const idx=ev.key==="0"?9:(+ev.key-1); const m=MAPMODE_BAR[idx]; if(m){setMapmode(m[0]);return;}}
     if(ev.key==="v")setTool("select");
@@ -2249,7 +2562,8 @@ function applyListRename(k,ov,nv){
   else if(k==="terrains"){P.forEach(p=>{if(p.terrain===ov)p.terrain=nv;});}
   else if(k==="settlements"){P.forEach(p=>{if(p.settlement===ov)p.settlement=nv;});}
   else if(k==="resources"){P.forEach(p=>{if(p.resource===ov)p.resource=nv;});}
-  else if(k==="features"){P.forEach(p=>p.features=p.features.map(f=>f===ov?nv:f));}
+  else if(k==="hiddenResources"){P.forEach(p=>{if(p.hidden===ov)p.hidden=nv;});}
+  else if(k==="features"){P.forEach(p=>p.features=p.features.map(f=>f===ov?nv:f));if(world.featureCats&&world.featureCats[ov]!==undefined){world.featureCats[nv]=world.featureCats[ov];delete world.featureCats[ov];}}
   else if(k==="governments"){R.forEach(r=>{if(r.government===ov)r.government=nv;});}
   else if(k==="economies"){R.forEach(r=>{if(r.economy===ov)r.economy=nv;});}
 }
@@ -2261,6 +2575,7 @@ function listUsageCount(k,v){
   else if(k==="terrains")n=P.filter(p=>p.terrain===v).length;
   else if(k==="settlements")n=P.filter(p=>p.settlement===v).length;
   else if(k==="resources")n=P.filter(p=>p.resource===v).length;
+  else if(k==="hiddenResources")n=P.filter(p=>p.hidden===v).length;
   else if(k==="features")n=P.filter(p=>p.features.includes(v)).length;
   else if(k==="governments")n=R.filter(r=>r.government===v).length;
   else if(k==="economies")n=R.filter(r=>r.economy===v).length;
@@ -2273,14 +2588,15 @@ function applyListDelete(k,v){
   else if(k==="cultures"){axDel("culture");R.forEach(r=>{if(r.dominantCulture===v)r.dominantCulture="";});}
   else if(k==="races"){axDel("race");R.forEach(r=>{if(r.dominantRace===v)r.dominantRace="";});}
   else if(k==="languages"){axDel("language");R.forEach(r=>{if(r.dominantLanguage===v)r.dominantLanguage="";});}
-  else if(k==="features"){P.forEach(p=>p.features=p.features.filter(f=>f!==v));}
+  else if(k==="features"){P.forEach(p=>p.features=p.features.filter(f=>f!==v));if(world.featureCats)delete world.featureCats[v];}
   else if(k==="terrains"){const fb=(world.lists.terrains.find(x=>x!==v))||"Plains";P.forEach(p=>{if(p.terrain===v)p.terrain=fb;});}
   else if(k==="settlements"){const fb=(world.lists.settlements.find(x=>x!==v))||"Uninhabited";P.forEach(p=>{if(p.settlement===v)p.settlement=fb;});}
-  else if(k==="resources"){const fb=(world.lists.resources.find(x=>x!==v))||"Grain";P.forEach(p=>{if(p.resource===v)p.resource=fb;});}
+  else if(k==="resources"){const fb=(world.lists.resources.find(x=>x!==v))||"Grains";P.forEach(p=>{if(p.resource===v)p.resource=fb;});}
+  else if(k==="hiddenResources"){P.forEach(p=>{if(p.hidden===v)p.hidden="";});}
   else if(k==="governments"){const fb=(world.lists.governments.find(x=>x!==v))||"";R.forEach(r=>{if(r.government===v)r.government=fb;});}
   else if(k==="economies"){const fb=(world.lists.economies.find(x=>x!==v))||"";R.forEach(r=>{if(r.economy===v)r.economy=fb;});}
 }
-const LIST_KEYS=[["religions","Religions"],["cultures","Cultures"],["races","Races"],["languages","Languages"],["terrains","Terrains"],["settlements","Settlement tiers"],["resources","Resources"],["features","Features"],["governments","Government types"],["economies","Economy types"]];
+const LIST_KEYS=[["religions","Religions"],["cultures","Cultures"],["races","Races"],["languages","Languages"],["terrains","Terrains"],["settlements","Settlement tiers"],["resources","Resources"],["hiddenResources","Strategic resources"],["features","Features"],["governments","Government types"],["economies","Economy types"]];
 const MODE_LIST={religion:"religions",culture:"cultures",race:"races",language:"languages",terrain:"terrains",settlement:"settlements",resource:"resources",economy:"economies"};
 function randomizeCategory(k){
   world.colors[k]=world.colors[k]||{};
@@ -2342,13 +2658,90 @@ function openEras(){
   render();
   $("#eraAdd").onclick=()=>{world.eras.push({id:uid(),name:"New Age"});render();rebuildEraSelect();markDirty();};
 }
+function openPopScreen(){
+  const contOpts=world.continents.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join("");
+  const realmOpts=world.realms.map(r=>`<option value="${r.id}">${esc(r.name)}</option>`).join("");
+  openModal(`<button class="btn close" onclick="closeModal()">✕ Close</button><h2>👥 Populate &amp; grow</h2>
+    <p class="note">Generates realistic populations from a baseline, scaled by <b>terrain hospitability</b> (grassland &amp; coast thrive; mountains, desert and tundra are sparse), <b>settlement tier</b>, and <b>capital / admin</b> bonuses — with random variation so no two runs are identical. Newly-populated provinces inherit their realm's identity (or list defaults if unclaimed).</p>
+    <div class="field2">
+      <div class="field"><label>Baseline (a hospitable village)</label><input id="pbBase" type="number" min="0" value="5000"/></div>
+      <div class="field"><label>Randomness ± %</label><input id="pbVar" type="number" min="0" max="90" value="30"/></div>
+    </div>
+    <div class="field"><label>Influences</label>
+      <label style="font-weight:400;font-size:13px"><input type="checkbox" id="pbTerr" checked/> Terrain</label>
+      <label style="font-weight:400;font-size:13px;margin-left:12px"><input type="checkbox" id="pbSettle" checked/> Settlement tier</label>
+      <label style="font-weight:400;font-size:13px;margin-left:12px"><input type="checkbox" id="pbKey" checked/> Capital / admin</label>
+      <div class="note">With "Settlement tier" on, Uninhabited provinces stay empty — set them to Nomadic+ first (or turn this off to populate raw terrain).</div>
+    </div>
+    <div class="field"><label>Apply to</label>
+      <select id="pbScope"><option value="world">Whole world</option><option value="continent">A continent</option><option value="realm">A realm</option></select>
+      <select id="pbCont" class="hidden" style="margin-top:6px">${contOpts}</select>
+      <select id="pbRealm" class="hidden" style="margin-top:6px">${realmOpts}</select>
+    </div>
+    <div id="pbRealmOpts" class="hidden" style="margin:2px 0 6px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel2)">
+      <div class="note" style="margin:0 0 4px">Realm growth options (used by 🌱 Grow):</div>
+      <label style="font-size:13px"><input type="checkbox" id="pbPrio"/> Prioritise the state group's growth (a slight edge — everyone still grows)</label>
+      <div style="margin:4px 0 0 20px;font-size:13px">state group matches on:
+        <label style="margin-left:6px"><input type="checkbox" id="pbPRel" checked/> religion</label>
+        <label style="margin-left:8px"><input type="checkbox" id="pbPCul" checked/> culture</label>
+        <label style="margin-left:8px"><input type="checkbox" id="pbPLan"/> language</label>
+        <label style="margin-left:8px"><input type="checkbox" id="pbPRac"/> race</label>
+      </div>
+      <label style="font-size:13px;display:block;margin-top:6px"><input type="checkbox" id="pbSeedState"/> Also seed the state group into every realm province (so it can grow even where absent)</label>
+    </div>
+    <div class="sectionH">Seed populations</div>
+    <div class="btnrow">
+      <button class="btn primary" id="pbSeed">⚡ Set populations</button>
+      <button class="btn" id="pbSeedArea">▦ Set in a dragged area…</button>
+    </div>
+    <div class="sectionH">Grow (advance the timeline)</div>
+    <p class="note">Increases the <i>current</i> population of already-populated provinces by a random amount; hospitable places grow faster. Empty provinces stay empty.</p>
+    <div class="field2"><div class="field"><label>Growth ± %</label><input id="pbGrow" type="number" value="20"/></div><div class="field"></div></div>
+    <div class="btnrow">
+      <button class="btn primary" id="pbGrowBtn">🌱 Grow</button>
+      <button class="btn" id="pbGrowArea">▦ Grow a dragged area…</button>
+    </div>
+    <div class="sectionH">Reset</div>
+    <div class="btnrow"><button class="btn danger" id="pbWipe">🗑 Delete ALL pops (whole world)</button></div>
+    <div class="note" id="pbStatus"></div>`);
+  const scope=$("#pbScope");
+  const sync=()=>{$("#pbCont").classList.toggle("hidden",scope.value!=="continent");$("#pbRealm").classList.toggle("hidden",scope.value!=="realm");$("#pbRealmOpts").classList.toggle("hidden",scope.value!=="realm");};
+  scope.onchange=sync; sync();
+  const opts=()=>({terrain:$("#pbTerr").checked,settle:$("#pbSettle").checked,key:$("#pbKey").checked});
+  const variance=()=>Math.max(0,Math.min(0.9,(+$("#pbVar").value||0)/100));
+  const scopeProvs=()=>{ if(scope.value==="continent")return world.provinces.filter(p=>p.continentId===$("#pbCont").value); if(scope.value==="realm")return world.provinces.filter(p=>p.realmId===$("#pbRealm").value); return world.provinces.slice(); };
+  const status=t=>{const s=$("#pbStatus"); if(s)s.textContent=t; flash(t);};
+  const doSeed=ps=>{ const base=+$("#pbBase").value||0, v=variance(), o=opts(); beginEdit(); ps.forEach(p=>setProvincePopulation(p,genProvincePop(p,base,v,o))); renderMap();renderLeft();markDirty();
+    const tot=ps.reduce((a,p)=>a+(p.population||0),0); status("Seeded "+ps.length+" provinces · "+tot.toLocaleString()+" people total."); };
+  const doGrow=ps=>{ const g=+$("#pbGrow").value||0, v=variance(), o=opts();
+    const r=(scope.value==="realm")?world.realms.find(x=>x.id===$("#pbRealm").value):null;
+    const prioOn=r && $("#pbPrio") && $("#pbPrio").checked, seedOn=r && $("#pbSeedState") && $("#pbSeedState").checked;
+    const prio=(prioOn||seedOn)?{on:prioOn,seed:seedOn,axes:{religion:$("#pbPRel").checked,culture:$("#pbPCul").checked,language:$("#pbPLan").checked,race:$("#pbPRac").checked}}:null;
+    beginEdit(); let grew=0;
+    ps.forEach(p=>{ const before=p.population||0;
+      if(prio && r && p.realmId===r.id) growRealmPops(p,g,v,o,r,prio);
+      else setProvincePopulation(p,growProvincePop(p,g,v,o));
+      if((p.population||0)!==before)grew++; });
+    renderMap();renderLeft();markDirty();
+    status("Grew "+grew+" provinces"+(prio?" · state group "+(prio.on?"prioritised":"")+(prio.seed?(prio.on?" & seeded":"seeded"):""):"")+"."); };
+  $("#pbSeed").onclick=()=>doSeed(scopeProvs());
+  $("#pbGrowBtn").onclick=()=>doGrow(scopeProvs());
+  $("#pbSeedArea").onclick=()=>{ closeModal(); flash("Drag a box over the provinces to seed."); startRegionSelect(rect=>doSeed(provsInRect(rect))); };
+  $("#pbGrowArea").onclick=()=>{ closeModal(); flash("Drag a box over the provinces to grow."); startRegionSelect(rect=>doGrow(provsInRect(rect))); };
+  $("#pbWipe").onclick=()=>{
+    if(!confirm("Delete ALL population (every pop group) in the ENTIRE world?"))return;
+    if(!confirm("Are you absolutely sure? This wipes every province's people. (Undo can still restore it.)"))return;
+    beginEdit(); world.provinces.forEach(p=>{p.pops=[];deriveProvince(p);}); renderMap();renderLeft();markDirty(); status("All population deleted.");
+  };
+}
 async function openMenu(){
   const worlds=await listWorlds();
   openModal(`<button class="btn close" onclick="closeModal()">✕ Close</button><h2>Worlds & data</h2>
     <div class="field"><label>Saved worlds on disk</label>
       <div id="worldsList">${worlds.length?worlds.map(w=>`<div class="li"><span style="flex:1">${esc(w)}</span><button class="btn tiny" data-open="${esc(w)}">Open</button></div>`).join(""):'<div class="note">None yet — saving creates a file named after your world.</div>'}</div></div>
     <div class="btnrow">
-      <button class="btn primary" id="mNew">＋ New world</button>
+      <button class="btn primary" id="mPopulate">👥 Populate &amp; grow…</button>
+      <button class="btn" id="mNew">＋ New world</button>
       <button class="btn" id="mSaveAs">💾 Save now</button>
       <button class="btn" id="mExport">⬇ Export JSON</button>
       <button class="btn" id="mArchiveData">🗄 Archive full data to disk…</button>
@@ -2376,6 +2769,7 @@ async function openMenu(){
     {world=normalize(sampleWorld());world.name="New World";world.continents=[];world.provinces=[];world.realms=[];afterLoad();closeModal();}};
   $("#mSaveAs").onclick=()=>saveWorld(false);
   $("#mExport").onclick=()=>downloadText(world.name+" "+tstamp()+".json",JSON.stringify(world,null,2));
+  $("#mPopulate").onclick=()=>{closeModal();openPopScreen();};
   $("#mArchiveData").onclick=archiveDataToDisk;
   $("#mPublish").onclick=publishViewer;
   $("#mExportSvg").onclick=()=>{closeModal();openExport();};
@@ -2521,6 +2915,7 @@ function wireTopbar(){
   buildMapmodeBar();
   const wp=$("#worldPop"); if(wp)wp.onclick=toggleWorldPopPanel;
   const bp=$("#btnPing"); if(bp)bp.onclick=togglePing; buildPingBar();
+  const br=$("#btnRuler"); if(br)br.onclick=toggleRuler;
   $$(".btn.tool").forEach(b=>b.onclick=()=>setTool(b.dataset.tool));
   $("#toggleTilt").onclick=()=>toggleTilt();
   $("#worldView").onclick=()=>{worldView();};
