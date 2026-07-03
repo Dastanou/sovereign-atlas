@@ -1126,8 +1126,8 @@ function drawFrame(){
   // lakes & rivers on top of land
   drawWater(ctx,s);
 
-  // realm-border overlay on non-political modes (optional, on by default)
-  if(state.mapmode!=="political" && state.realmOverlay) drawRealmBorders(ctx);
+  // realm-border overlay on non-political modes (optional, on by default; always on for Military)
+  if(state.mapmode!=="political" && (state.realmOverlay||state.mapmode==="military")) drawRealmBorders(ctx);
   // terrain-region outline overlay (optional, any non-political mode)
   if(state.mapmode!=="political" && state.terrainOverlay) drawTerrainBorders(ctx);
 
@@ -1280,7 +1280,7 @@ function provinceFill(p){
     }
     case "economy":return catColor("economies",economyOf(p));
     case "monster":return catColor("terrains",p.terrain);                 // terrain backdrop for context
-    case "military":{const r=world.realms.find(r=>r.id===p.realmId);return r?r.color:"#39415e";}  // realm colours, no names
+    case "military":return catColor("terrains",p.terrain);   // terrain backdrop + realm outlines; tokens on top
     case "imported":return p.importColor||"#39415e";
     default:return "#39415e";
   }
