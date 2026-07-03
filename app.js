@@ -35,6 +35,15 @@ const REGULAR_RESOURCES=["Grains","Stone","Timber","Fish","Livestock","Cloth","C
 const RESOURCE_PRESTIGE={Fruit:"Grains",Sugar:"Grains",Marble:"Stone",Obsidian:"Stone",Hardwood:"Timber",Pitch:"Timber",Whales:"Fish",Honey:"Livestock",Ivory:"Livestock",Papyrus:"Cloth",Silk:"Cloth",Tin:"Copper",Intoxicants:"Stimulants","Precious Gems":"Semi-Precious Gems","Royal Dyes":"Dyes",Gold:"Silver",Spices:"Salt"};
 function isPrestige(res){ return RESOURCE_PRESTIGE[res]!==undefined; }
 function prestigeOf(base){ return Object.keys(RESOURCE_PRESTIGE).filter(k=>RESOURCE_PRESTIGE[k]===base); }
+// Highlight set = the exact selected resource, plus (only if the selection is a base
+// regular resource) its prestige goods. Selecting a prestige good highlights only itself.
+function resourceBase(res){ return isPrestige(res)?RESOURCE_PRESTIGE[res]:res; }
+function inResourceFamily(res,sel){
+  if(!res||!sel) return false;
+  if(res===sel) return true;                                    // the exact resource
+  if(!isPrestige(sel) && RESOURCE_PRESTIGE[res]===sel) return true;  // base → its prestige goods
+  return false;
+}
 // canonical resource list, ordered base-then-its-prestige-goods
 const RESOURCE_LIST=(()=>{const out=[];REGULAR_RESOURCES.forEach(b=>{out.push(b);prestigeOf(b).forEach(p=>out.push(p));});return out;})();
 const HIDDEN_RESOURCES=["Horses","Iron","Coal","Saltpeter","Oil","Uranium"];
@@ -67,7 +76,8 @@ const TERRAIN_COLORS={Plains:"#a7c957",Farmlands:"#c9d76a",Steppe:"#cabf76",Sava
 const SETTLE_COLORS={Uninhabited:"#26304a",Nomadic:"#b79b6a",Village:"#9bb25f",Town:"#e9c46a",City:"#f4a261",Megalopolis:"#e76f51"};
 // terrain hospitability (population multiplier): grassland/coast thrive, mountains/desert/tundra are harsh
 const TERRAIN_HAB={Plains:1.0,Farmlands:1.25,Steppe:0.55,Savannah:0.6,Coast:1.0,Forest:0.65,Taiga:0.3,Jungle:0.6,Hills:0.5,Marsh:0.4,Desert:0.22,Mountains:0.2,Tundra:0.2,Glacial:0.08,Wasteland:0.1,"Floating Reef":0.5};
-function terrainHab(t){ const v=TERRAIN_HAB[t]; return v!=null?v:0.6; }
+function terrainHab(t){ const o=(world&&world.tune&&world.tune.terrainHab)||{}; if(o[t]!=null)return o[t]; const v=TERRAIN_HAB[t]; return v!=null?v:0.6; }
+function raceGrowthMod(race){ const o=(world&&world.tune&&world.tune.raceGrowth)||{}; return o[race]!=null?o[race]:1; }
 // province feature categories: Wonders (structures), Resource features, and Misc
 const FEATURE_CATS_DEFAULT={"Ancient Ruin":"wonder","Floating Monolith":"wonder","Sunken City":"wonder","Sacred Grove":"wonder","Ley-line Nexus":"resource","Volcanic Rift":"resource","Impact Crater":"misc","Arcane Scar":"misc"};
 const FEATURE_CAT_COLORS={wonder:"#e0b34e",resource:"#5fb26a",misc:"#8a93a6"};
@@ -76,6 +86,28 @@ const FEATURE_CAT_LABEL={wonder:"Wonder",resource:"Resource feature",misc:"Misc"
 const FEATURE_CAT_GLYPH={wonder:"🏛️",resource:"💎",misc:"❖"};
 function featureCat(name){ return (world.featureCats&&world.featureCats[name])||"misc"; }
 function setFeatureCat(name,cat){ world.featureCats=world.featureCats||{}; world.featureCats[name]=cat; }
+// military forces (GURPS Mass Combat framework)
+const FORCE_DOMAINS={land:{icon:"⚔️",label:"Army"},sea:{icon:"⚓",label:"Fleet"},air:{icon:"✈️",label:"Air Wing"}};
+const ELEMENT_CLASSES=["Infantry (PF)","Heavy Infantry (Hv)","Cavalry (Ca)","Skirmishers (Sk)","Missile (Mi)","Artillery (Ar)","Armor (Az)","Aircraft (Ai)","Warships (Ws)","Transport (Tr)","Siege (Sg)","Support (Sp)"];
+// Editable library of element templates (GM screen). TL 0 seed = Stone Age Warriors;
+// add/reorder your own from your Mass Combat book. (Fields are editable, so set exact values.)
+const DEFAULT_ELEMENT_TYPES=[
+  {name:"Stone Age Warriors", cls:"Infantry (PF)", ts:2, wt:1, mob:1, tl:0},
+];
+function elementTypeList(){ return (world&&Array.isArray(world.elementTypes)&&world.elementTypes.length)?world.elementTypes:DEFAULT_ELEMENT_TYPES; }
+function forceTS(f){ return (f.elements||[]).reduce((a,e)=>a+(+e.ts||0),0); }
+function newElement(typeId){
+  const list=elementTypeList();
+  const t=(typeId&&list.find(x=>x.id===typeId))||list[0]||{name:"",cls:"Infantry (PF)",ts:10,wt:0,mob:1,tl:4};
+  return {ts:+t.ts||0, cls:t.cls||"Infantry (PF)", wt:+t.wt||0, mob:+t.mob||1, tl:+t.tl||0, type:t.name||""};
+}
+function newForce(x,y,realmId){ return {id:uid(), name:"New Force", domain:"land", x:Math.round(x), y:Math.round(y), realmId:realmId||null, scale:1,
+  elements:[newElement()],
+  commander:{name:"", strategy:12, leadership:12},
+  intel:{name:"", skill:12},
+  quartermaster:{name:"", skill:12} }; }
+function newMonster(x,y){ return {id:uid(), name:"New Creature", icon:"🐉", x:Math.round(x), y:Math.round(y), scale:1.4}; }
+function roll3d6(){ return (1+Math.floor(Math.random()*6))+(1+Math.floor(Math.random()*6))+(1+Math.floor(Math.random()*6)); }
 
 /* ============================================================
    STATE
@@ -97,7 +129,11 @@ let state = {
   split: null,              // {p, pts:[], cur:[x,y]} active split-line for a province
   editMode: false,          // map-drawing screen on/off
   showNames: false,         // show landmass names on the map (off by default)
-  terrainOverlay: false,    // resource mode: overlay terrain-region outlines as a painting aid
+  realmOverlay: true,       // non-political modes: outline realm borders (on by default)
+  terrainOverlay: false,    // non-political modes: overlay terrain-region outlines
+  selForce: null,           // military mode: selected force id
+  forceMoveId: null,        // military mode: force awaiting a move-to click
+  selBattle: null,          // military mode: selected battle (pair of force ids)
   hiddenResMode: false,     // resource mode: show & paint hidden/strategic resources
   pingOn: false,            // annotation/ping overlay active
   pingTool: "brush",        // brush | pin | erase | pan
@@ -221,6 +257,23 @@ function normalize(w){
     deriveProvince(p);                                          // keep population + %s in sync with pops
   });
   w.realms.forEach(r=>{r.adminCenters=r.adminCenters||[];r.dominantLanguage=r.dominantLanguage||"";});
+  w.forces=w.forces||[];   // military units
+  w.forces.forEach(f=>{ if(f.scale==null)f.scale=1; });
+  // army element-type library (editable in the GM screen)
+  w.elementTypes = (Array.isArray(w.elementTypes)&&w.elementTypes.length) ? w.elementTypes : DEFAULT_ELEMENT_TYPES.map(t=>({id:uid(),...t}));
+  w.elementTypes.forEach(t=>{ if(!t.id)t.id=uid(); });
+  w.monsters=w.monsters||[];   // free-floating legendary creatures
+  w.tune=w.tune||{};           // GM-editable simulation values
+  w.tune.terrainHab=w.tune.terrainHab||{};
+  w.tune.raceGrowth=w.tune.raceGrowth||{};
+  w.tune.settleFactors=w.tune.settleFactors||null;
+  // migrate any old per-province monster pins into free map objects
+  w.provinces.forEach(p=>{ if(p.monster && (p.monster.name||p.monster.icon)){
+    let cx=0,cy=0; (p.points||[]).forEach(([x,y])=>{cx+=x;cy+=y;});
+    const n=(p.points||[]).length||1; const cont=w.continents.find(c=>c.id===p.continentId)||{ox:0,oy:0};
+    w.monsters.push({id:uid(),name:p.monster.name||"",icon:p.monster.icon||"🐉",x:Math.round(cont.ox+cx/n),y:Math.round(cont.oy+cy/n),scale:1.4});
+    delete p.monster;
+  }});
   return w;
 }
 
@@ -325,7 +378,8 @@ function worldPopBreakdown(key){
 // ---- population simulation ----
 function settlePopFactor(s){                 // 0 = no people; higher tiers hold more
   const idx=world.lists.settlements.indexOf(s);
-  const table=[0,0.4,1,1.8,3,4.5];           // Uninhabited, Nomadic, Village, Town, City, Megalopolis
+  const over=(world.tune&&world.tune.settleFactors)||null;
+  const table=over&&over.length?over:[0,0.4,1,1.8,3,4.5];   // Uninhabited, Nomadic, Village, Town, City, Megalopolis
   if(idx<=0) return 0;
   return table[idx]!=null?table[idx]:1.8;
 }
@@ -351,6 +405,19 @@ function growProvincePop(p, growPct, variance, opt){
   g*= 1 + (Math.random()*2-1)*(variance||0);
   return Math.max(0, Math.round(cur*(1+g)));
 }
+// Grow each pop group individually so per-race growth modifiers apply.
+function growGenericPops(p, growPct, variance, opt){
+  p.pops=p.pops||[];
+  const cur=p.pops.reduce((a,q)=>a+(q.size||0),0);
+  if(cur<=0){ return; }                        // people only grow where people already are
+  const base=growPct/100 * (opt.terrain?terrainHab(p.terrain):1);
+  for(const q of p.pops){
+    let g=base*(1+(Math.random()*2-1)*(variance||0));
+    g*=raceGrowthMod(q.race);                   // GM-tunable per-race growth
+    q.size=Math.max(0,Math.round(q.size*(1+g)));
+  }
+  deriveProvince(p);
+}
 function provsInRect(rect){
   const out=[]; for(const g of _provGeo){ if(g.cx>=rect.x&&g.cx<=rect.x+rect.w&&g.cy>=rect.y&&g.cy<=rect.y+rect.h)out.push(g.p); }
   return out;
@@ -375,6 +442,7 @@ function growRealmPops(p, growPct, variance, opt, r, prio){
   const base=growPct/100 * (opt.terrain?terrainHab(p.terrain):1);
   for(const q of p.pops){
     let g=base*(1+(Math.random()*2-1)*variance);
+    g*=raceGrowthMod(q.race);                   // GM-tunable per-race growth
     if(prio.on && matchesState(q,r,prio.axes)) g=g*1.5+0.03;   // a slight edge for the state group
     q.size=Math.max(0,Math.round(q.size*(1+g)));
   }
@@ -697,13 +765,95 @@ function drawFeatureIcons(ctx,cam,s,cw,ch,cat){
   }
   ctx.restore();
 }
+// Monster map: free-floating, draggable, scalable legendary-creature tokens.
+function drawMonsters(ctx,cam,s,cw,ch){
+  ctx.save(); ctx.textAlign="center"; ctx.textBaseline="middle";
+  for(const m of world.monsters){
+    const sc=m.scale||1.4, R=13*sc;
+    const X=(m.x-cam.x)*s, Y=(m.y-cam.y)*s; if(X<-R*3||Y<-R*3||X>cw+R*3||Y>ch+R*3)continue;
+    const selm=state.selMonster===m.id;
+    ctx.beginPath();ctx.arc(X,Y,R,0,7);ctx.fillStyle="rgba(255,255,255,.9)";ctx.fill();
+    ctx.lineWidth=selm?3.4:2; ctx.strokeStyle=(state.moveMode==="monster"&&selm)?"#e0b24e":"#7a3b3b"; ctx.stroke();
+    ctx.font=`${Math.round(18*sc)}px "Segoe UI Emoji",system-ui,sans-serif`; ctx.fillStyle="#2b3038"; ctx.fillText(m.icon||"🐉",X,Y);
+    if(m.name){ ctx.font="600 11px system-ui,sans-serif"; ctx.lineWidth=3.2; ctx.strokeStyle="rgba(255,255,255,.92)"; ctx.strokeText(m.name,X,Y+R+9); ctx.fillStyle="#5a2330"; ctx.fillText(m.name,X,Y+R+9); }
+  }
+  ctx.restore();
+}
+function monsterAt(wx,wy){
+  for(let i=world.monsters.length-1;i>=0;i--){const m=world.monsters[i];const r=(13*(m.scale||1.4))/state.cam.scale;const dx=m.x-wx,dy=m.y-wy;if(dx*dx+dy*dy<r*r)return m;}
+  return null;
+}
+// Military map: force tokens + battle overlays.
+function forceAt(wx,wy){
+  for(let i=world.forces.length-1;i>=0;i--){const f=world.forces[i];const r=(15*(f.scale||1))/state.cam.scale;const dx=f.x-wx,dy=f.y-wy;if(dx*dx+dy*dy<r*r)return f;}
+  return null;
+}
+// Keep force tokens from landing exactly on top of each other, so overlapping
+// (battling) forces stay individually clickable and can be separated again.
+function separateForce(f, minGap){
+  minGap = minGap || 16;
+  for(let iter=0; iter<12; iter++){
+    let moved=false;
+    for(const o of world.forces){ if(o.id===f.id)continue;
+      let dx=f.x-o.x, dy=f.y-o.y, d=Math.hypot(dx,dy);
+      if(d<minGap){
+        if(d<0.01){ dx=(Math.random()*2-1); dy=(Math.random()*2-1); d=Math.hypot(dx,dy)||1; }
+        const push=(minGap-d);
+        f.x=Math.round(f.x+dx/d*push); f.y=Math.round(f.y+dy/d*push); moved=true;
+      }
+    }
+    if(!moved)break;
+  }
+}
+function detectBattles(){   // pairs of opposing forces close enough to fight
+  const out=[], F=world.forces, near=28;
+  for(let i=0;i<F.length;i++)for(let j=i+1;j<F.length;j++){
+    const a=F[i],b=F[j]; if(a.realmId&&b.realmId&&a.realmId===b.realmId)continue;   // same realm = not a battle
+    const dx=a.x-b.x,dy=a.y-b.y; if(dx*dx+dy*dy<=near*near) out.push([a,b]);
+  }
+  return out;
+}
+function drawForces(ctx,cam,s,cw,ch){
+  ctx.save(); ctx.textAlign="center"; ctx.textBaseline="middle";
+  for(const f of world.forces){
+    const sc=f.scale||1, R=15*sc;
+    const X=(f.x-cam.x)*s, Y=(f.y-cam.y)*s; if(X<-R*3||Y<-R*3||X>cw+R*3||Y>ch+R*3)continue;
+    const r=world.realms.find(x=>x.id===f.realmId), col=r?r.color:"#5a6172";
+    const selm=state.selForce===f.id;
+    // white body keeps the emoji legible on any realm colour
+    ctx.beginPath();ctx.arc(X,Y,R,0,7);ctx.fillStyle="#ffffffee";ctx.fill();
+    // realm-coloured ring (identity)
+    ctx.lineWidth=selm?3.5:2.5;ctx.strokeStyle=(state.moveMode==="force"&&selm)?"#e0b24e":col;ctx.stroke();
+    // thin dark casing just outside the ring so the token never blends into a same-coloured province
+    ctx.beginPath();ctx.arc(X,Y,R+(selm?2.4:1.8),0,7);ctx.lineWidth=1.3;ctx.strokeStyle="rgba(14,18,26,.72)";ctx.stroke();
+    ctx.font=`${Math.round(16*sc)}px "Segoe UI Emoji",system-ui,sans-serif`;ctx.fillText((FORCE_DOMAINS[f.domain]||FORCE_DOMAINS.land).icon,X,Y);
+    // TS badge
+    ctx.font="700 10px system-ui,sans-serif";const ts=""+forceTS(f);
+    const bw=ctx.measureText(ts).width+8;ctx.fillStyle=col;roundRect(ctx,X+R*0.55,Y+R*0.4,bw,14,7);ctx.fill();ctx.fillStyle="#fff";ctx.fillText(ts,X+R*0.55+bw/2,Y+R*0.4+7);
+    if(f.name){ctx.font="600 11px system-ui,sans-serif";ctx.lineWidth=3.2;ctx.strokeStyle="rgba(255,255,255,.92)";ctx.strokeText(f.name,X,Y-R-7);ctx.fillStyle="#22313f";ctx.fillText(f.name,X,Y-R-7);}
+  }
+  // battle overlays
+  for(const [a,b] of detectBattles()){
+    const mx=((a.x+b.x)/2-cam.x)*s, my=((a.y+b.y)/2-cam.y)*s; if(mx<-40||my<-40||mx>cw+40||my>ch+40)continue;
+    ctx.beginPath();ctx.arc(mx,my,17,0,7);ctx.fillStyle="#d8746ce6";ctx.fill();ctx.lineWidth=2.5;ctx.strokeStyle="#fff";ctx.stroke();
+    ctx.font='18px "Segoe UI Emoji",system-ui,sans-serif';ctx.fillText("💥",mx,my);
+  }
+  ctx.restore();
+}
+function battleAt(wx,wy){
+  const r=18/state.cam.scale, r2=r*r;
+  for(const [a,b] of detectBattles()){const mx=(a.x+b.x)/2,my=(a.y+b.y)/2,dx=mx-wx,dy=my-wy;if(dx*dx+dy*dy<r2)return [a,b];}
+  return null;
+}
 // Resource-map icons: ✦ on prestige-good provinces, and (when toggled) hidden/strategic resource glyphs.
 function drawResourceIcons(ctx,cam,s,cw,ch){
   const hid=state.hiddenResMode;
   ctx.save(); ctx.font='14px "Segoe UI Emoji",system-ui,sans-serif'; ctx.textAlign="center"; ctx.textBaseline="middle";
   for(const g of _provGeo){
     if((g.maxx-g.minx)*s<12) continue;
-    const p=g.p, pres=isPrestige(p.resource), h=hid&&p.hidden;
+    const p=g.p, h=hid&&p.hidden;
+    // hide the prestige ✦ marker on provinces dimmed by the resource spotlight
+    const pres=isPrestige(p.resource) && !(state.selResource && !inResourceFamily(p.resource,state.selResource));
     if(!pres && !h) continue;
     const feat=p.features&&p.features.some(f=>featureCat(f)==="resource");
     const X=(g.cx-cam.x)*s, Y=(g.cy-cam.y)*s-8-(feat?15:0); if(X<-20||Y<-20||X>cw+20||Y>ch+20) continue;
@@ -967,17 +1117,19 @@ function drawFrame(){
   // prestige goods get a gold outline on the resource map
   if(state.mapmode==="resource"){
     ctx.lineWidth=2.5/s; ctx.strokeStyle="#e8b21f"; ctx.lineJoin="round";
-    for(const gp of _provGeo){ if(!isPrestige(gp.p.resource))continue; const pts=gp.pts; if(!pts.length)continue;
+    for(const gp of _provGeo){ if(!isPrestige(gp.p.resource))continue;
+      if(state.selResource && !inResourceFamily(gp.p.resource,state.selResource))continue;   // hide outline on dimmed provinces
+      const pts=gp.pts; if(!pts.length)continue;
       ctx.beginPath(); ctx.moveTo(pts[0][0],pts[0][1]); for(let i=1;i<pts.length;i++)ctx.lineTo(pts[i][0],pts[i][1]); ctx.closePath(); ctx.stroke(); }
   }
 
   // lakes & rivers on top of land
   drawWater(ctx,s);
 
-  // realm-border overlay on non-political modes, so borders stay readable
-  if(state.mapmode!=="political") drawRealmBorders(ctx);
-  // terrain-region outline overlay — resource-painting aid (toggle)
-  if(state.mapmode==="resource" && state.terrainOverlay) drawTerrainBorders(ctx);
+  // realm-border overlay on non-political modes (optional, on by default)
+  if(state.mapmode!=="political" && state.realmOverlay) drawRealmBorders(ctx);
+  // terrain-region outline overlay (optional, any non-political mode)
+  if(state.mapmode!=="political" && state.terrainOverlay) drawTerrainBorders(ctx);
 
   // player ping/annotation strokes (world space, over the map)
   drawPingsWorld(ctx);
@@ -1048,6 +1200,8 @@ function drawFrame(){
   // feature icons: wonders on the Settlements map, resource features on the Resource map
   if(state.mapmode==="settlement") drawFeatureIcons(ctx,cam,s,cw,ch,"wonder");
   else if(state.mapmode==="resource"){ drawFeatureIcons(ctx,cam,s,cw,ch,"resource"); drawResourceIcons(ctx,cam,s,cw,ch); }
+  else if(state.mapmode==="monster") drawMonsters(ctx,cam,s,cw,ch);
+  else if(state.mapmode==="military") drawForces(ctx,cam,s,cw,ch);
 
   // landmass names (toggleable, draggable, hidden for small landmasses)
   _contLabelRects={};
@@ -1120,8 +1274,13 @@ function provinceFill(p){
     case "language":return colorByAxis(p.language,"languages");
     case "population":return popColor(p.population);
     case "tolerance":return ramp((p.tolerance??50)/100);
-    case "resource":return catColor("resources",p.resource);
+    case "resource":{
+      if(state.selResource && !inResourceFamily(p.resource,state.selResource)) return "#333a46";  // dim non-matching
+      return catColor("resources",p.resource);
+    }
     case "economy":return catColor("economies",economyOf(p));
+    case "monster":return catColor("terrains",p.terrain);                 // terrain backdrop for context
+    case "military":{const r=world.realms.find(r=>r.id===p.realmId);return r?r.color:"#39415e";}  // realm colours, no names
     case "imported":return p.importColor||"#39415e";
     default:return "#39415e";
   }
@@ -1404,7 +1563,28 @@ function onProvinceClick(p){
     if(paintProvince(p)){ _labelsDirty=true; renderMap(); renderLeft(); markDirty(); }
     return;
   }
+  if(state.mapmode==="resource") toggleResourceHighlight(p);
   selectProvince(p.id);
+}
+// Resource map: click a province to spotlight its whole resource family (base + prestige
+// goods), greying the rest. Click the same family again (or the void) to clear.
+function toggleResourceHighlight(p){
+  const sel = p.resource || null;
+  state.selResource = (sel && state.selResource===sel) ? null : sel;   // store the exact resource
+  updateResSpot();
+}
+// On-map banner naming the highlighted resource and the prestige goods included with it.
+function updateResSpot(){
+  let el=document.getElementById("resSpot");
+  if(state.mapmode!=="resource" || !state.selResource){ if(el)el.remove(); return; }
+  if(!el){ el=document.createElement("div"); el.id="resSpot"; ($("#stage")||document.body).appendChild(el); }
+  const sel=state.selResource, sw=c=>`<span class="rsw" style="background:${c}"></span>`;
+  let html=`<span class="rsLbl">Showing</span> ${sw(catColor("resources",sel))}<b>${esc(sel)}</b>`;
+  if(isPrestige(sel)) html+=`<span class="rsPlus">prestige good</span>`;
+  else { const pg=prestigeOf(sel); if(pg.length) html+=`<span class="rsPlus">+ prestige:</span> `+pg.map(x=>`${sw(catColor("resources",x))}${esc(x)}`).join(" "); }
+  html+=`<span class="rsX" title="Clear highlight">✕</span>`;
+  el.innerHTML=html;
+  el.querySelector(".rsX").onclick=()=>{ state.selResource=null; updateResSpot(); renderMap(); };
 }
 function selectProvince(id){
   state.selProvince=id;state.selRealm=null;state.selWater=null;state.selLabel=null;
@@ -1429,9 +1609,25 @@ function selectCustomLabel(id){
   renderMap();renderLabelEditor();
 }
 function clearSelection(){   // click on empty void: deselect and hide the inspector
-  state.selProvince=null;state.selRealm=null;state.selWater=null;state.selLabel=null;
+  state.selProvince=null;state.selRealm=null;state.selWater=null;state.selLabel=null;state.selForce=null;state.selBattle=null;state.selMonster=null;state.selResource=null;
   document.body.classList.remove("has-sel");
-  renderMap();
+  updateResSpot();
+  renderMap();renderLegend();
+}
+function selectForce(id){
+  state.selForce=id;state.selBattle=null;state.selMonster=null;state.selProvince=null;state.selRealm=null;state.selWater=null;state.selLabel=null;
+  document.body.classList.add("has-sel");
+  renderMap();renderForceEditor();renderLegend();
+}
+function selectBattle(aId,bId){
+  state.selBattle=[aId,bId];state.selForce=null;state.selMonster=null;state.moveMode=null;state.selProvince=null;state.selRealm=null;state.selWater=null;state.selLabel=null;
+  document.body.classList.add("has-sel");
+  renderMap();renderBattleView();
+}
+function selectMonster(id){
+  state.selMonster=id;state.selForce=null;state.selBattle=null;state.selProvince=null;state.selRealm=null;state.selWater=null;state.selLabel=null;
+  document.body.classList.add("has-sel");
+  renderMap();renderMonsterEditor();renderLegend();
 }
 function renderLabelEditor(){
   const ins=$("#inspector"),lb=world.labels.find(x=>x.id===state.selLabel);
@@ -1445,6 +1641,201 @@ function renderLabelEditor(){
   $("#lbsize").addEventListener("input",e=>{lb.size=+e.target.value;$("#lbsv").textContent=e.target.value;renderMap();markDirty();});
   $("#lbcolor").addEventListener("input",e=>{lb.color=e.target.value;renderMap();markDirty();});
   $("#lbdel").addEventListener("click",()=>{beginEdit();world.labels=world.labels.filter(x=>x.id!==lb.id);state.selLabel=null;renderMap();ins.innerHTML='<div class="empty">Label deleted.</div>';markDirty();});
+}
+
+/* ============================================================
+   MILITARY — force editor & battle framework (GURPS Mass Combat)
+   ============================================================ */
+function renderForceEditor(){
+  const ins=$("#inspector"); const f=world.forces.find(x=>x.id===state.selForce);
+  if(!f){ins.innerHTML='<div class="empty">No force selected.</div>';return;}
+  const ro=VIEWER;
+  const realmOpts=`<option value="">— Independent —</option>`+world.realms.map(r=>`<option value="${r.id}" ${f.realmId===r.id?"selected":""}>${esc(r.name)}</option>`).join("");
+  const domOpts=Object.entries(FORCE_DOMAINS).map(([k,v])=>`<option value="${k}" ${f.domain===k?"selected":""}>${v.icon} ${esc(v.label)}</option>`).join("");
+  const clsOpts=e=>ELEMENT_CLASSES.map(c=>`<option ${c===e.cls?"selected":""}>${esc(c)}</option>`).join("");
+  const typeOpts=e=>{ const known=(world.elementTypes||[]).some(t=>t.name===e.type);
+    return (world.elementTypes||[]).map(t=>`<option value="${t.id}" ${e.type===t.name?"selected":""}>${esc(t.name)} (TL${t.tl||0})</option>`).join("")
+      + (known?"":`<option value="" selected>(custom)</option>`); };
+  const els=(f.elements||[]).map((e,i)=>`
+    <div class="elRow" data-i="${i}">
+      <div class="field"><label>Element type</label><select class="elType" ${ro?"disabled":""}>${typeOpts(e)}</select></div>
+      <div class="field2">
+        <div class="field"><label>Class</label><select class="elCls" ${ro?"disabled":""}>${clsOpts(e)}</select></div>
+        <div class="field" style="flex:0 0 70px"><label>TS</label><input class="elTs" type="number" min="0" value="${e.ts||0}" ${ro?"disabled":""}/></div>
+      </div>
+      <div class="field3">
+        <div class="field"><label>WT</label><input class="elWt" type="number" value="${e.wt||0}" ${ro?"disabled":""}/></div>
+        <div class="field"><label>Mob</label><input class="elMob" type="number" step="0.5" value="${e.mob||1}" ${ro?"disabled":""}/></div>
+        <div class="field"><label>TL</label><input class="elTl" type="number" min="0" value="${e.tl||0}" ${ro?"disabled":""}/></div>
+        ${ro?"":`<div style="flex:0 0 auto;display:flex;align-items:flex-end"><button class="btn tiny elDel" title="Remove element">✕</button></div>`}
+      </div>
+    </div>`).join("");
+  ins.innerHTML=`
+    <div class="insTitle"><input id="fname" value="${esc(f.name)}" ${ro?"disabled":""}/></div>
+    <div class="field2">
+      <div class="field"><label>Type</label><select id="fdom" ${ro?"disabled":""}>${domOpts}</select></div>
+      <div class="field"><label>Allegiance</label><select id="frealm" ${ro?"disabled":""}>${realmOpts}</select></div>
+    </div>
+    <div class="note">Total Troop Strength (TS): <b id="fts">${forceTS(f)}</b></div>
+    ${ro?"":`<div class="btnrow"><button class="btn${state.moveMode==="force"&&state.selForce===f.id?" primary":""}" id="fmove">✥ ${state.moveMode==="force"&&state.selForce===f.id?"Moving… (click to stop)":"Move"}</button><button class="btn danger" id="fdel">Delete</button></div>
+    <div class="field"><label>Token size — <b id="fscv">${(f.scale||1).toFixed(1)}×</b></label><input id="fscale" type="range" min="0.6" max="3" step="0.1" value="${f.scale||1}"/></div>`}
+
+    <div class="sectionH">Elements</div>
+    <div class="note">Each element is a body of troops with a Troop Strength (TS), Class, Weight (WT), Mobility (Mob) and Tech Level (TL).</div>
+    <div id="fels">${els}</div>
+    ${ro?"":`<button class="btn tiny" id="feladd" style="margin-top:6px">＋ Add element</button>`}
+
+    ${ro?"":`<div class="sectionH">Organise</div>
+    <div class="field2">
+      <div class="field"><label>Merge another force into this</label><select id="fmergesel"></select></div>
+      <div style="flex:0 0 auto;display:flex;align-items:flex-end"><button class="btn" id="fmergebtn">⇔ Merge</button></div>
+    </div>
+    <div class="note">Merging keeps the stronger Commander (by Strategy + Leadership) and the higher-skilled Intelligence Chief &amp; Quartermaster; all elements combine.</div>
+    <div class="btnrow" style="margin-top:6px"><button class="btn" id="fsplitbtn">✂ Split off a detachment</button></div>
+    <div class="note">Split moves half the elements into a new force placed alongside. Leaders stay with this force; the detachment starts without a commander until you assign one.</div>`}
+
+    <div class="sectionH">Commander (optional)</div>
+    <div class="field"><label>Name</label><input id="fcname" value="${esc(f.commander?.name||"")}" placeholder="—" ${ro?"disabled":""}/></div>
+    <div class="field2">
+      <div class="field"><label>Strategy</label><input id="fcstr" type="number" value="${f.commander?.strategy??12}" ${ro?"disabled":""}/></div>
+      <div class="field"><label>Leadership</label><input id="fclead" type="number" value="${f.commander?.leadership??12}" ${ro?"disabled":""}/></div>
+    </div>
+
+    <div class="sectionH">Staff (optional)</div>
+    <div class="field2">
+      <div class="field"><label>Intelligence Chief</label><input id="finame" value="${esc(f.intel?.name||"")}" placeholder="—" ${ro?"disabled":""}/></div>
+      <div class="field" style="flex:0 0 90px"><label>Intel. Analysis</label><input id="fiskill" type="number" value="${f.intel?.skill??12}" ${ro?"disabled":""}/></div>
+    </div>
+    <div class="field2">
+      <div class="field"><label>Quartermaster</label><input id="fqname" value="${esc(f.quartermaster?.name||"")}" placeholder="—" ${ro?"disabled":""}/></div>
+      <div class="field" style="flex:0 0 90px"><label>Administration</label><input id="fqskill" type="number" value="${f.quartermaster?.skill??12}" ${ro?"disabled":""}/></div>
+    </div>`;
+  if(ro)return;
+  const upd=()=>{ $("#fts").textContent=forceTS(f); renderMap(); markDirty(); };
+  $("#fname").addEventListener("input",e=>{f.name=e.target.value;renderMap();markDirty();});
+  $("#fdom").addEventListener("change",e=>{f.domain=e.target.value;renderMap();markDirty();});
+  $("#frealm").addEventListener("change",e=>{f.realmId=e.target.value||null;renderMap();markDirty();});
+  $("#fmove").addEventListener("click",()=>{ if(state.moveMode==="force"){ state.moveMode=null; } else { state.moveMode="force"; flash("Move mode on — click the map to relocate “"+f.name+"”. Click Move again (or Esc) to stop."); } renderMap(); renderForceEditor(); });
+  { const sc=$("#fscale"); if(sc)sc.addEventListener("input",e=>{ f.scale=+e.target.value; $("#fscv").textContent=(+e.target.value).toFixed(1)+"×"; renderMap(); markDirty(); }); }
+  $("#fdel").addEventListener("click",()=>{ if(!confirm("Delete this force?"))return; beginEdit(); world.forces=world.forces.filter(x=>x.id!==f.id); state.selForce=null; state.moveMode=null; clearSelection(); ins.innerHTML='<div class="empty">Force deleted.</div>'; markDirty(); });
+  f.commander=f.commander||{name:"",strategy:12,leadership:12};
+  f.intel=f.intel||{name:"",skill:12}; f.quartermaster=f.quartermaster||{name:"",skill:12};
+  $("#fcname").addEventListener("input",e=>{f.commander.name=e.target.value;markDirty();});
+  $("#fcstr").addEventListener("input",e=>{f.commander.strategy=+e.target.value||0;markDirty();});
+  $("#fclead").addEventListener("input",e=>{f.commander.leadership=+e.target.value||0;markDirty();});
+  $("#finame").addEventListener("input",e=>{f.intel.name=e.target.value;markDirty();});
+  $("#fiskill").addEventListener("input",e=>{f.intel.skill=+e.target.value||0;markDirty();});
+  $("#fqname").addEventListener("input",e=>{f.quartermaster.name=e.target.value;markDirty();});
+  $("#fqskill").addEventListener("input",e=>{f.quartermaster.skill=+e.target.value||0;markDirty();});
+  $("#fels").querySelectorAll(".elRow").forEach(row=>{
+    const i=+row.dataset.i, e=f.elements[i]; if(!e)return;
+    { const et=row.querySelector(".elType"); if(et)et.addEventListener("change",ev=>{ const t=(world.elementTypes||[]).find(x=>x.id===ev.target.value); if(t){ e.type=t.name; e.cls=t.cls; e.ts=+t.ts||0; e.wt=+t.wt||0; e.mob=+t.mob||0; e.tl=+t.tl||0; renderForceEditor(); renderMap(); markDirty(); } }); }
+    row.querySelector(".elCls").addEventListener("change",ev=>{e.cls=ev.target.value;e.type="";markDirty();});
+    row.querySelector(".elTs").addEventListener("input",ev=>{e.ts=+ev.target.value||0;upd();});
+    row.querySelector(".elWt").addEventListener("input",ev=>{e.wt=+ev.target.value||0;markDirty();});
+    row.querySelector(".elMob").addEventListener("input",ev=>{e.mob=+ev.target.value||0;markDirty();});
+    row.querySelector(".elTl").addEventListener("input",ev=>{e.tl=+ev.target.value||0;markDirty();});
+    row.querySelector(".elDel").addEventListener("click",()=>{ if(f.elements.length<=1){flash("A force needs at least one element.");return;} beginEdit(); f.elements.splice(i,1); renderForceEditor(); renderMap(); markDirty(); });
+  });
+  $("#feladd").addEventListener("click",()=>{ beginEdit(); f.elements.push(newElement()); renderForceEditor(); renderMap(); markDirty(); });
+  // merge / split
+  { const sel=$("#fmergesel"); const others=world.forces.filter(x=>x.id!==f.id);
+    if(sel){ sel.innerHTML = others.length? others.map(o=>`<option value="${o.id}">${esc(o.name)} (TS ${forceTS(o)}${o.domain!==f.domain?", "+(FORCE_DOMAINS[o.domain]||FORCE_DOMAINS.land).label:""})</option>`).join("") : `<option value="">— no other forces —</option>`; }
+    const mb=$("#fmergebtn"); if(mb)mb.addEventListener("click",()=>{ const oid=sel&&sel.value; const o=oid&&world.forces.find(x=>x.id===oid); if(!o){flash("No other force to merge.");return;} if(!confirm(`Merge “${o.name}” into “${f.name}”? “${o.name}” will be removed.`))return; mergeForces(f,o); });
+    const sb=$("#fsplitbtn"); if(sb)sb.addEventListener("click",()=>{ splitForce(f); });
+  }
+}
+function leaderScore(c){ return (c&&c.name?1000:0)+((c&&c.strategy)||0)+((c&&c.leadership)||0); }
+function mergeForces(target,src){
+  beginEdit();
+  target.elements=(target.elements||[]).concat(src.elements||[]);
+  // keep the stronger commander; higher-skilled intel & quartermaster
+  if(leaderScore(src.commander)>leaderScore(target.commander)) target.commander={...src.commander};
+  if(((src.intel&&src.intel.skill)||0)+((src.intel&&src.intel.name)?100:0) > ((target.intel&&target.intel.skill)||0)+((target.intel&&target.intel.name)?100:0)) target.intel={...src.intel};
+  if(((src.quartermaster&&src.quartermaster.skill)||0)+((src.quartermaster&&src.quartermaster.name)?100:0) > ((target.quartermaster&&target.quartermaster.skill)||0)+((target.quartermaster&&target.quartermaster.name)?100:0)) target.quartermaster={...src.quartermaster};
+  world.forces=world.forces.filter(x=>x.id!==src.id);
+  markDirty(); selectForce(target.id); renderLegend(); flash("Forces merged into “"+target.name+"”.");
+}
+function splitForce(f){
+  if((f.elements||[]).length<2){ flash("Need at least 2 elements to split off a detachment."); return; }
+  beginEdit();
+  const half=Math.floor(f.elements.length/2);
+  const moved=f.elements.splice(f.elements.length-half, half);
+  const det=newForce(f.x+18, f.y+18, f.realmId);
+  det.name=f.name+" (detachment)"; det.domain=f.domain; det.scale=f.scale||1; det.elements=moved;
+  // leaders stay with the parent; detachment starts leaderless (default staff)
+  world.forces.push(det); separateForce(det);
+  markDirty(); selectForce(det.id); renderLegend(); flash("Detachment split off from “"+f.name+"”.");
+}
+// Pre-rolled GURPS Mass Combat battle summary (framework — no logistics).
+function renderMonsterEditor(){
+  const ins=$("#inspector"); const m=world.monsters.find(x=>x.id===state.selMonster);
+  if(!m){ins.innerHTML='<div class="empty">No creature selected.</div>';return;}
+  const ro=VIEWER;
+  ins.innerHTML=`
+    <div class="insTitle"><input id="mname" value="${esc(m.name||"")}" placeholder="Creature name" ${ro?"disabled":""}/></div>
+    <div class="note">A free-floating map token — drag it anywhere on the <b>Monsters</b> map.</div>
+    <div class="field2">
+      <div class="field" style="flex:0 0 80px"><label>Icon</label><input id="mico" value="${esc(m.icon||"🐉")}" placeholder="🐉" maxlength="4" ${ro?"disabled":""}/></div>
+      <div class="field"><label>Size — <b id="mscv">${(m.scale||1.4).toFixed(1)}×</b></label><input id="mscale" type="range" min="0.6" max="4" step="0.1" value="${m.scale||1.4}" ${ro?"disabled":""}/></div>
+    </div>
+    ${ro?"":`<div class="btnrow"><button class="btn${state.moveMode==="monster"?" primary":""}" id="mmove">✥ ${state.moveMode==="monster"?"Moving… (click to stop)":"Move"}</button><button class="btn danger" id="mdel">Delete</button></div>`}`;
+  if(ro)return;
+  $("#mname").addEventListener("input",e=>{m.name=e.target.value;renderMap();renderLegend();markDirty();});
+  $("#mico").addEventListener("input",e=>{m.icon=e.target.value;renderMap();renderLegend();markDirty();});
+  $("#mscale").addEventListener("input",e=>{m.scale=+e.target.value;$("#mscv").textContent=(+e.target.value).toFixed(1)+"×";renderMap();markDirty();});
+  $("#mmove").addEventListener("click",()=>{ if(state.moveMode==="monster"){ state.moveMode=null; } else { state.moveMode="monster"; flash("Move mode on — click the map to relocate “"+(m.name||"creature")+"”. Click Move again (or Esc) to stop."); } renderMap(); renderMonsterEditor(); });
+  $("#mdel").addEventListener("click",()=>{ if(!confirm("Delete this creature?"))return; beginEdit(); world.monsters=world.monsters.filter(x=>x.id!==m.id); state.selMonster=null; state.moveMode=null; clearSelection(); ins.innerHTML='<div class="empty">Creature deleted.</div>'; markDirty(); });
+}
+function battleSummary(a,b){
+  const tsa=forceTS(a), tsb=forceTS(b);
+  const stratA=a.commander?.strategy||10, stratB=b.commander?.strategy||10;
+  const rA=roll3d6(), rB=roll3d6();
+  // strategy contest margin (skill − roll); higher wins the pre-battle maneuver
+  const marA=stratA-rA, marB=stratB-rB;
+  const manoeuvre = marA===marB ? "Even" : (marA>marB? a.name : b.name);
+  // effective TS after a small strategy edge (±10% per margin step, capped)
+  const edge=Math.max(-3,Math.min(3,marA-marB));
+  const effA=Math.round(tsa*(1+0.10*Math.max(0,edge))), effB=Math.round(tsb*(1+0.10*Math.max(0,-edge)));
+  const ratio = effB? (effA/effB) : 99;
+  let victor, vlabel;
+  if(ratio>=2){victor=a.name;vlabel="Decisive";}
+  else if(ratio>=1.25){victor=a.name;vlabel="Clear";}
+  else if(ratio>1/1.25){victor="—";vlabel="Indecisive";}
+  else if(ratio>1/2){victor=b.name;vlabel="Clear";}
+  else {victor=b.name;vlabel="Decisive";}
+  // casualty fractions scale with how lopsided the fight is (framework placeholder)
+  const base=0.10, lose=Math.min(0.6, base + Math.abs(Math.log(ratio))*0.18);
+  const win=Math.max(0.03, base - Math.abs(Math.log(ratio))*0.05);
+  const aLoss = victor===a.name?win:(victor===b.name?lose:base);
+  const bLoss = victor===b.name?win:(victor===a.name?lose:base);
+  return {tsa,tsb,rA,rB,stratA,stratB,manoeuvre,effA,effB,ratio,victor,vlabel,
+          aCas:Math.round(tsa*aLoss),bCas:Math.round(tsb*bLoss)};
+}
+function renderBattleView(){
+  const ins=$("#inspector"); if(!state.selBattle){ins.innerHTML='<div class="empty">No battle.</div>';return;}
+  const a=world.forces.find(x=>x.id===state.selBattle[0]), b=world.forces.find(x=>x.id===state.selBattle[1]);
+  if(!a||!b){ins.innerHTML='<div class="empty">Battle resolved — forces moved apart.</div>';state.selBattle=null;return;}
+  const s=state.battleRoll&&state.battleRoll.key===a.id+b.id? state.battleRoll.data : (state.battleRoll={key:a.id+b.id,data:battleSummary(a,b)}).data;
+  const side=(f,cas,eff)=>`<div class="bside">
+      <div class="bname">${esc(f.name)}</div>
+      <div class="note">${(FORCE_DOMAINS[f.domain]||FORCE_DOMAINS.land).label} · TS ${forceTS(f)}${f.commander?.name?` · Cmdr ${esc(f.commander.name)}`:""}</div>
+      <div class="brow2"><span>Strategy roll</span><b>${f===a?s.stratA+" vs 3d6="+s.rA:s.stratB+" vs 3d6="+s.rB}</b></div>
+      <div class="brow2"><span>Effective TS</span><b>${eff}</b></div>
+      <div class="brow2"><span>Est. casualties</span><b>${cas.toLocaleString()} TS</b></div>
+    </div>`;
+  ins.innerHTML=`
+    <div class="insTitle" style="display:flex;align-items:center;gap:8px">💥 Battle</div>
+    <div class="note">Pre-rolled GURPS Mass Combat summary (framework — no logistics). Reroll for a fresh engagement.</div>
+    ${side(a,s.aCas,s.effA)}
+    <div style="text-align:center;font-size:20px;margin:6px 0">⚔️</div>
+    ${side(b,s.bCas,s.effB)}
+    <div class="sectionH">Result</div>
+    <div class="brow2"><span>Pre-battle maneuver</span><b>${esc(s.manoeuvre)}</b></div>
+    <div class="brow2"><span>Force ratio</span><b>${s.ratio>=99?"∞":s.ratio.toFixed(2)} : 1</b></div>
+    <div class="brow2"><span>Outcome</span><b>${s.vlabel}${s.victor!=="—"?" — "+esc(s.victor):" (draw)"}</b></div>
+    ${VIEWER?"":`<div class="btnrow" style="margin-top:10px"><button class="btn" id="brebtn">🎲 Reroll battle</button></div>`}`;
+  if(!VIEWER){ const rb=$("#brebtn"); if(rb)rb.addEventListener("click",()=>{ state.battleRoll={key:a.id+b.id,data:battleSummary(a,b)}; renderBattleView(); }); }
 }
 
 /* ============================================================
@@ -1478,7 +1869,7 @@ function renderLeft(){
   else if(!shown){rl.innerHTML='<div class="note" style="padding:8px 10px">No realms match your search.</div>';}
   renderLegend();
 }
-const MODE_TITLES={political:"Realms",provincemap:"Province Map",terrain:"Terrain",settlement:"Settlements",religion:"Religion",culture:"Culture",race:"Race",language:"Language",population:"Population",resource:"Resource",economy:"Mode of Production",imported:"Imported colors"};
+const MODE_TITLES={political:"Realms",provincemap:"Province Map",terrain:"Terrain",settlement:"Settlements",religion:"Religion",culture:"Culture",race:"Race",language:"Language",population:"Population",resource:"Resource",economy:"Mode of Production",monster:"Monsters",military:"Military",imported:"Imported colors"};
 function legendEntries(mode){           // [color, label, paintValue]
   const L=world.lists, e=[];
   if(mode==="political"){e.push(["#39415e","Unclaimed","__none__"]);world.realms.forEach(r=>e.push([r.color,r.name,r.id]));}
@@ -1501,10 +1892,53 @@ function legendEntries(mode){           // [color, label, paintValue]
   return e;
 }
 const PAINTABLE_MODES=["political","terrain","settlement","religion","culture","race","language","resource","economy"];
+// compact floating legend shown directly on the map (mobile)
+function buildMapLegend(){
+  const box=$("#mapLegend"); if(!box)return;
+  if(typeof world==="undefined" || !world || !document.body.classList.contains("mobile") || state.mapmode==="imported"){ box.classList.add("hidden"); return; }
+  const entries=legendEntries(state.mapmode);
+  if(!entries.length){ box.classList.add("hidden"); return; }
+  box.classList.remove("hidden");
+  const rows=entries.map(([c,l])=>`<div class="mlRow"><span class="sw" style="background:${c}"></span>${esc(l)}</div>`).join("");
+  box.innerHTML=`<button class="mlHead">${esc(MODE_TITLES[state.mapmode]||"Legend")}</button><div class="mlList">${rows}</div>`;
+  box.querySelector(".mlHead").onclick=()=>box.classList.toggle("open");
+}
+function renderForceLegend(box){
+  if(!VIEWER){ const b=document.createElement("button"); b.className="btn tiny primary"; b.style.marginBottom="6px"; b.textContent="＋ Add force";
+    b.onclick=addForceAtCenter; box.appendChild(b); }
+  if(!world.forces.length){ const n=div("note"); n.textContent=VIEWER?"No forces on the map.":"No forces yet. Click ＋ Add force, then use ✥ Move to place it."; box.appendChild(n); return; }
+  world.forces.forEach(f=>{
+    const r=world.realms.find(x=>x.id===f.realmId), col=r?r.color:"#5a6172";
+    const row=div("li"+(state.selForce===f.id?" sel":""));
+    row.innerHTML=`<span class="swatch" style="background:${col}"></span>${(FORCE_DOMAINS[f.domain]||FORCE_DOMAINS.land).icon} ${esc(f.name)} <span class="note" style="margin-left:auto">TS ${forceTS(f)}</span>`;
+    if(state.selForce===f.id){row.style.outline="2px solid var(--accent)";row.style.borderRadius="6px";}
+    row.style.cursor="pointer"; row.onclick=()=>{selectForce(f.id);centerOn(f.x,f.y);};
+    box.appendChild(row);
+  });
+}
+function renderMonsterLegend(box){
+  if(!VIEWER){ const b=document.createElement("button"); b.className="btn tiny primary"; b.style.marginBottom="6px"; b.textContent="＋ Add creature";
+    b.onclick=addMonsterAtCenter; box.appendChild(b); }
+  if(!world.monsters.length){ const n=div("note"); n.textContent=VIEWER?"No legendary creatures.":"No creatures yet. Click ＋ Add creature, then use ✥ Move to place it."; box.appendChild(n); return; }
+  world.monsters.forEach(m=>{
+    const row=div("li"+(state.selMonster===m.id?" sel":""));
+    row.innerHTML=`<span style="width:16px;display:inline-block;text-align:center">${esc(m.icon||"🐉")}</span> ${esc(m.name||"(unnamed)")}`;
+    if(state.selMonster===m.id){row.style.outline="2px solid var(--accent)";row.style.borderRadius="6px";}
+    row.style.cursor="pointer"; row.onclick=()=>{selectMonster(m.id);centerOn(m.x,m.y);};
+    box.appendChild(row);
+  });
+}
+function centerOn(wx,wy){
+  const cv=$("#map"); const cw=cv.clientWidth||800, ch=cv.clientHeight||600;
+  state.cam.x=wx-(cw/state.cam.scale)/2; state.cam.y=wy-(ch/state.cam.scale)/2; requestRender();
+}
 function renderLegend(){
   refreshMapmodeBar();
+  buildMapLegend();
   const box=$("#legend");box.innerHTML="";
   if(state.mapmode==="imported"){box.innerHTML='<div class="note">Original imported province colors.</div>';return;}
+  if(state.mapmode==="military"){ renderForceLegend(box); return; }
+  if(state.mapmode==="monster"){ renderMonsterLegend(box); return; }
   const paintable=PAINTABLE_MODES.includes(state.mapmode) && !VIEWER;
   legendEntries(state.mapmode).forEach(([c,l,v])=>{
     const d=div("li");d.innerHTML=`<span class="swatch" style="background:${c}"></span>${esc(l)}`;
@@ -1520,12 +1954,19 @@ function renderLegend(){
     const h=div("note");h.style.marginTop="6px";h.textContent="Click an entry, then click/drag on the map to paint it.";box.appendChild(h);
     const lk=MODE_LIST[state.mapmode];
     if(lk){const mb=document.createElement("button");mb.className="btn tiny";mb.style.marginTop="6px";mb.textContent="✎ Edit / add "+({governments:"governments",religions:"religions",cultures:"cultures",races:"races",languages:"languages",terrains:"terrains",settlements:"settlements",resources:"resources"}[lk]||lk);mb.onclick=()=>openLists(lk);box.appendChild(mb);}
-    if(state.mapmode==="resource"){
+    if(state.mapmode!=="political"){
+      const rob=document.createElement("button");rob.className="btn tiny"+(state.realmOverlay?" primary":"");rob.style.marginTop="6px";rob.style.marginLeft="6px";
+      rob.textContent=(state.realmOverlay?"✓ ":"")+"⚑ Realm borders";
+      rob.title="Outline every realm's borders on top of this map mode";
+      rob.onclick=()=>{state.realmOverlay=!state.realmOverlay;renderLegend();renderMap();};
+      box.appendChild(rob);
       const tb=document.createElement("button");tb.className="btn tiny"+(state.terrainOverlay?" primary":"");tb.style.marginTop="6px";tb.style.marginLeft="6px";
-      tb.textContent=(state.terrainOverlay?"✓ ":"")+"⛰ Terrain outline overlay";
-      tb.title="Overlay terrain-region outlines to help place resources";
+      tb.textContent=(state.terrainOverlay?"✓ ":"")+"⛰ Terrain outlines";
+      tb.title="Overlay terrain-region outlines on this map mode";
       tb.onclick=()=>{state.terrainOverlay=!state.terrainOverlay;renderLegend();renderMap();};
       box.appendChild(tb);
+    }
+    if(state.mapmode==="resource"){
       const hb=document.createElement("button");hb.className="btn tiny"+(state.hiddenResMode?" primary":"");hb.style.marginTop="6px";hb.style.marginLeft="6px";
       hb.textContent=(state.hiddenResMode?"✓ ":"")+"⛏ Strategic (hidden) resources";
       hb.title="Show and paint hidden strategic resources (Iron, Coal, Oil…) on top of the normal resources";
@@ -2258,6 +2699,20 @@ function setupMapInteraction(){
     if(state.tilt||dragged)return;   // a drag was a pan or a paint-stroke, not a click
     const [wx,wy]=screenToWorld(ev);
     if(state.rulerOn){ if(state.rulerDone){ state.rulerPts=[]; state.rulerDone=false; } state.rulerPts.push([wx,wy]); state.rulerCur=null; requestRender(); return; }
+    if(state.mapmode==="military"){
+      // sticky move: while Move is toggled on, every click relocates the selected force
+      if(state.moveMode==="force" && state.selForce && !VIEWER){ const f=world.forces.find(x=>x.id===state.selForce); if(f){ beginEdit(); f.x=Math.round(wx); f.y=Math.round(wy); separateForce(f); markDirty(); renderMap(); } return; }
+      const bt=battleAt(wx,wy); if(bt){ selectBattle(bt[0].id,bt[1].id); return; }
+      const f=forceAt(wx,wy); if(f){ selectForce(f.id); return; }
+      if(state.selForce||state.selBattle){ state.selForce=null; state.selBattle=null; state.moveMode=null; clearSelection(); }
+      return;
+    }
+    if(state.mapmode==="monster"){
+      if(state.moveMode==="monster" && state.selMonster && !VIEWER){ const m=world.monsters.find(x=>x.id===state.selMonster); if(m){ beginEdit(); m.x=Math.round(wx); m.y=Math.round(wy); markDirty(); renderMap(); } return; }
+      const m=monsterAt(wx,wy); if(m){ selectMonster(m.id); return; }
+      if(state.selMonster){ state.selMonster=null; state.moveMode=null; clearSelection(); }
+      return;
+    }
     if(state.tool==="textlabel"){
       const t=prompt("Label text:","");
       if(t&&t.trim()){ beginEdit(); const lb={id:uid(),x:Math.round(wx),y:Math.round(wy),text:t.trim(),size:38,color:"#2b3038"}; world.labels.push(lb); setTool("select"); selectCustomLabel(lb.id); markDirty(); }
@@ -2276,8 +2731,8 @@ function setupMapInteraction(){
     const p=provinceAt(wx,wy);
     if(p){ onProvinceClick(p); return; }
     const c=continentAt(wx,wy);
-    if(c){ state.focusedContinent=c.id; selectContinent(c.id); return; }
-    clearSelection();   // clicked empty void → deselect and hide the inspector
+    if(c) state.focusedContinent=c.id;   // focus it for drawing, but don't open the continent view
+    clearSelection();   // clicking away from a province just closes the right panel
   });
   cv.addEventListener("dblclick",ev=>{
     if(state.rulerOn){ ev.preventDefault();
@@ -2315,9 +2770,11 @@ function setupMapInteraction(){
       if(k==="y"||(k==="z"&&ev.shiftKey)){ev.preventDefault();doRedo();return;}
     }
     if(ev.key==="Enter"&&DRAW_TOOLS.includes(state.tool))finishDraft();
-    if(ev.key==="Escape"){if(state.regionSel){state.regionSel=null;_regionCb=null;flash("Region export cancelled.");}if(state.split){state.split=null;flash("Split cancelled.");}if(state.rulerOn&&state.rulerPts.length){state.rulerPts=[];state.rulerCur=null;state.rulerDone=false;flash("Measurement cleared.");}state.draft=null;state.nodeDrag=null;requestRender();}
+    if(ev.key==="Escape"){if(state.regionSel){state.regionSel=null;_regionCb=null;flash("Region export cancelled.");}if(state.split){state.split=null;flash("Split cancelled.");}if(state.rulerOn&&state.rulerPts.length){state.rulerPts=[];state.rulerCur=null;state.rulerDone=false;flash("Measurement cleared.");}if(state.moveMode){state.moveMode=null;flash("Move mode off.");if(state.selForce)renderForceEditor();else if(state.selMonster)renderMonsterEditor();}state.draft=null;state.nodeDrag=null;requestRender();}
     if(inField)return;
     if(/^[0-9]$/.test(ev.key)){const idx=ev.key==="0"?9:(+ev.key-1); const m=MAPMODE_BAR[idx]; if(m){setMapmode(m[0]);return;}}
+    if(ev.key==="o"||ev.key==="O"){setMapmode("monster");return;}
+    if(ev.key==="p"||ev.key==="P"){setMapmode("military");return;}
     if(ev.key==="v")setTool("select");
     if(ev.key==="d")setTool("draw");
     if(ev.key==="b")setTool("paint");
@@ -2382,9 +2839,21 @@ function handleTapWorld(wx,wy){
   if(_mmOpen){ _mmOpen=false; refreshMapmodeBar(); return; }   // a tap closes the map-mode picker
   if(state.rulerOn){ if(state.rulerDone){state.rulerPts=[];state.rulerDone=false;} state.rulerPts.push([wx,wy]); state.rulerCur=null; requestRender(); return; }
   if(state.pingOn && state.pingTool==="pin"){ pingLayer.pins.push({x:wx,y:wy,color:state.pingColor}); savePings(); requestRender(); return; }
+  if(state.mapmode==="military"){
+    if(state.moveMode==="force" && state.selForce && !VIEWER){ const f=world.forces.find(x=>x.id===state.selForce); if(f){beginEdit();f.x=Math.round(wx);f.y=Math.round(wy);separateForce(f);markDirty();renderMap();} return; }
+    const bt=battleAt(wx,wy); if(bt){ selectBattle(bt[0].id,bt[1].id); return; }
+    const f=forceAt(wx,wy); if(f){ selectForce(f.id); return; }
+    if(state.selForce||state.selBattle){ state.selForce=null;state.selBattle=null;state.moveMode=null; clearSelection(); } return;
+  }
+  if(state.mapmode==="monster"){
+    if(state.moveMode==="monster" && state.selMonster && !VIEWER){ const m=world.monsters.find(x=>x.id===state.selMonster); if(m){beginEdit();m.x=Math.round(wx);m.y=Math.round(wy);markDirty();renderMap();} return; }
+    const m=monsterAt(wx,wy); if(m){ selectMonster(m.id); return; }
+    if(state.selMonster){ state.selMonster=null;state.moveMode=null; clearSelection(); } return;
+  }
   const mobile=document.body.classList.contains("mobile");
   const p=provinceAt(wx,wy);
   if(p && state.tool==="paint" && paintReady()){ if(paintProvince(p)){_labelsDirty=true;renderMap();renderLeft();markDirty();} return; }
+  if(p && state.mapmode==="resource"){ toggleResourceHighlight(p); if(!mobile){selectProvince(p.id);}else{renderMap();} return; }
   if(p && !mobile){ selectProvince(p.id); return; }   // mobile: no province view — just pan the map
   document.body.classList.remove("has-sel");
   const c=continentAt(wx,wy); if(c) state.focusedContinent=c.id;
@@ -2506,7 +2975,7 @@ function exportRender(rect,outW,mode,legend,legendPos,provNames=true){
       ctx.beginPath(); ctx.moveTo(pts[0][0],pts[0][1]); for(let i=1;i<pts.length;i++)ctx.lineTo(pts[i][0],pts[i][1]); ctx.closePath(); ctx.stroke(); }
   }
   drawWater(ctx,s);
-  if(renderMode!=="political") drawRealmBorders(ctx);
+  if(renderMode!=="political" && state.realmOverlay) drawRealmBorders(ctx);
   ctx.setTransform(1,0,0,1,0,0);ctx.textAlign="center";ctx.textBaseline="middle";
   const keySz=Math.max(5,Math.round(mapW/360));   // capital/admin marker size (shared) — small so it doesn't crowd labels
   // markers first, so names/labels render on top of the capital stars & admin diamonds
@@ -2697,6 +3166,11 @@ function applyListRename(k,ov,nv){
   else if(k==="features"){P.forEach(p=>p.features=p.features.map(f=>f===ov?nv:f));if(world.featureCats&&world.featureCats[ov]!==undefined){world.featureCats[nv]=world.featureCats[ov];delete world.featureCats[ov];}}
   else if(k==="governments"){R.forEach(r=>{if(r.government===ov)r.government=nv;});}
   else if(k==="economies"){ax("economy");R.forEach(r=>{if(r.economy===ov)r.economy=nv;});}
+  // carry the GM-screen modifier over to the new name
+  if(world.tune){
+    if(k==="terrains"&&world.tune.terrainHab&&world.tune.terrainHab[ov]!==undefined){world.tune.terrainHab[nv]=world.tune.terrainHab[ov];delete world.tune.terrainHab[ov];}
+    if(k==="races"&&world.tune.raceGrowth&&world.tune.raceGrowth[ov]!==undefined){world.tune.raceGrowth[nv]=world.tune.raceGrowth[ov];delete world.tune.raceGrowth[ov];}
+  }
 }
 function listUsageCount(k,v){
   const P=world.provinces,R=world.realms; let n=0;
@@ -2726,6 +3200,11 @@ function applyListDelete(k,v){
   else if(k==="hiddenResources"){P.forEach(p=>{if(p.hidden===v)p.hidden="";});}
   else if(k==="governments"){const fb=(world.lists.governments.find(x=>x!==v))||"";R.forEach(r=>{if(r.government===v)r.government=fb;});}
   else if(k==="economies"){const fb=(world.lists.economies.find(x=>x!==v))||"Primitive";R.forEach(r=>{if(r.economy===v)r.economy=fb;});P.forEach(p=>{let ch=false;(p.pops||[]).forEach(q=>{if(q.economy===v){q.economy=fb;ch=true;}});if(ch)deriveProvince(p);});}
+  // drop the GM-screen modifier for the removed type
+  if(world.tune){
+    if(k==="terrains"&&world.tune.terrainHab)delete world.tune.terrainHab[v];
+    if(k==="races"&&world.tune.raceGrowth)delete world.tune.raceGrowth[v];
+  }
 }
 const LIST_KEYS=[["religions","Religions"],["cultures","Cultures"],["races","Races"],["languages","Languages"],["terrains","Terrains"],["settlements","Settlement tiers"],["resources","Resources"],["hiddenResources","Strategic resources"],["features","Features"],["governments","Government types"],["economies","Modes of Production"]];
 const MODE_LIST={religion:"religions",culture:"cultures",race:"races",language:"languages",terrain:"terrains",settlement:"settlements",resource:"resources",economy:"economies"};
@@ -2789,11 +3268,105 @@ function openEras(){
   render();
   $("#eraAdd").onclick=()=>{world.eras.push({id:uid(),name:"New Age"});render();rebuildEraSelect();markDirty();};
 }
-function openPopScreen(){
+// Keep the GM-screen modifiers in lock-step with the race & terrain lists:
+// seed a tweakable entry for every current type, and drop any whose type is gone.
+function syncTuneKeys(){
+  if(!world.tune)world.tune={};
+  world.tune.terrainHab=world.tune.terrainHab||{};
+  world.tune.raceGrowth=world.tune.raceGrowth||{};
+  const terrains=world.lists.terrains||[], races=world.lists.races||[];
+  terrains.forEach(t=>{ if(world.tune.terrainHab[t]===undefined) world.tune.terrainHab[t]=terrainHab(t); });
+  races.forEach(r=>{ if(world.tune.raceGrowth[r]===undefined) world.tune.raceGrowth[r]=raceGrowthMod(r); });
+  const T=new Set(terrains), R=new Set(races);
+  Object.keys(world.tune.terrainHab).forEach(t=>{ if(!T.has(t)) delete world.tune.terrainHab[t]; });
+  Object.keys(world.tune.raceGrowth).forEach(r=>{ if(!R.has(r)) delete world.tune.raceGrowth[r]; });
+}
+function tuneValuesHTML(){
+  const SETTLE_LABELS=["Uninhabited","Nomadic","Village","Town","City","Megalopolis"];
+  const sf=(world.tune.settleFactors&&world.tune.settleFactors.length)?world.tune.settleFactors:[0,0.4,1,1.8,3,4.5];
+  const terrRows=world.lists.terrains.map(t=>`
+    <div class="field" style="flex:0 0 132px"><label>${esc(t)}</label>
+      <input class="tuneHab" data-t="${esc(t)}" type="number" step="0.05" min="0" value="${terrainHab(t)}"/></div>`).join("");
+  const raceRows=world.lists.races.map(r=>`
+    <div class="field" style="flex:0 0 132px"><label>${esc(r)}</label>
+      <input class="tuneRace" data-r="${esc(r)}" type="number" step="0.05" min="0" value="${raceGrowthMod(r)}"/></div>`).join("");
+  const settleRows=SETTLE_LABELS.map((s,i)=>`
+    <div class="field" style="flex:0 0 132px"><label>${esc(s)}</label>
+      <input class="tuneSettle" data-i="${i}" type="number" step="0.1" min="0" value="${sf[i]!=null?sf[i]:0}" ${i===0?"disabled":""}/></div>`).join("");
+  return `
+    <div class="sectionH">⚙ Terrain habitability (population &amp; growth multiplier)</div>
+    <p class="note">1.0 = a normal fertile land. Higher = more people and faster growth; lower = harsher.</p>
+    <div style="display:flex;flex-wrap:wrap;gap:6px">${terrRows}</div>
+    <div class="sectionH">🧬 Growth modifier per race</div>
+    <p class="note">Multiplies how fast each race's pop groups grow when you press 🌱 Grow. 1.0 = normal, 1.5 = fast breeders, 0.5 = slow.</p>
+    <div style="display:flex;flex-wrap:wrap;gap:6px">${raceRows||'<div class="note">No races defined yet.</div>'}</div>
+    <div class="sectionH">🏙 Settlement-tier capacity</div>
+    <p class="note">How much population each settlement tier can hold when seeding (relative multiplier).</p>
+    <div style="display:flex;flex-wrap:wrap;gap:6px">${settleRows}</div>
+    <div class="sectionH">⭐ Key-location boosts</div>
+    <div class="field2">
+      <div class="field"><label>Capital boost ×</label><input id="tuneCap" type="number" min="1" step="0.1" value="${world.capitalBoost??1.8}"/></div>
+      <div class="field"><label>Admin center boost ×</label><input id="tuneAdm" type="number" min="1" step="0.1" value="${world.adminBoost??1.3}"/></div>
+    </div>
+    <div class="btnrow"><button class="btn" id="tuneReset">↺ Reset tunables to defaults</button></div>`;
+}
+function wireTuneValues(){
+  $$(".tuneHab").forEach(el=>el.addEventListener("input",e=>{const t=el.dataset.t,v=e.target.value;if(v==="")delete world.tune.terrainHab[t];else world.tune.terrainHab[t]=+v;markDirty();}));
+  $$(".tuneRace").forEach(el=>el.addEventListener("input",e=>{const r=el.dataset.r,v=e.target.value;if(v==="")delete world.tune.raceGrowth[r];else world.tune.raceGrowth[r]=+v;markDirty();}));
+  $$(".tuneSettle").forEach(el=>el.addEventListener("input",e=>{ const base=(world.tune.settleFactors&&world.tune.settleFactors.length)?world.tune.settleFactors.slice():[0,0.4,1,1.8,3,4.5]; base[+el.dataset.i]=+e.target.value||0; world.tune.settleFactors=base; markDirty(); }));
+  const cap=$("#tuneCap"); if(cap)cap.addEventListener("input",e=>{world.capitalBoost=Math.max(1,+e.target.value||1);markDirty();});
+  const adm=$("#tuneAdm"); if(adm)adm.addEventListener("input",e=>{world.adminBoost=Math.max(1,+e.target.value||1);markDirty();});
+  const rst=$("#tuneReset"); if(rst)rst.addEventListener("click",()=>{ if(!confirm("Reset terrain habitability, race growth, settlement factors and key-location boosts to their defaults?"))return; world.tune.terrainHab={}; world.tune.raceGrowth={}; world.tune.settleFactors=null; delete world.capitalBoost; delete world.adminBoost; markDirty(); openGMScreen(); });
+}
+function renderElementTypes(){
+  const box=$("#elemTypes"); if(!box)return; box.innerHTML="";
+  world.elementTypes=world.elementTypes||[];
+  const clsOpts=v=>ELEMENT_CLASSES.map(c=>`<option ${c===v?"selected":""}>${esc(c)}</option>`).join("");
+  world.elementTypes.forEach((t,i)=>{
+    const row=div("elRow");
+    row.innerHTML=`
+      <div class="field2">
+        <div class="field"><label>Name</label><input class="etName" value="${esc(t.name||"")}"/></div>
+        <div class="field" style="flex:0 0 auto;display:flex;align-items:flex-end;gap:4px">
+          <button class="btn tiny etUp" title="Move up">↑</button>
+          <button class="btn tiny etDown" title="Move down">↓</button>
+          <button class="btn tiny etDel" title="Delete" style="color:var(--bad)">✕</button>
+        </div>
+      </div>
+      <div class="field2">
+        <div class="field"><label>Class</label><select class="etCls">${clsOpts(t.cls)}</select></div>
+        <div class="field" style="flex:0 0 64px"><label>Base TS</label><input class="etTs" type="number" min="0" value="${t.ts||0}"/></div>
+      </div>
+      <div class="field3">
+        <div class="field"><label>WT</label><input class="etWt" type="number" value="${t.wt||0}"/></div>
+        <div class="field"><label>Mob</label><input class="etMob" type="number" step="0.5" value="${t.mob||1}"/></div>
+        <div class="field"><label>TL</label><input class="etTl" type="number" min="0" value="${t.tl||0}"/></div>
+      </div>`;
+    row.querySelector(".etName").addEventListener("input",e=>{t.name=e.target.value;markDirty();});
+    row.querySelector(".etCls").addEventListener("change",e=>{t.cls=e.target.value;markDirty();});
+    row.querySelector(".etTs").addEventListener("input",e=>{t.ts=+e.target.value||0;markDirty();});
+    row.querySelector(".etWt").addEventListener("input",e=>{t.wt=+e.target.value||0;markDirty();});
+    row.querySelector(".etMob").addEventListener("input",e=>{t.mob=+e.target.value||0;markDirty();});
+    row.querySelector(".etTl").addEventListener("input",e=>{t.tl=+e.target.value||0;markDirty();});
+    row.querySelector(".etUp").addEventListener("click",()=>{ if(i>0){ const a=world.elementTypes; [a[i-1],a[i]]=[a[i],a[i-1]]; renderElementTypes(); markDirty(); } });
+    row.querySelector(".etDown").addEventListener("click",()=>{ const a=world.elementTypes; if(i<a.length-1){ [a[i+1],a[i]]=[a[i],a[i+1]]; renderElementTypes(); markDirty(); } });
+    row.querySelector(".etDel").addEventListener("click",()=>{ if(world.elementTypes.length<=1){flash("Keep at least one element type.");return;} if(!confirm(`Delete element type "${t.name}"?`))return; world.elementTypes.splice(i,1); renderElementTypes(); markDirty(); });
+    box.appendChild(row);
+  });
+}
+function openGMScreen(){
+  syncTuneKeys();   // add mods for new terrains/races, prune deleted ones
   const contOpts=world.continents.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join("");
   const realmOpts=world.realms.map(r=>`<option value="${r.id}">${esc(r.name)}</option>`).join("");
-  openModal(`<button class="btn close" onclick="closeModal()">✕ Close</button><h2>👥 Populate &amp; grow</h2>
-    <p class="note">Generates realistic populations from a baseline, scaled by <b>terrain hospitability</b> (grassland &amp; coast thrive; mountains, desert and tundra are sparse), <b>settlement tier</b>, and <b>capital / admin</b> bonuses — with random variation so no two runs are identical. Newly-populated provinces inherit their realm's identity (or list defaults if unclaimed).</p>
+  openModal(`<button class="btn close" onclick="closeModal()">✕ Close</button><h2>🎲 GM Screen</h2>
+    <p class="note">Behind-the-screen controls: tune the world's simulation values, then seed and grow populations. These settings are saved with the world and never shown in the player viewer.</p>
+    ${tuneValuesHTML()}
+    <div class="sectionH">⚔ Army element types (GURPS Mass Combat)</div>
+    <p class="note">Templates you drop into armies on the Military map. TL 0 is the Stone Age Warriors. Add your own, edit their stats, and reorder them with ↑/↓. (Values are editable — set them to match your book.)</p>
+    <div id="elemTypes"></div>
+    <button class="btn tiny" id="elemAdd" style="margin-top:6px">＋ Add element type</button>
+    <div class="sectionH">👥 Populate &amp; grow</div>
+    <p class="note">Generates realistic populations from a baseline, scaled by <b>terrain hospitability</b>, <b>settlement tier</b>, and <b>capital / admin</b> bonuses (all editable above) — with random variation so no two runs are identical. Newly-populated provinces inherit their realm's identity (or list defaults if unclaimed).</p>
     <div class="field2">
       <div class="field"><label>Baseline (a hospitable village)</label><input id="pbBase" type="number" min="0" value="5000"/></div>
       <div class="field"><label>Randomness ± %</label><input id="pbVar" type="number" min="0" max="90" value="30"/></div>
@@ -2851,7 +3424,7 @@ function openPopScreen(){
     beginEdit(); let grew=0;
     ps.forEach(p=>{ const before=p.population||0;
       if(prio && r && p.realmId===r.id) growRealmPops(p,g,v,o,r,prio);
-      else setProvincePopulation(p,growProvincePop(p,g,v,o));
+      else growGenericPops(p,g,v,o);
       if((p.population||0)!==before)grew++; });
     renderMap();renderLeft();markDirty();
     status("Grew "+grew+" provinces"+(prio?" · state group "+(prio.on?"prioritised":"")+(prio.seed?(prio.on?" & seeded":"seeded"):""):"")+"."); };
@@ -2864,6 +3437,9 @@ function openPopScreen(){
     if(!confirm("Are you absolutely sure? This wipes every province's people. (Undo can still restore it.)"))return;
     beginEdit(); world.provinces.forEach(p=>{p.pops=[];deriveProvince(p);}); renderMap();renderLeft();markDirty(); status("All population deleted.");
   };
+  wireTuneValues();
+  renderElementTypes();
+  { const ea=$("#elemAdd"); if(ea)ea.addEventListener("click",()=>{ world.elementTypes.push({id:uid(),name:"New Element",cls:"Infantry (PF)",ts:5,wt:0,mob:1,tl:1}); renderElementTypes(); markDirty(); }); }
 }
 async function openMenu(){
   const worlds=await listWorlds();
@@ -2871,7 +3447,7 @@ async function openMenu(){
     <div class="field"><label>Saved worlds on disk</label>
       <div id="worldsList">${worlds.length?worlds.map(w=>`<div class="li"><span style="flex:1">${esc(w)}</span><button class="btn tiny" data-open="${esc(w)}">Open</button></div>`).join(""):'<div class="note">None yet — saving creates a file named after your world.</div>'}</div></div>
     <div class="btnrow">
-      <button class="btn primary" id="mPopulate">👥 Populate &amp; grow…</button>
+      <button class="btn primary" id="mPopulate">🎲 GM Screen (populate, grow &amp; tune)…</button>
       <button class="btn" id="mNew">＋ New world</button>
       <button class="btn" id="mSaveAs">💾 Save now</button>
       <button class="btn" id="mExport">⬇ Export JSON</button>
@@ -2900,7 +3476,7 @@ async function openMenu(){
     {world=normalize(sampleWorld());world.name="New World";world.continents=[];world.provinces=[];world.realms=[];afterLoad();closeModal();}};
   $("#mSaveAs").onclick=()=>saveWorld(false);
   $("#mExport").onclick=()=>downloadText(world.name+" "+tstamp()+".json",JSON.stringify(world,null,2));
-  $("#mPopulate").onclick=()=>{closeModal();openPopScreen();};
+  $("#mPopulate").onclick=()=>{closeModal();openGMScreen();};
   $("#mArchiveData").onclick=archiveDataToDisk;
   $("#mPublish").onclick=publishViewer;
   $("#mExportSvg").onclick=()=>{closeModal();openExport();};
@@ -2975,24 +3551,46 @@ function afterLoad(){
 
 // bottom-right map-mode buttons (icon + hover tooltip)
 // Order matches the number hotkeys 1–9.
+// EU4-inspired custom map-mode glyphs. Most use currentColor so they invert to
+// white on the active button; the Race icon is a fixed Anbennar-blue portrait roundel.
+const MM_ICON={
+  political:`<svg viewBox="0 0 24 24" class="mmi"><path fill="currentColor" d="M2 9l4 4 6-7 6 7 4-4-2 10.5H4L2 9z"/><rect x="4" y="20.2" width="16" height="2.4" rx="1.1" fill="currentColor"/></svg>`,
+  terrain:`<svg viewBox="0 0 24 24" class="mmi"><path fill="currentColor" fill-rule="evenodd" d="M2 20L9 7.5l4.3 7.4 2.4-3.6L22 20H2zm7-8.4l-1.6 2.9h3.2L9 11.6z"/></svg>`,
+  resource:`<svg viewBox="0 0 24 24" class="mmi"><path fill="currentColor" fill-rule="evenodd" d="M7 3h10l4 6-9 12L3 9l4-6zm5 3.4L6.3 9.3h11.4L12 6.4z"/></svg>`,
+  religion:`<svg viewBox="0 0 24 24" class="mmi"><path fill="currentColor" d="M12 1l2 4.1 4.1-2.1-2.1 4.1L20 9l-4.1 2 2.1 4.1L14 13l-2 4.1L10 13l-4 2.1L8.1 11 4 9l4.1-1.9L6 3l4.1 2.1L12 1z"/><circle cx="12" cy="12" r="2.6" fill="currentColor"/></svg>`,
+  culture:`<svg viewBox="0 0 24 24" class="mmi"><path fill="currentColor" fill-rule="evenodd" d="M5 3h14v7c0 6-4.5 11-7 11S5 16 5 10V3zm4.5 6a1.5 1.5 0 100 3 1.5 1.5 0 000-3zm5 0a1.5 1.5 0 100 3 1.5 1.5 0 000-3zM8.4 14.6c1.9 2.1 5.3 2.1 7.2 0l-1.1-1.2c-1.3 1.4-3.7 1.4-5 0l-1.1 1.2z"/></svg>`,
+  race:`<svg viewBox="0 0 24 24" class="mmi"><circle cx="12" cy="12" r="11" fill="#22468a" stroke="#e2ecff" stroke-width="1.4"/><circle cx="12" cy="9.6" r="3.3" fill="#a8c8f7"/><path fill="#a8c8f7" d="M5.7 19.7c0-3.5 2.9-5.7 6.3-5.7s6.3 2.2 6.3 5.7v.3H5.7v-.3z"/></svg>`,
+  language:`<svg viewBox="0 0 24 24" class="mmi"><path fill="currentColor" fill-rule="evenodd" d="M3 4h18v12.5H9L4 20.8V16.5H3V4zm4 3.8v2h10v-2H7zm0 3.9v2h7v-2H7z"/></svg>`,
+  population:`<svg viewBox="0 0 24 24" class="mmi"><path fill="currentColor" d="M5.6 8.2A2.3 2.3 0 105.6 13a2.3 2.3 0 000-4.6zm12.8 0A2.3 2.3 0 1018.4 13a2.3 2.3 0 000-4.6zM12 5.6A3 3 0 1012 12a3 3 0 000-6.4zM.9 20c0-2.6 2-4.3 4.5-4.3.7 0 1.4.1 2 .4C6.4 17 6 18.4 6 20H.9zm22.2 0H18c0-1.6-.4-3-1.4-3.9.6-.3 1.3-.4 2-.4 2.5 0 4.5 1.7 4.5 4.3zM6.8 20c0-3 2.3-5.1 5.2-5.1s5.2 2.1 5.2 5.1H6.8z"/></svg>`,
+  settlement:`<svg viewBox="0 0 24 24" class="mmi"><path fill="currentColor" fill-rule="evenodd" d="M2.5 21V10l6.5-4.3L15.5 10v11h-13zm11.5-7.5h7.5V21H14v-7.5zM6 13v2h2.2v-2H6zm0 4v2h2.2v-2H6zm10.4-1.5v2h2.1v-2h-2.1z"/></svg>`,
+  economy:`<svg viewBox="0 0 24 24" class="mmi"><path fill="currentColor" fill-rule="evenodd" d="M12 2a10 10 0 100 20 10 10 0 000-20zm0 2.4a7.6 7.6 0 110 15.2 7.6 7.6 0 010-15.2z"/><path fill="currentColor" d="M11 6.6h2V9c1.5.2 2.6 1.1 2.6 2.4h-2c0-.5-.6-.9-1.5-.9-.8 0-1.4.4-1.4.9 0 .5.6.7 1.8 1 1.7.4 3.2 1 3.2 2.8 0 1.3-1.1 2.3-2.7 2.5v2.3h-2v-2.3c-1.6-.2-2.8-1.2-2.8-2.6h2c0 .6.7 1 1.7 1s1.5-.4 1.5-.9-.7-.8-1.9-1.1c-1.6-.4-3.1-1-3.1-2.7 0-1.3 1.1-2.2 2.6-2.4V6.6z"/></svg>`,
+  monster:`<svg viewBox="0 0 24 24" class="mmi"><path fill="currentColor" fill-rule="evenodd" d="M4 3c2 1 3.1 2.5 3.5 4.4C8.8 6.6 10.3 6.1 12 6.1s3.2.5 4.5 1.3C16.9 5.5 18 4 20 3c-.3 2.4-1 3.8-2 4.9 1.2 1.2 2 3 2 4.8 0 4.5-4 8.6-8 8.6s-8-4.1-8-8.6c0-1.8.8-3.6 2-4.8C5 6.8 4.3 5.4 4 3zm5.6 8.2a1.5 1.5 0 100 3 1.5 1.5 0 000-3zm4.8 0a1.5 1.5 0 100 3 1.5 1.5 0 000-3z"/></svg>`,
+  military:`<svg viewBox="0 0 24 24" class="mmi"><path fill="currentColor" d="M3 3h2.3l9 9-2.3 2.3-9-9V3zm18 0v2.3l-9 9-2.3-2.3 9-9H21zM3 18.9l4.2-4.2 1.6 1.6-4.2 4.2H3v-1.6zm18 0v1.6h-1.6l-4.2-4.2 1.6-1.6 4.2 4.2z"/></svg>`,
+};
+// 5th field = EU4 button-art basename in /img (uses mm_<name>.png / mm_<name>_a.png
+// for the normal + active/pressed states). null → fall back to the custom SVG glyph.
 const MAPMODE_BAR=[
-  ["political","⚑","Political — realms"],
-  ["terrain","⛰","Terrain"],
-  ["resource","⛏","Resources"],
-  ["religion","☩","Religion (dominant)"],
-  ["culture","🎭","Culture (dominant)"],
-  ["race","👤","Race (dominant)"],
-  ["language","🗣","Language (dominant)"],
-  ["population","👥","Population"],
-  ["settlement","🏘","Settlements"],
-  ["economy","💰","Mode of Production (dominant pop)"],
+  ["political",MM_ICON.political,"Political — realms","1","political"],
+  ["terrain",MM_ICON.terrain,"Terrain","2","terrain"],
+  ["resource",MM_ICON.resource,"Resources","3","resource"],
+  ["religion",MM_ICON.religion,"Religion (dominant)","4","religion"],
+  ["culture",MM_ICON.culture,"Culture (dominant)","5","culture"],
+  ["race",MM_ICON.race,"Race (dominant)","6","race"],
+  ["language",MM_ICON.language,"Language (dominant)","7","language"],
+  ["population",MM_ICON.population,"Population","8","population"],
+  ["settlement",MM_ICON.settlement,"Settlements","9","settlement"],
+  ["economy",MM_ICON.economy,"Mode of Production (dominant pop)","0","economy"],
+  ["monster",MM_ICON.monster,"Monsters & legendary creatures","O","monster"],
+  ["military",MM_ICON.military,"Military — armies, fleets & air units","P","military"],
 ];
 let _mmOpen=false;   // mobile: is the map-mode picker expanded?
 function buildMapmodeBar(){
   const bar=$("#mapmodeBar"); if(!bar)return; bar.innerHTML="";
-  MAPMODE_BAR.forEach(([m,icon,label],i)=>{
-    const b=document.createElement("button"); b.className="mmbtn"; b.dataset.mode=m;
-    const hk=(i+1)%10; b.title=`${label}  (hotkey ${hk})`; b.innerHTML=`${icon}<span class="mmkey">${hk}</span>`;
+  MAPMODE_BAR.forEach(([m,icon,label,hk,img],i)=>{
+    const b=document.createElement("button"); b.className="mmbtn"+(img?" hasimg":""); b.dataset.mode=m;
+    b.title=`${label}  (hotkey ${hk})`;
+    if(img){ b.style.setProperty("--mm",`url("img/mm_${img}.png")`); b.style.setProperty("--mma",`url("img/mm_${img}_a.png")`); b.innerHTML=`<span class="mmkey">${hk}</span>`; }
+    else b.innerHTML=`${icon}<span class="mmkey">${hk}</span>`;
     b.onclick=()=>{
       if(document.body.classList.contains("mobile") && !_mmOpen){ _mmOpen=true; refreshMapmodeBar(); return; }  // tap collapsed → expand
       setMapmode(m); _mmOpen=false; refreshMapmodeBar();                                                        // pick → collapse
@@ -3012,9 +3610,31 @@ function refreshMapmodeBar(){
 }
 function setMapmode(m){
   state.mapmode=m; state.paintValue=null; state.paintUnclaim=false;
+  if(m!=="resource") state.selResource=null;   // clear the resource spotlight when leaving that map
+  updateResSpot();
+  if(m!=="military" && (state.selForce||state.selBattle)){ state.selForce=null; state.selBattle=null; state.moveMode=null; }
+  if(m!=="monster" && state.selMonster){ state.selMonster=null; state.moveMode=null; }
+  if(m!=="military"&&m!=="monster"&&(state.selForce||state.selBattle||state.selMonster)){ clearSelection(); }
   const ms=$("#mapmode"); if(ms)ms.value=m;
   renderMap(); renderLegend();
   if(state.tool==="paint")flash(paintHint());
+}
+function mapCenterWorld(){
+  const cv=$("#map"); const cw=cv.clientWidth||800, ch=cv.clientHeight||600;
+  return [state.cam.x+(cw/state.cam.scale)/2, state.cam.y+(ch/state.cam.scale)/2];
+}
+function addForceAtCenter(){
+  beginEdit();
+  const [cx,cy]=mapCenterWorld();
+  const rid=state.selRealm || (world.realms[0]&&world.realms[0].id) || null;
+  const f=newForce(cx,cy,rid);
+  world.forces.push(f); separateForce(f); markDirty(); selectForce(f.id); renderLegend();
+}
+function addMonsterAtCenter(){
+  beginEdit();
+  const [cx,cy]=mapCenterWorld();
+  const m=newMonster(cx,cy);
+  world.monsters.push(m); markDirty(); selectMonster(m.id); renderLegend();
 }
 function updateWorldPop(){
   const el=$("#worldPop"); if(!el)return;
@@ -3052,7 +3672,7 @@ function _popPanelDismiss(ev){
   if(panel.contains(ev.target)||ev.target.id==="worldPop")return;
   panel.remove(); document.removeEventListener("click",_popPanelDismiss,true);
 }
-function updateMobile(){ document.body.classList.toggle("mobile", window.innerWidth<=760); if(!document.body.classList.contains("mobile"))_mmOpen=false; refreshMapmodeBar(); }
+function updateMobile(){ document.body.classList.toggle("mobile", window.innerWidth<=760); if(!document.body.classList.contains("mobile"))_mmOpen=false; refreshMapmodeBar(); buildMapLegend(); }
 function wireTopbar(){
   $("#worldName").addEventListener("input",e=>{world.name=e.target.value;markDirty();});
   $("#eraSelect").addEventListener("change",e=>{world.currentEraId=e.target.value;markDirty();});
@@ -3111,6 +3731,7 @@ function wireTopbar(){
     try{ window.close(); }catch(e){}
     setTimeout(()=>{document.body.innerHTML='<div style="padding:40px;font:16px system-ui;color:#444">Project Sovereign has closed. You can close this window (Alt+F4).</div>';},600);
   };
+  { const g=$("#btnGM"); if(g)g.onclick=()=>openGMScreen(); }
   $("#btnEdit").onclick=()=>{
     state.editMode=!state.editMode;
     document.body.classList.toggle("editing",state.editMode);
@@ -3124,7 +3745,7 @@ function applyViewerUI(){
   document.body.classList.add("viewer");
   document.title="Project Sovereign — Atlas";
   const hide=id=>{const e=document.getElementById(id);if(e)e.style.display="none";};
-  ["btnEdit","btnUndo","btnRedo","btnSave","btnQuit","btnMenu","btnLists","manageEras","addContinent","addRealm","paneContinents"].forEach(hide);
+  ["btnEdit","btnGM","btnUndo","btnRedo","btnSave","btnQuit","btnMenu","btnLists","manageEras","addContinent","addRealm","paneContinents"].forEach(hide);
   // paint tool + the whole edit-map tool group
   const pb=document.querySelector('.btn.tool[data-tool="paint"]'); if(pb)pb.style.display="none";
   const eg=document.querySelector('.topgroup.tools.editonly'); if(eg)eg.style.display="none";
