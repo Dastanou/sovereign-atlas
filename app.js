@@ -36,11 +36,11 @@ const DEFAULT_LISTS = {
   races: ["Human", "Elf", "Dwarf", "Orc", "Halfling", "Goblin", "Dragonborn", "Tiefling", "Aarakocra"],
   languages: ["Common", "Old Veshkan", "High Aurelian", "Cant", "Draconic"],
   terrains: ["Plains", "Forest", "Hills", "Mountains", "Desert", "Marsh", "Tundra", "Jungle", "Coast", "Wasteland", "Floating Reef"],
-  settlements: ["Uninhabited", "Village", "Town", "City", "Megalopolis"],
+  settlements: ["Uninhabited", "Nomadic", "Village", "Town", "City", "Megalopolis"],
   resources: ["Grain", "Livestock", "Fish", "Timber", "Iron", "Gold", "Gems", "Wine", "Spices", "Cloth", "Magical Reagents", "Enchanted Items", "Skystone", "Aether Crystals"],
   features: ["Impact Crater", "Arcane Scar", "Ancient Ruin", "Ley-line Nexus", "Floating Monolith", "Sunken City", "Volcanic Rift", "Sacred Grove"],
   governments: ["Feudal Monarchy", "Absolute Monarchy", "Merchant Republic", "Theocracy", "Magocracy", "Tribal Confederation", "City-State", "Hegemony", "Imperial", "Council"],
-  economies: ["Agrarian", "Trade", "Mercantile", "Industrial", "Arcane-Industrial", "Pastoral", "Plunder", "Mixed"]
+  economies: ["Primitive", "Agrarian", "Trade", "Mercantile", "Industrial", "Arcane-Industrial", "Pastoral", "Plunder", "Mixed"]
 };
 
 /* ---------- color helpers ---------- */
@@ -50,7 +50,7 @@ function listColor(list, name){const i=list.indexOf(name);return i>=0?PALETTE[i%
 function ramp(t){t=Math.max(0,Math.min(1,t));const a=[239,122,95],b=[95,208,160];return `rgb(${a.map((v,i)=>Math.round(v+(b[i]-v)*t)).join(",")})`;}
 
 const TERRAIN_COLORS={Plains:"#a7c957",Forest:"#386641",Hills:"#9c8246",Mountains:"#8d99ae",Desert:"#e9c46a",Marsh:"#52796f",Tundra:"#cad2c5",Jungle:"#2d6a4f",Coast:"#76c7c0",Wasteland:"#6d597a","Floating Reef":"#48bfe3"};
-const SETTLE_COLORS={Uninhabited:"#26304a",Village:"#9bb25f",Town:"#e9c46a",City:"#f4a261",Megalopolis:"#e76f51"};
+const SETTLE_COLORS={Uninhabited:"#26304a",Nomadic:"#b79b6a",Village:"#9bb25f",Town:"#e9c46a",City:"#f4a261",Megalopolis:"#e76f51"};
 
 /* ============================================================
    STATE
@@ -155,6 +155,11 @@ function normalize(w){
   if(w.distanceUnit!=="km")w.distanceUnit="mi";   // display unit for the scale bar
   if(w.capitalBoost==null)w.capitalBoost=1.8;   // population distribution: capital multiplier
   if(w.adminBoost==null)w.adminBoost=1.3;        // population distribution: admin-centre multiplier
+  // ensure the Nomadic settlement tier & the Primitive economy exist in older worlds
+  if(!w.lists.settlements.includes("Nomadic")){ const i=w.lists.settlements.indexOf("Uninhabited"); w.lists.settlements.splice(i<0?0:i+1,0,"Nomadic"); }
+  { const pc=w.lists.economies.indexOf("Primitive Communism"); if(pc>=0)w.lists.economies[pc]="Primitive"; }
+  if(!w.lists.economies.includes("Primitive")) w.lists.economies.unshift("Primitive");
+  w.realms.forEach(r=>{ if(r.economy==="Primitive Communism")r.economy="Primitive"; });
   w.provinces.forEach(p=>{
     ["religion","culture","race","language"].forEach(k=>p[k]=p[k]||[]);
     p.features=p.features||[]; p.history=p.history||[];
@@ -297,9 +302,15 @@ function labelKeyer(mode){
     case "language": return p=>dominant(p.language);
     case "terrain": return null;   // terrain uses custom labels, not auto region names
     case "settlement": return p=>(p.settlement&&p.settlement!=="Uninhabited")?p.settlement:null;
+    case "economy": return p=>economyOf(p);
     case "resource": return null;   // resource uses custom labels, not auto region names
     default: return null;
   }
+}
+function economyOf(p){
+  if(p.economy) return p.economy;                                  // per-province override (e.g. unclaimed tribes)
+  if(p.realmId){ const r=world.realms.find(x=>x.id===p.realmId); return (r&&r.economy)?r.economy:"Primitive"; }
+  return "Primitive";
 }
 function labelText(mode,val){ if(mode==="political"){const r=world.realms.find(r=>r.id===val);return r?r.name:"";} return val; }
 function clamp01(x){return x<0?0:x>1?1:x;}
@@ -896,6 +907,7 @@ function provinceFill(p){
     case "population":return popColor(p.population);
     case "tolerance":return ramp((p.tolerance??50)/100);
     case "resource":return catColor("resources",p.resource);
+    case "economy":return catColor("economies",economyOf(p));
     case "imported":return p.importColor||"#39415e";
     default:return "#39415e";
   }
@@ -906,12 +918,13 @@ function colorByAxis(arr,key){const d=dominant(arr);return d?catColor(key,d):"#3
    AUTOMATIC HISTORY TRACKER
    Logs a dated entry whenever a tracked, map-mode attribute changes.
    ============================================================ */
-const FIELD_TITLES={realm:"Ownership",terrain:"Terrain",settlement:"Settlement",resource:"Resource",religion:"Religion",culture:"Culture",race:"Race",language:"Language"};
+const FIELD_TITLES={realm:"Ownership",terrain:"Terrain",settlement:"Settlement",resource:"Resource",religion:"Religion",culture:"Culture",race:"Race",language:"Language",economy:"Economy"};
 function provTrackedValue(p,field){
   if(field==="realm")return p.realmId?(world.realms.find(r=>r.id===p.realmId)?.name||"Unknown realm"):"Unclaimed";
   if(field==="terrain")return p.terrain||"—";
   if(field==="settlement")return p.settlement||"—";
   if(field==="resource")return p.resource||"—";
+  if(field==="economy")return economyOf(p);
   if(field==="religion"||field==="culture"||field==="race"||field==="language")return dominant(p[field])||"—";
   return "";
 }
@@ -1086,7 +1099,7 @@ function joinRealmDefaults(p, realmId){
 }
 function paintProvince(p){   // returns true if it changed something (and auto-logs it)
   const m=state.mapmode;
-  const fieldMap={political:"realm",terrain:"terrain",settlement:"settlement",resource:"resource",religion:"religion",culture:"culture",race:"race",language:"language"};
+  const fieldMap={political:"realm",terrain:"terrain",settlement:"settlement",resource:"resource",religion:"religion",culture:"culture",race:"race",language:"language",economy:"economy"};
   const field=fieldMap[m]; if(!field)return false;
   const old=provTrackedValue(p,field); let changed=false;
   if(m==="political"){const v=state.paintUnclaim?null:state.selRealm; if(p.realmId!==v){p.realmId=v;changed=true; if(v)joinRealmDefaults(p,v);}}
@@ -1094,6 +1107,10 @@ function paintProvince(p){   // returns true if it changed something (and auto-l
     if(m==="terrain"){if(p.terrain!==v){p.terrain=v;changed=true;}}
     else if(m==="settlement"){if(p.settlement!==v){p.settlement=v;changed=true;}}
     else if(m==="resource"){if(p.resource!==v){p.resource=v;changed=true;}}
+    else if(m==="economy"){ // set the realm's economy if claimed, else a per-province override
+      if(p.realmId){const r=world.realms.find(x=>x.id===p.realmId); if(r&&r.economy!==v){r.economy=v;changed=true;}}
+      else if(p.economy!==v){p.economy=v;changed=true;}
+    }
     else{ // religion/culture/race/language — convert every pop group in the province
       if(!(p.pops&&p.pops.length))return false;   // no people here to convert
       let any=false; p.pops.forEach(q=>{if(q[m]!==v){q[m]=v;any=true;}});
@@ -1174,7 +1191,7 @@ function renderLeft(){
   else if(!shown){rl.innerHTML='<div class="note" style="padding:8px 10px">No realms match your search.</div>';}
   renderLegend();
 }
-const MODE_TITLES={political:"Realms",provincemap:"Province Map",terrain:"Terrain",settlement:"Settlements",religion:"Religion",culture:"Culture",race:"Race",language:"Language",population:"Population",resource:"Resource",imported:"Imported colors"};
+const MODE_TITLES={political:"Realms",provincemap:"Province Map",terrain:"Terrain",settlement:"Settlements",religion:"Religion",culture:"Culture",race:"Race",language:"Language",population:"Population",resource:"Resource",economy:"Economy",imported:"Imported colors"};
 function legendEntries(mode){           // [color, label, paintValue]
   const L=world.lists, e=[];
   if(mode==="political"){e.push(["#39415e","Unclaimed","__none__"]);world.realms.forEach(r=>e.push([r.color,r.name,r.id]));}
@@ -1185,10 +1202,11 @@ function legendEntries(mode){           // [color, label, paintValue]
   else if(mode==="race")L.races.forEach(x=>e.push([catColor("races",x),x,x]));
   else if(mode==="language")L.languages.forEach(x=>e.push([catColor("languages",x),x,x]));
   else if(mode==="resource")L.resources.forEach(x=>e.push([catColor("resources",x),x,x]));
+  else if(mode==="economy")L.economies.forEach(x=>e.push([catColor("economies",x),x,x]));
   else if(mode==="population"){[[0,"Uninhabited"],[1000,"~1,000"],[5000,"~5,000"],[10000,"~10,000 (high)"],[50000,"~50,000"],[150000,"100,000+ (metropolis)"]].forEach(([v,l])=>e.push([popColor(v),l]));}
   return e;
 }
-const PAINTABLE_MODES=["political","terrain","settlement","religion","culture","race","language","resource"];
+const PAINTABLE_MODES=["political","terrain","settlement","religion","culture","race","language","resource","economy"];
 function renderLegend(){
   refreshMapmodeBar();
   const box=$("#legend");box.innerHTML="";
@@ -1242,7 +1260,8 @@ function renderProvinceView(){
     <div class="insTitle" style="font-weight:700;font-size:17px">${esc(p.name)}</div>
     ${row(["Realm", realm?`<a href="#" id="pvRealm" style="color:var(--accent);text-decoration:none"><span class="swatch" style="background:${realm.color}"></span>${esc(realm.name)}</a>`:'<span class="note">Unclaimed</span>'], ["Continent", cont?esc(cont.name):"—"])}
     ${row(["Terrain", esc(p.terrain||"—")], ["Settlement", esc(p.settlement||"—")])}
-    ${row(["Top resource", esc(p.resource||"—")], ["Population", (p.population||0).toLocaleString()])}
+    ${row(["Top resource", esc(p.resource||"—")], ["Economy", esc(economyOf(p))])}
+    ${row(["Population", (p.population||0).toLocaleString()], ["", ""])}
     <div class="sectionH">Notable features</div><div>${feats}</div>
     <div class="sectionH">Population breakdown</div>
     <div class="field"><label>Religion</label>${pctBars(p.religion,"religions")}</div>
@@ -1300,7 +1319,10 @@ function renderProvinceEditor(){
       <div class="field"><label>Terrain</label><select id="pterr">${opt(world.lists.terrains,p.terrain)}</select></div>
       <div class="field"><label>Settlement</label><select id="psett">${opt(world.lists.settlements,p.settlement)}</select></div>
     </div>
-    <div class="field"><label>Top resource</label><select id="pres">${opt(world.lists.resources,p.resource)}</select></div>
+    <div class="field2">
+      <div class="field"><label>Top resource</label><select id="pres">${opt(world.lists.resources,p.resource)}</select></div>
+      <div class="field"><label>Economy</label><select id="pecon"><option value="" ${!p.economy?"selected":""}>— ${p.realmId?"from realm":"Primitive"} —</option>${world.lists.economies.map(o=>`<option ${o===p.economy?"selected":""}>${esc(o)}</option>`).join("")}</select></div>
+    </div>
 
     <div class="sectionH">Notable features</div>
     <div id="pfeat"></div>
@@ -1341,6 +1363,7 @@ function renderProvinceEditor(){
   bindTracked("pterr","terrain",v=>p.terrain=v);
   bindTracked("psett","settlement",v=>p.settlement=v);
   bindTracked("pres","resource",v=>p.resource=v);
+  bindTracked("pecon","economy",v=>p.economy=v||"");
   $("#prealm").addEventListener("change",e=>{
     const old=provTrackedValue(p,"realm");p.realmId=e.value||null;autoLog(p,"realm",old);joinRealmDefaults(p,p.realmId);renderHistory(p);renderMap();renderLeft();renderProvinceEditor();markDirty();
   });
@@ -1955,7 +1978,7 @@ function setupMapInteraction(){
     if(ev.key==="Enter"&&DRAW_TOOLS.includes(state.tool))finishDraft();
     if(ev.key==="Escape"){if(state.regionSel){state.regionSel=null;_regionCb=null;flash("Region export cancelled.");}if(state.split){state.split=null;flash("Split cancelled.");}state.draft=null;state.nodeDrag=null;requestRender();}
     if(inField)return;
-    if(/^[1-9]$/.test(ev.key)){const m=MAPMODE_BAR[+ev.key-1]; if(m){setMapmode(m[0]);return;}}
+    if(/^[0-9]$/.test(ev.key)){const idx=ev.key==="0"?9:(+ev.key-1); const m=MAPMODE_BAR[idx]; if(m){setMapmode(m[0]);return;}}
     if(ev.key==="v")setTool("select");
     if(ev.key==="d")setTool("draw");
     if(ev.key==="b")setTool("paint");
@@ -2258,7 +2281,7 @@ function applyListDelete(k,v){
   else if(k==="economies"){const fb=(world.lists.economies.find(x=>x!==v))||"";R.forEach(r=>{if(r.economy===v)r.economy=fb;});}
 }
 const LIST_KEYS=[["religions","Religions"],["cultures","Cultures"],["races","Races"],["languages","Languages"],["terrains","Terrains"],["settlements","Settlement tiers"],["resources","Resources"],["features","Features"],["governments","Government types"],["economies","Economy types"]];
-const MODE_LIST={religion:"religions",culture:"cultures",race:"races",language:"languages",terrain:"terrains",settlement:"settlements",resource:"resources"};
+const MODE_LIST={religion:"religions",culture:"cultures",race:"races",language:"languages",terrain:"terrains",settlement:"settlements",resource:"resources",economy:"economies"};
 function randomizeCategory(k){
   world.colors[k]=world.colors[k]||{};
   const start=Math.random()*360;
@@ -2437,12 +2460,13 @@ const MAPMODE_BAR=[
   ["language","🗣","Language (dominant)"],
   ["population","👥","Population"],
   ["settlement","🏘","Settlements"],
+  ["economy","💰","Economy — by country (unclaimed = Primitive)"],
 ];
 function buildMapmodeBar(){
   const bar=$("#mapmodeBar"); if(!bar)return; bar.innerHTML="";
   MAPMODE_BAR.forEach(([m,icon,label],i)=>{
     const b=document.createElement("button"); b.className="mmbtn"; b.dataset.mode=m;
-    b.title=`${label}  (hotkey ${i+1})`; b.innerHTML=`${icon}<span class="mmkey">${i+1}</span>`;
+    const hk=(i+1)%10; b.title=`${label}  (hotkey ${hk})`; b.innerHTML=`${icon}<span class="mmkey">${hk}</span>`;
     b.onclick=()=>setMapmode(m); bar.appendChild(b);
   });
   refreshMapmodeBar();
