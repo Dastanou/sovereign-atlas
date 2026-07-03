@@ -128,6 +128,14 @@ body:not(.has-sel) #right{display:none}
 #resSpot .rsw{display:inline-block; width:11px; height:11px; border-radius:3px; margin-right:2px;
   vertical-align:middle; border:1px solid rgba(255,255,255,.35)}
 #resSpot .rsX{cursor:pointer; margin-left:8px; color:#f0a; font-weight:700}
+/* collapsible province history (collapsed by default to save space) */
+details.histBox{margin:2px 0 6px}
+details.histBox>summary{cursor:pointer; list-style:none; padding:3px 0; color:var(--accent);
+  font-size:13px; font-weight:600; user-select:none}
+details.histBox>summary::-webkit-details-marker{display:none}
+details.histBox>summary::before{content:"▸"; display:inline-block; width:14px; color:var(--muted)}
+details.histBox[open]>summary::before{content:"▾"}
+details.histBox .histBody, details.histBox .hist{margin-top:4px}
 .mmkey{position:absolute; top:1px; right:3px; font-size:9px; font-weight:700;
   color:var(--muted); line-height:1}
 .mmbtn.active .mmkey{color:#eaf0fb}

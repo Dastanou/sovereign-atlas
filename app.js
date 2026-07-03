@@ -2009,7 +2009,7 @@ function renderProvinceView(){
     <div class="field"><label>Culture</label>${pctBars(p.culture,"cultures")}</div>
     <div class="field"><label>Race</label>${pctBars(p.race,"races")}</div>
     <div class="field"><label>Language</label>${pctBars(p.language,"languages")}</div>
-    <div class="sectionH">History</div>${hist}
+    <details class="histBox"><summary>History${p.history&&p.history.length?` (${p.history.length})`:""}</summary><div class="histBody">${hist}</div></details>
   `;
   const rl=$("#pvRealm"); if(rl&&realm)rl.onclick=e=>{e.preventDefault();selectRealm(realm.id);};
 }
@@ -2074,7 +2074,7 @@ function renderProvinceEditor(){
     <button class="btn tiny" id="ppopAdd" style="margin-top:6px">＋ Add pop group</button>
 
     <div class="sectionH">History</div>
-    <div id="phist" class="hist"></div>
+    <details class="histBox"><summary>Recorded events</summary><div id="phist" class="hist"></div></details>
     <div class="field2">
       <div class="field"><label>Age</label><select id="hnera">${world.eras.map(e=>`<option value="${e.id}" ${e.id===world.currentEraId?"selected":""}>${esc(e.name)}</option>`).join("")}</select></div>
       <div class="field"><label>Title</label><input id="hntitle" placeholder="e.g. Razed by dragons"/></div>
@@ -2191,6 +2191,7 @@ function renderPops(p){
   const totals=()=>{const t=$("#ppopTot");if(t)t.textContent=(p.population||0).toLocaleString();const n=$("#ppopN");if(n)n.textContent=p.pops.length;};
   p.pops.forEach((q,i)=>{
     const row=div("popRow");
+    row.style.borderLeft=`5px solid ${q.race?catColor("races",q.race):"#39415e"}`;   // tint by race colour
     row.innerHTML=`<div class="popHead"><input class="psize" type="number" min="0" value="${q.size||0}" title="People in this group"/><span class="x" title="Remove group">✕</span></div>
       <div class="popAxes">${sel(world.lists.religions,q.religion,"prel","Religion")}${sel(world.lists.cultures,q.culture,"pcul","Culture")}${sel(world.lists.races,q.race,"prace","Race")}${sel(world.lists.languages,q.language,"plang","Language")}${sel(world.lists.economies,q.economy,"pecon2","Mode of Production")}</div>`;
     const updSize=()=>{deriveProvince(p);totals();renderMap();renderLeft();markDirty();};
