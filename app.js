@@ -96,7 +96,7 @@ let state = {
   nodeDrag: null,           // {p,i} vertex being dragged in Nodes tool
   split: null,              // {p, pts:[], cur:[x,y]} active split-line for a province
   editMode: false,          // map-drawing screen on/off
-  showNames: true,          // show landmass names on the map
+  showNames: false,         // show landmass names on the map (off by default)
   terrainOverlay: false,    // resource mode: overlay terrain-region outlines as a painting aid
   hiddenResMode: false,     // resource mode: show & paint hidden/strategic resources
   pingOn: false,            // annotation/ping overlay active
@@ -2350,6 +2350,11 @@ function pingEraseAtWorld(wx,wy){
   requestRender();
 }
 function handleTapWorld(wx,wy){
+  // tapping the map closes any open mobile panel / sheet
+  if(document.body.classList.contains("m-drawer")||document.body.classList.contains("has-sel")){
+    document.body.classList.remove("m-drawer"); document.body.classList.remove("has-sel");
+    const bp=$("#btnPanels"); if(bp)bp.classList.remove("on"); requestRender(); return;
+  }
   if(_mmOpen){ _mmOpen=false; refreshMapmodeBar(); return; }   // a tap closes the map-mode picker
   if(state.rulerOn){ if(state.rulerDone){state.rulerPts=[];state.rulerDone=false;} state.rulerPts.push([wx,wy]); state.rulerCur=null; requestRender(); return; }
   if(state.pingOn && state.pingTool==="pin"){ pingLayer.pins.push({x:wx,y:wy,color:state.pingColor}); savePings(); requestRender(); return; }
@@ -2365,11 +2370,10 @@ function handleTapWorld(wx,wy){
 /* ============================================================
    VIEW: tilt, world view, focus, zoom
    ============================================================ */
-function toggleTilt(force){
+function toggleTilt(force){   // tilt feature removed; kept as a no-op-safe stub
   state.tilt=(typeof force==="boolean")?force:!state.tilt;
-  $("#map").classList.toggle("tilt",state.tilt);
-  $("#toggleTilt").classList.toggle("on",state.tilt);
-  if(state.tilt)flash("Tilt view — look only. Toggle off to edit or pan.");
+  const m=$("#map"); if(m)m.classList.toggle("tilt",state.tilt);
+  const b=$("#toggleTilt"); if(b)b.classList.toggle("on",state.tilt);
 }
 function fitTo(b,padFrac){
   const cv=$("#map"); const cw=cv.clientWidth||800, ch=cv.clientHeight||600;
@@ -3000,7 +3004,6 @@ function wireTopbar(){
   const bp=$("#btnPing"); if(bp)bp.onclick=togglePing; buildPingBar();
   const br=$("#btnRuler"); if(br)br.onclick=toggleRuler;
   $$(".btn.tool").forEach(b=>b.onclick=()=>setTool(b.dataset.tool));
-  $("#toggleTilt").onclick=()=>toggleTilt();
   $("#worldView").onclick=()=>{worldView();};
   $("#btnNames").onclick=()=>{state.showNames=!state.showNames;$("#btnNames").classList.toggle("on",state.showNames);renderMap();flash(state.showNames?"Landmass names shown — drag a name to reposition it.":"Landmass names hidden.");};
   $("#btnNames").classList.toggle("on",state.showNames);

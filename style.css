@@ -198,12 +198,19 @@ body.panels-hidden #left, body.panels-hidden #right{display:none}
 .hidden{display:none}
 .kbd{background:var(--panel2); border:1px solid var(--line); border-radius:5px; padding:1px 6px; font-size:12px}
 
+/* viewer: world name & current age are read-only, so show them as plain text */
+body.viewer #worldName{border:none; background:transparent; padding:0 2px; font-weight:600;
+  color:var(--ink); pointer-events:none; width:auto; max-width:190px}
+body.viewer #eraSelect{appearance:none; -webkit-appearance:none; border:none; background:transparent;
+  padding:0 2px; font-weight:600; color:var(--ink); pointer-events:none}
+
 /* ---------- mobile ---------- */
 #insClose{display:none}
 @media (max-width:760px){
   /* compact, horizontally scrollable top bar with bigger tap targets */
   #topbar{gap:6px 6px; padding:6px 8px; flex-wrap:nowrap; overflow-x:auto; -webkit-overflow-scrolling:touch}
   #topbar > *{flex:0 0 auto}
+  .topgroup.right{margin-left:0}   /* pack controls to the left; no big gap to scroll past */
   .brand{font-size:14px}
   .mini{display:none}
   .txt{width:120px}
