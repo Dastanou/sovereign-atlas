@@ -215,8 +215,13 @@ async function loadWorld(name){
   return false;
 }
 function normalize(w){
+  if(!w || typeof w!=="object" || Array.isArray(w)) w={};   // tolerate empty/garbage input
+  if(w.world && typeof w.world==="object" && w.world.provinces) w=w.world;   // accept a {world:…} wrapper
+  if(typeof w.name!=="string" || !w.name) w.name="Untitled World";
   w.lists=Object.assign(JSON.parse(JSON.stringify(DEFAULT_LISTS)),w.lists||{});
   w.continents=w.continents||[]; w.realms=w.realms||[]; w.provinces=w.provinces||[]; w.eras=w.eras||[];
+  if(!w.eras.length) w.eras=[{id:uid(),name:"First Age"}];   // history entries need at least one age
+  if(!w.currentEraId || !w.eras.some(e=>e.id===w.currentEraId)) w.currentEraId=w.eras[0].id;
   w.rivers=w.rivers||[]; w.lakes=w.lakes||[]; w.colors=w.colors||{};
   w.labels=w.labels||[];   // custom map annotations
   if(!w.milesPerUnit)w.milesPerUnit=10;   // map scale: miles per world unit
@@ -1264,6 +1269,7 @@ function popColor(pop){
   return `rgb(${c[0]},${c[1]},${c[2]})`;
 }
 function provinceFill(p){
+  if(state.legendFilter && state.legendFilter.mode===state.mapmode && !provinceMatchesLegend(p,state.legendFilter.value)) return "#333a46";  // legend spotlight
   switch(state.mapmode){
     case "political":{const r=world.realms.find(r=>r.id===p.realmId);return r?r.color:"#39415e";}
     case "terrain":return catColor("terrains",p.terrain);
@@ -1573,6 +1579,30 @@ function toggleResourceHighlight(p){
   state.selResource = (sel && state.selResource===sel) ? null : sel;   // store the exact resource
   updateResSpot();
 }
+// Click a legend entry (view/select mode) to spotlight only matching provinces.
+function legendClickValue(v){
+  if(state.mapmode==="resource"){                     // resources reuse the family spotlight + banner
+    state.selResource = (state.selResource===v) ? null : v;
+    updateResSpot(); renderMap(); return;
+  }
+  const cur=state.legendFilter;
+  state.legendFilter = (cur && cur.mode===state.mapmode && cur.value===v) ? null : {mode:state.mapmode, value:v};
+  renderLegend(); renderMap();
+}
+// Does a province match the active legend spotlight for the current map mode?
+function provinceMatchesLegend(p, value){
+  switch(state.mapmode){
+    case "political":  return value==="__none__" ? !p.realmId : p.realmId===value;
+    case "terrain":    return p.terrain===value;
+    case "settlement": return p.settlement===value;
+    case "religion":   return dominant(p.religion)===value;
+    case "culture":    return dominant(p.culture)===value;
+    case "race":       return dominant(p.race)===value;
+    case "language":   return dominant(p.language)===value;
+    case "economy":    return economyOf(p)===value;
+    default:           return true;
+  }
+}
 // On-map banner naming the highlighted resource and the prestige goods included with it.
 function updateResSpot(){
   let el=document.getElementById("resSpot");
@@ -1609,7 +1639,7 @@ function selectCustomLabel(id){
   renderMap();renderLabelEditor();
 }
 function clearSelection(){   // click on empty void: deselect and hide the inspector
-  state.selProvince=null;state.selRealm=null;state.selWater=null;state.selLabel=null;state.selForce=null;state.selBattle=null;state.selMonster=null;state.selResource=null;
+  state.selProvince=null;state.selRealm=null;state.selWater=null;state.selLabel=null;state.selForce=null;state.selBattle=null;state.selMonster=null;state.selResource=null;state.legendFilter=null;
   document.body.classList.remove("has-sel");
   updateResSpot();
   renderMap();renderLegend();
@@ -1942,11 +1972,19 @@ function renderLegend(){
   const paintable=PAINTABLE_MODES.includes(state.mapmode) && !VIEWER;
   legendEntries(state.mapmode).forEach(([c,l,v])=>{
     const d=div("li");d.innerHTML=`<span class="swatch" style="background:${c}"></span>${esc(l)}`;
-    if(paintable && v!==undefined){
-      const sel=(state.mapmode==="political"? (state.paintUnclaim? v==="__none__": state.selRealm===v) : state.paintValue===v);
-      if(sel){d.style.outline="2px solid var(--accent)";d.style.borderRadius="6px";}
-      d.style.cursor="pointer"; d.title="Click to paint provinces with this";
-      d.onclick=()=>setPaintTarget(v,l);
+    if(v!==undefined){
+      if(paintable && state.tool==="paint"){                    // paint mode: click to paint
+        const sel=(state.mapmode==="political"? (state.paintUnclaim? v==="__none__": state.selRealm===v) : state.paintValue===v);
+        if(sel){d.style.outline="2px solid var(--accent)";d.style.borderRadius="6px";}
+        d.style.cursor="pointer"; d.title="Click to paint provinces with this";
+        d.onclick=()=>setPaintTarget(v,l);
+      } else {                                                   // view/select mode: click to spotlight
+        const active=(state.mapmode==="resource") ? (state.selResource===v)
+                    : (state.legendFilter && state.legendFilter.mode===state.mapmode && state.legendFilter.value===v);
+        if(active){d.style.outline="2px solid var(--accent)";d.style.borderRadius="6px";}
+        d.style.cursor="pointer"; d.title="Click to show only these provinces (click again or the map to clear)";
+        d.onclick=()=>legendClickValue(v);
+      }
     }
     box.appendChild(d);
   });
@@ -3612,6 +3650,7 @@ function refreshMapmodeBar(){
 function setMapmode(m){
   state.mapmode=m; state.paintValue=null; state.paintUnclaim=false;
   if(m!=="resource") state.selResource=null;   // clear the resource spotlight when leaving that map
+  state.legendFilter=null;                      // clear any legend spotlight on mode change
   updateResSpot();
   if(m!=="military" && (state.selForce||state.selBattle)){ state.selForce=null; state.selBattle=null; state.moveMode=null; }
   if(m!=="monster" && state.selMonster){ state.selMonster=null; state.moveMode=null; }
