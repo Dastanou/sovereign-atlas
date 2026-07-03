@@ -2350,11 +2350,13 @@ function pingEraseAtWorld(wx,wy){
   requestRender();
 }
 function handleTapWorld(wx,wy){
+  if(_mmOpen){ _mmOpen=false; refreshMapmodeBar(); return; }   // a tap closes the map-mode picker
   if(state.rulerOn){ if(state.rulerDone){state.rulerPts=[];state.rulerDone=false;} state.rulerPts.push([wx,wy]); state.rulerCur=null; requestRender(); return; }
   if(state.pingOn && state.pingTool==="pin"){ pingLayer.pins.push({x:wx,y:wy,color:state.pingColor}); savePings(); requestRender(); return; }
+  const mobile=document.body.classList.contains("mobile");
   const p=provinceAt(wx,wy);
-  if(p){ if(state.tool==="paint"&&paintReady()){ if(paintProvince(p)){_labelsDirty=true;renderMap();renderLeft();markDirty();} } else selectProvince(p.id); return; }
-  // tapped empty space: on mobile this dismisses the bottom sheet
+  if(p && state.tool==="paint" && paintReady()){ if(paintProvince(p)){_labelsDirty=true;renderMap();renderLeft();markDirty();} return; }
+  if(p && !mobile){ selectProvince(p.id); return; }   // mobile: no province view — just pan the map
   document.body.classList.remove("has-sel");
   const c=continentAt(wx,wy); if(c) state.focusedContinent=c.id;
   requestRender();
@@ -2916,16 +2918,29 @@ const MAPMODE_BAR=[
   ["settlement","🏘","Settlements"],
   ["economy","💰","Economy — by country (unclaimed = Primitive)"],
 ];
+let _mmOpen=false;   // mobile: is the map-mode picker expanded?
 function buildMapmodeBar(){
   const bar=$("#mapmodeBar"); if(!bar)return; bar.innerHTML="";
   MAPMODE_BAR.forEach(([m,icon,label],i)=>{
     const b=document.createElement("button"); b.className="mmbtn"; b.dataset.mode=m;
     const hk=(i+1)%10; b.title=`${label}  (hotkey ${hk})`; b.innerHTML=`${icon}<span class="mmkey">${hk}</span>`;
-    b.onclick=()=>setMapmode(m); bar.appendChild(b);
+    b.onclick=()=>{
+      if(document.body.classList.contains("mobile") && !_mmOpen){ _mmOpen=true; refreshMapmodeBar(); return; }  // tap collapsed → expand
+      setMapmode(m); _mmOpen=false; refreshMapmodeBar();                                                        // pick → collapse
+    };
+    bar.appendChild(b);
   });
   refreshMapmodeBar();
 }
-function refreshMapmodeBar(){ $$("#mapmodeBar .mmbtn").forEach(b=>b.classList.toggle("active",b.dataset.mode===state.mapmode)); }
+function refreshMapmodeBar(){
+  const bar=$("#mapmodeBar"); if(!bar)return;
+  const collapsed=document.body.classList.contains("mobile") && !_mmOpen;
+  bar.classList.toggle("collapsed",collapsed);
+  $$("#mapmodeBar .mmbtn").forEach(b=>{
+    b.classList.toggle("active",b.dataset.mode===state.mapmode);
+    b.style.display = (collapsed && b.dataset.mode!==state.mapmode) ? "none" : "flex";
+  });
+}
 function setMapmode(m){
   state.mapmode=m; state.paintValue=null; state.paintUnclaim=false;
   const ms=$("#mapmode"); if(ms)ms.value=m;
@@ -2968,7 +2983,7 @@ function _popPanelDismiss(ev){
   if(panel.contains(ev.target)||ev.target.id==="worldPop")return;
   panel.remove(); document.removeEventListener("click",_popPanelDismiss,true);
 }
-function updateMobile(){ document.body.classList.toggle("mobile", window.innerWidth<=760); }
+function updateMobile(){ document.body.classList.toggle("mobile", window.innerWidth<=760); if(!document.body.classList.contains("mobile"))_mmOpen=false; refreshMapmodeBar(); }
 function wireTopbar(){
   $("#worldName").addEventListener("input",e=>{world.name=e.target.value;markDirty();});
   $("#eraSelect").addEventListener("change",e=>{world.currentEraId=e.target.value;markDirty();});
