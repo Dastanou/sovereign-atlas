@@ -175,7 +175,9 @@ details.rvProvinces[open]>summary::before{content:"▾"}
 .provCard{--rc:#6f8fc9; --tc:#7a8a5a; border:1px solid var(--line); border-radius:12px; padding:10px 11px 13px;
   background:var(--panel)}
 .provName{text-align:center; font-family:"Georgia","Palatino Linotype",serif; font-weight:700; font-size:18px;
-  letter-spacing:.4px; color:var(--ink); padding-bottom:5px; margin-bottom:2px;
+  letter-spacing:.4px; color:var(--ink); margin-bottom:1px}
+.provSettName{text-align:center; font-family:"Georgia","Palatino Linotype",serif; font-style:italic;
+  font-size:12.5px; color:var(--muted); padding-bottom:5px; margin-bottom:2px;
   border-bottom:2px solid color-mix(in srgb, var(--tc) 60%, var(--line))}
 .provBanner{height:82px; margin:8px 0 4px; border-radius:9px; background-color:var(--tc);
   background-size:cover; background-position:center; position:relative; overflow:hidden;

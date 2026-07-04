@@ -375,6 +375,7 @@ function normalize(w){
   w.provinces.forEach(p=>{
     ["religion","culture","race","language"].forEach(k=>p[k]=p[k]||[]);
     p.features=p.features||[]; p.history=p.history||[];
+    if(typeof p.settlementName!=="string") p.settlementName="";   // "" = follow the province name; else a custom settlement name
     const oldEcon=(typeof p.economy==="string" && p.economy)?p.economy:null;   // old per-province override
     if(!Array.isArray(p.pops)) p.pops=migratePops(p,w.lists);   // one-time migration from the old model
     const r=p.realmId?w.realms.find(x=>x.id===p.realmId):null;
@@ -2280,6 +2281,7 @@ function renderProvinceView(){
   ins.innerHTML=`
     <div class="provCard" style="--rc:${rc};--tc:${terrCol}">
       <div class="provName">${esc(p.name)}</div>
+      <div class="provSettName">${esc(p.settlementName||p.name)}</div>
       <div class="provBanner" style="background-image:url('img/terrain/${slugify(terr)}.png')"><span>${esc(terr||"Unknown terrain")}</span></div>
 
       <div class="pvBlock pvTerr">
@@ -2390,6 +2392,7 @@ function renderProvinceEditor(){
   const opt=(list,v)=>list.map(o=>`<option ${o===v?"selected":""}>${esc(o)}</option>`).join("");
   ins.innerHTML=`
     <div class="insTitle"><input id="pname" value="${esc(p.name)}"/></div>
+    <div class="field"><label>Settlement name <span class="note">(blank = same as province)</span></label><input id="psettname" value="${esc(p.settlementName||"")}" placeholder="${esc(p.name)}"/></div>
     <div class="field2">
       <div class="field"><label>Realm</label><select id="prealm">${realmOpts}</select></div>
       <div class="field"><label>Continent</label><select id="pcont">${world.continents.map(c=>`<option value="${c.id}" ${p.continentId===c.id?"selected":""}>${esc(c.name)}</option>`).join("")}</select></div>
@@ -2438,7 +2441,8 @@ function renderProvinceEditor(){
   const bind=(id,fn)=>{const e=$("#"+id);if(e)e.addEventListener("input",()=>{fn(e);renderMap();renderLeft();markDirty();});};
   // tracked fields auto-log a history entry when changed
   const bindTracked=(id,field,setter)=>{const e=$("#"+id);if(e)e.addEventListener("input",()=>{const old=provTrackedValue(p,field);setter(e.value);autoLog(p,field,old);renderHistory(p);renderMap();renderLeft();markDirty();});};
-  $("#pname").addEventListener("input",e=>{p.name=e.target.value;renderMapLabelsSoon();renderLeft();markDirty();});
+  $("#pname").addEventListener("input",e=>{p.name=e.target.value;const sn=$("#psettname");if(sn)sn.placeholder=e.target.value;renderMapLabelsSoon();renderLeft();markDirty();});
+  { const sn=$("#psettname"); if(sn)sn.addEventListener("input",e=>{p.settlementName=e.target.value;markDirty();}); }
   bindTracked("pterr","terrain",v=>p.terrain=v);
   bindTracked("psett","settlement",v=>p.settlement=v);
   bindTracked("pres","resource",v=>p.resource=v);
@@ -3793,7 +3797,7 @@ async function openMenu(){
       <button class="btn primary" id="mPopulate">🎲 GM Screen (populate, grow &amp; tune)…</button>
       <button class="btn" id="mNew">＋ New world</button>
       <button class="btn" id="mSaveAs">💾 Save now</button>
-      <button class="btn" id="mExport">⬇ Export JSON</button>
+      <button class="btn" id="mExport">⬇ Export JSON to herald folder</button>
       <button class="btn" id="mArchiveData">🗄 Archive full data to disk…</button>
       <button class="btn primary" id="mPublish">🌐 Publish &amp; push live…</button>
       <button class="btn" id="mGitStatus">🔎 Check publish/git status…</button>
@@ -3820,7 +3824,15 @@ async function openMenu(){
   $("#mNew").onclick=()=>{if(confirm("Start a fresh world? Unsaved changes to the current one are lost unless saved."))
     {world=normalize(sampleWorld());world.name="New World";world.continents=[];world.provinces=[];world.realms=[];afterLoad();closeModal();}};
   $("#mSaveAs").onclick=()=>saveWorld(false);
-  $("#mExport").onclick=()=>downloadText(world.name+" "+tstamp()+".json",JSON.stringify(world,null,2));
+  $("#mExport").onclick=async()=>{
+    const name=world.name+" "+tstamp()+".json";
+    const data=btoa(unescape(encodeURIComponent(JSON.stringify(world,null,2))));   // base64, unicode-safe
+    try{
+      const res=await fetch("/api/export",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({folder:_exportDir,files:[{name,data}]})});
+      const j=await res.json();
+      if(j.ok)flash("Exported JSON → "+j.folder+"\\"+name); else flash("Error: "+(j.error||"export failed"));
+    }catch(e){flash("Error: "+e.message);}
+  };
   $("#mPopulate").onclick=()=>{closeModal();openGMScreen();};
   $("#mArchiveData").onclick=archiveDataToDisk;
   $("#mPublish").onclick=publishViewer;
@@ -3841,6 +3853,7 @@ function downloadText(name,text){const b=new Blob([text],{type:"text/plain"});co
 function tstamp(){const d=new Date(),p=n=>String(n).padStart(2,"0");return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}-${p(d.getMinutes())}`;}
 let _dataArchiveDir="Z:\\herald\\data";
 let _viewerPublishDir="Z:\\herald\\viewer";
+let _exportDir="Z:\\herald\\data";
 async function publishViewer(){
   const folder=prompt("Publish the player viewer & push it live into this folder:",_viewerPublishDir);
   if(!folder)return; _viewerPublishDir=folder.trim();
