@@ -1476,6 +1476,10 @@ function undoLastExpansion(){
   restoreSnapshot(e.snap);   // full-world restore → all pops (incl. settlers) return
   flash("Reverted last "+(e.mode||"expansion")+(e.realm?" of "+e.realm:"")+" — pops restored.");
 }
+// GM-screen population operations (seed / grow / add people): snapshot before each so a single button reverses it.
+let _growUndo=[];
+function pushGrowUndo(){ if(VIEWER)return; try{_growUndo.push(JSON.stringify(world));}catch(e){return;} if(_growUndo.length>20)_growUndo.shift(); }
+function undoLastGrowth(){ if(!_growUndo.length){ flash("Nothing to undo."); return; } restoreSnapshot(_growUndo.pop()); flash("Reverted the last population change."); }
 
 /* ============================================================
    SPLIT & MERGE province geometry
@@ -3749,9 +3753,14 @@ function openGMScreen(){
     <p class="note">Increases the <i>current</i> population of already-populated provinces by a random amount; hospitable places grow faster. Empty provinces stay empty.</p>
     <div class="field2"><div class="field"><label>Growth ± %</label><input id="pbGrow" type="number" value="20"/></div><div class="field"></div></div>
     <div class="btnrow">
-      <button class="btn primary" id="pbGrowBtn">🌱 Grow</button>
+      <button class="btn primary" id="pbGrowBtn">🌱 Grow by %</button>
       <button class="btn" id="pbGrowArea">▦ Grow a dragged area…</button>
     </div>
+    <p class="note" style="margin-top:8px">…or add a <b>set number of people</b> spread across the scope (weighted toward already-populous provinces), with a little randomness:</p>
+    <div class="field2"><div class="field"><label>People to add</label><input id="pbGrowNum" type="number" min="0" value="5000"/></div><div class="field"><label>± randomness %</label><input id="pbGrowNumVar" type="number" min="0" max="90" value="20"/></div></div>
+    <div class="btnrow"><button class="btn primary" id="pbGrowNumBtn">➕ Add people (world / realm / continent)</button></div>
+    <div class="btnrow" style="margin-top:6px"><button class="btn" id="pbUndoGrow">↶ Undo last population change</button></div>
+    <div class="note">Reverses the most recent seed / grow / add-people action (pops return exactly to how they were).</div>
     <div class="sectionH">Reset</div>
     <div class="btnrow"><button class="btn danger" id="pbWipe">🗑 Delete ALL pops (whole world)</button></div>
     <div class="note" id="pbStatus"></div>`);
@@ -3762,21 +3771,43 @@ function openGMScreen(){
   const variance=()=>Math.max(0,Math.min(0.9,(+$("#pbVar").value||0)/100));
   const scopeProvs=()=>{ if(scope.value==="continent")return world.provinces.filter(p=>p.continentId===$("#pbCont").value); if(scope.value==="realm")return world.provinces.filter(p=>p.realmId===$("#pbRealm").value); return world.provinces.slice(); };
   const status=t=>{const s=$("#pbStatus"); if(s)s.textContent=t; flash(t);};
-  const doSeed=ps=>{ const base=+$("#pbBase").value||0, v=variance(), o=opts(); beginEdit(); ps.forEach(p=>setProvincePopulation(p,genProvincePop(p,base,v,o))); renderMap();renderLeft();markDirty();
+  const doSeed=ps=>{ const base=+$("#pbBase").value||0, v=variance(), o=opts(); pushGrowUndo(); beginEdit(); ps.forEach(p=>setProvincePopulation(p,genProvincePop(p,base,v,o))); renderMap();renderLeft();markDirty();
     const tot=ps.reduce((a,p)=>a+(p.population||0),0); status("Seeded "+ps.length+" provinces · "+tot.toLocaleString()+" people total."); };
   const doGrow=ps=>{ const g=+$("#pbGrow").value||0, v=variance(), o=opts();
     const r=(scope.value==="realm")?world.realms.find(x=>x.id===$("#pbRealm").value):null;
     const prioOn=r && $("#pbPrio") && $("#pbPrio").checked, seedOn=r && $("#pbSeedState") && $("#pbSeedState").checked;
     const prio=(prioOn||seedOn)?{on:prioOn,seed:seedOn,axes:{religion:$("#pbPRel").checked,culture:$("#pbPCul").checked,language:$("#pbPLan").checked,race:$("#pbPRac").checked}}:null;
-    beginEdit(); let grew=0;
+    pushGrowUndo(); beginEdit(); let grew=0;
     ps.forEach(p=>{ const before=p.population||0;
       if(prio && r && p.realmId===r.id) growRealmPops(p,g,v,o,r,prio);
       else growGenericPops(p,g,v,o);
       if((p.population||0)!==before)grew++; });
     renderMap();renderLeft();markDirty();
     status("Grew "+grew+" provinces"+(prio?" · state group "+(prio.on?"prioritised":"")+(prio.seed?(prio.on?" & seeded":"seeded"):""):"")+"."); };
+  // add an absolute number of people across the scope, weighted by current population, with randomness
+  const doGrowNumber=ps=>{
+    const total=Math.max(0,+$("#pbGrowNum").value||0);
+    const v=Math.max(0,Math.min(0.9,(+$("#pbGrowNumVar").value||0)/100));
+    if(total<=0){ status("Enter a number of people to add."); return; }
+    const pop=ps.filter(p=>(p.population||0)>0);
+    const sum=pop.reduce((a,p)=>a+(p.population||0),0);
+    if(sum<=0){ status("No populated provinces in this scope — seed some people first."); return; }
+    pushGrowUndo(); beginEdit(); let added=0;
+    for(const p of pop){
+      const cur=p.population||0;
+      let share=total*(cur/sum)*(1+(Math.random()*2-1)*v);
+      share=Math.max(0,Math.round(share));
+      if(share<=0)continue;
+      p.pops.forEach(q=>{ if(q.size>0) q.size+=Math.round(share*(q.size/cur)); });   // spread across the province's groups
+      deriveProvince(p); added+=share;
+    }
+    renderMap();renderLeft();markDirty();
+    status("Added ~"+added.toLocaleString()+" people across "+pop.length+" provinces ("+scope.value+").");
+  };
   $("#pbSeed").onclick=()=>doSeed(scopeProvs());
   $("#pbGrowBtn").onclick=()=>doGrow(scopeProvs());
+  $("#pbGrowNumBtn").onclick=()=>doGrowNumber(scopeProvs());
+  $("#pbUndoGrow").onclick=undoLastGrowth;
   $("#pbSeedArea").onclick=()=>{ closeModal(); flash("Drag a box over the provinces to seed."); startRegionSelect(rect=>doSeed(provsInRect(rect))); };
   $("#pbGrowArea").onclick=()=>{ closeModal(); flash("Drag a box over the provinces to grow."); startRegionSelect(rect=>doGrow(provsInRect(rect))); };
   $("#pbWipe").onclick=()=>{
