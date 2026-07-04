@@ -306,6 +306,18 @@ body.viewer #worldName{border:none; background:transparent; padding:0 2px; font-
   color:var(--ink); pointer-events:none; width:auto; max-width:190px}
 body.viewer #eraSelect{appearance:none; -webkit-appearance:none; border:none; background:transparent;
   padding:0 2px; font-weight:600; color:var(--ink); pointer-events:none}
+/* viewer inspector: disabled fields (forces, elements, monsters…) read as plain labels, not controls */
+body.viewer #inspector select:disabled,
+body.viewer #inspector textarea:disabled,
+body.viewer #inspector input[type="text"]:disabled,
+body.viewer #inspector input[type="number"]:disabled,
+body.viewer #inspector input:not([type]):disabled{
+  -webkit-appearance:none; appearance:none; border:none !important; background:transparent !important;
+  box-shadow:none !important; padding:2px 0; margin:0; opacity:1; cursor:default;
+  color:var(--ink) !important; -webkit-text-fill-color:var(--ink); font-weight:600; resize:none}
+body.viewer #inspector select:disabled{background-image:none}
+body.viewer #inspector textarea:disabled{min-height:0}
+body.viewer #inspector .insTitle input:disabled{font-weight:700; font-size:17px}
 
 /* floating on-map legend (mobile) */
 #mapLegend{position:absolute; top:8px; left:8px; z-index:8; max-width:62vw;

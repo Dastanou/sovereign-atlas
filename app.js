@@ -177,16 +177,16 @@ function elementFieldGrid(e, ro, withType){
       <div class="field"><label>Troop quality</label>${elQualSelect("elTroop",TROOP_QUALITY,e.troop,ro)}</div>
     </div>
     <div class="field"><label>Optional features</label>${elFeaturesHTML(e,ro)}</div>
-    <div class="field2">
+    ${ro?"":`<div class="field2">
       <div class="field"><label>Colour <span class="note">(optional)</span></label>
         <span style="display:flex;align-items:center;gap:6px">
-          <input type="checkbox" class="elColorOn" ${e.color?"checked":""} ${ro?"disabled":""} title="Give this element a colour"/>
-          <input type="color" class="elColor" value="${e.color||'#c0392b'}" ${(ro||!e.color)?"disabled":""} style="width:40px;height:28px;padding:1px"/>
+          <input type="checkbox" class="elColorOn" ${e.color?"checked":""} title="Give this element a colour"/>
+          <input type="color" class="elColor" value="${e.color||'#c0392b'}" ${!e.color?"disabled":""} style="width:40px;height:28px;padding:1px"/>
         </span>
       </div>
       <div class="field"><label>Embroidery <span class="note">(elite emblem)</span></label>
-        <input class="elEmb" value="${esc(e.embroidery||'')}" placeholder="e.g. ★ ⚜ 👑" maxlength="10" ${ro?"disabled":""}/></div>
-    </div>
+        <input class="elEmb" value="${esc(e.embroidery||'')}" placeholder="e.g. ★ ⚜ 👑" maxlength="10"/></div>
+    </div>`}
     <div class="elTally">${cnt}× &nbsp;·&nbsp; TS <b>${elementTS(e)}</b>${(e.pts>0)?` &nbsp;·&nbsp; (TS) <b>${elementPTS(e)}</b>`:""} &nbsp;·&nbsp; WT <b>${elementWT(e)}</b></div>`;
 }
 // apply the element's colour accent + elite emblem to its row (works in editor and read-only viewer)
