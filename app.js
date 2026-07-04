@@ -88,18 +88,43 @@ function featureCat(name){ return (world.featureCats&&world.featureCats[name])||
 function setFeatureCat(name,cat){ world.featureCats=world.featureCats||{}; world.featureCats[name]=cat; }
 // military forces (GURPS Mass Combat framework)
 const FORCE_DOMAINS={land:{icon:"⚔️",label:"Army"},sea:{icon:"⚓",label:"Fleet"},air:{icon:"✈️",label:"Air Wing"}};
-const ELEMENT_CLASSES=["Infantry (PF)","Heavy Infantry (Hv)","Cavalry (Ca)","Skirmishers (Sk)","Missile (Mi)","Artillery (Ar)","Armor (Az)","Aircraft (Ai)","Warships (Ws)","Transport (Tr)","Siege (Sg)","Support (Sp)"];
-// Editable library of element templates (GM screen). TL 0 seed = Stone Age Warriors;
-// add/reorder your own from your Mass Combat book. (Fields are editable, so set exact values.)
+const ELEMENT_CLASSES=["Air Combat (Air)","Armor (Arm)","Artillery (Art)","Cavalry (Cv)","Command, Control, Communications, and Intelligence (C3I)","Engineering (Eng)","Fire (F)","Naval (Nav)","Recon (Rec)","Transport (T)"];
+// Mobility options, grouped by element medium (land / water / air). 0 = no mobility.
+const MOBILITY_GROUPS=[["",["0 (none)"]],["Land",["Foot","Mechanized (Mech)","Motorized (Motor)","Mounted (Mtd)"]],["Water",["Coastal (Coast)","Sea"]],["Air",["Fast Air (FA)","Slow Air (SA)"]]];
+const ALL_MOBILITY=MOBILITY_GROUPS.flatMap(g=>g[1]);
+const NEUTRALIZE_CLASSES=["Air","Arm","Art","Cv","C3I","Eng","F","Nav","Rec","T"];
+const ELEMENT_FEATURES=["Airborne","All-Weather","Disloyal","Fanatic","Flagship","Hero","Hovercraft","Impetuous","Levy","Marine","Mercenary","Neutralize (Class)","Night","Nocturnal","Sealed","Super-Soldier","Terrain (Type)"];
+const EQUIP_QUALITY={"Very Fine":1.5,"Fine":1.0,"Good":0.5,"Basic":0,"Poor":-0.25};   // TS modifiers
+const TROOP_QUALITY={"Elite":1.0,"Good":0.5,"Average":0,"Inferior":-0.5};
+// Editable library of element templates (GM screen). TL 0 seed = Stone Age Warriors.
 const DEFAULT_ELEMENT_TYPES=[
-  {name:"Stone Age Warriors", cls:"Infantry (PF)", ts:2, wt:1, mob:1, tl:0},
+  {name:"Stone Age Warriors", cls:"Fire (F)", ts:2, pts:0, wt:1, mob:"Foot", tl:0, features:[], equip:"Basic", troop:"Average"},
 ];
 function elementTypeList(){ return (world&&Array.isArray(world.elementTypes)&&world.elementTypes.length)?world.elementTypes:DEFAULT_ELEMENT_TYPES; }
-function forceTS(f){ return (f.elements||[]).reduce((a,e)=>a+(+e.ts||0),0); }
+function elementMult(e){ return 1 + (EQUIP_QUALITY[e.equip]??0) + (TROOP_QUALITY[e.troop]??0); }   // quality-adjusted TS multiplier
+function elCount(e){ return Math.max(1, Math.round(+e.count||1)); }          // how many of this element in the block
+function elementTS(e){ return Math.round((+e.ts||0)*elementMult(e))*elCount(e); }    // block TS (counts toward total)
+function elementPTS(e){ return Math.round((+e.pts||0)*elementMult(e))*elCount(e); }  // block parenthetical (TS), separate
+function elementWT(e){ return (+e.wt||0)*elCount(e); }                                // block transport weight
+function forceTS(f){ return (f.elements||[]).reduce((a,e)=>a+elementTS(e),0); }
+function forcePTS(f){ return (f.elements||[]).reduce((a,e)=>a+elementPTS(e),0); }
+function migrateElement(e){
+  e.name = typeof e.name==="string"?e.name:"";
+  e.count = Math.max(1, Math.round(+e.count||1));
+  e.color = typeof e.color==="string"?e.color:"";          // optional element colour (none by default)
+  e.embroidery = typeof e.embroidery==="string"?e.embroidery:"";  // optional elite/notable emblem
+  e.ts=+e.ts||0; e.pts=+e.pts||0; e.wt=+e.wt||0; e.tl=+e.tl||0;
+  if(typeof e.mob!=="string") e.mob = e.mob ? "Foot" : "0 (none)";
+  if(!ELEMENT_CLASSES.includes(e.cls)) e.cls="Fire (F)";
+  e.features = Array.isArray(e.features)?e.features:[];
+  e.equip = (EQUIP_QUALITY[e.equip]!==undefined)?e.equip:"Basic";
+  e.troop = (TROOP_QUALITY[e.troop]!==undefined)?e.troop:"Average";
+  return e;
+}
 function newElement(typeId){
   const list=elementTypeList();
-  const t=(typeId&&list.find(x=>x.id===typeId))||list[0]||{name:"",cls:"Infantry (PF)",ts:10,wt:0,mob:1,tl:4};
-  return {ts:+t.ts||0, cls:t.cls||"Infantry (PF)", wt:+t.wt||0, mob:+t.mob||1, tl:+t.tl||0, type:t.name||""};
+  const t=(typeId&&list.find(x=>x.id===typeId))||list[0]||{name:"",cls:"Fire (F)",ts:5,pts:0,wt:0,mob:"Foot",tl:1,features:[],equip:"Basic",troop:"Average"};
+  return migrateElement({name:t.name||"", count:t.count||1, color:t.color||"", embroidery:t.embroidery||"", ts:t.ts, pts:t.pts, cls:t.cls, wt:t.wt, mob:t.mob, tl:t.tl, features:(t.features||[]).slice(), equip:t.equip, troop:t.troop, type:t.name||""});
 }
 function newForce(x,y,realmId){ return {id:uid(), name:"New Force", domain:"land", x:Math.round(x), y:Math.round(y), realmId:realmId||null, scale:1,
   elements:[newElement()],
@@ -108,6 +133,96 @@ function newForce(x,y,realmId){ return {id:uid(), name:"New Force", domain:"land
   quartermaster:{name:"", skill:12} }; }
 function newMonster(x,y){ return {id:uid(), name:"New Creature", icon:"🐉", x:Math.round(x), y:Math.round(y), scale:1.4}; }
 function roll3d6(){ return (1+Math.floor(Math.random()*6))+(1+Math.floor(Math.random()*6))+(1+Math.floor(Math.random()*6)); }
+// ---- element field builders (shared by the GM template editor and the force editor) ----
+function elClsSelect(v,ro){ return `<select class="elCls" ${ro?"disabled":""}>${ELEMENT_CLASSES.map(c=>`<option ${c===v?"selected":""}>${esc(c)}</option>`).join("")}</select>`; }
+function elMobSelect(v,ro){ let h=`<select class="elMob" ${ro?"disabled":""}>`;
+  MOBILITY_GROUPS.forEach(([grp,opts])=>{ if(grp)h+=`<optgroup label="${grp}">`; opts.forEach(o=>h+=`<option ${o===v?"selected":""}>${esc(o)}</option>`); if(grp)h+=`</optgroup>`; }); return h+`</select>`; }
+function elQualSelect(cls,obj,v,ro){ return `<select class="${cls}" ${ro?"disabled":""}>${Object.keys(obj).map(k=>{const m=obj[k];return `<option value="${esc(k)}" ${k===v?"selected":""}>${esc(k)} (${m>=0?"+":""}${Math.round(m*100)}%)</option>`;}).join("")}</select>`; }
+function elFeaturesHTML(e,ro){
+  const tags=(e.features||[]).length ? e.features.map((f,i)=>`<span class="tag" data-i="${i}">${esc(f)}${ro?"":` <span class="x">✕</span>`}</span>`).join(" ") : '<span class="note">None</span>';
+  const add= ro?"" : `<select class="elFeatAdd" style="margin-top:3px"><option value="">＋ optional feature…</option>${ELEMENT_FEATURES.map(f=>`<option>${esc(f)}</option>`).join("")}</select>`;
+  return `<div class="elFeats">${tags}</div>${add}`;
+}
+function addElementFeature(e, feat){
+  e.features=e.features||[];
+  if(feat==="Neutralize (Class)"){ const c=(prompt("Neutralize which class? — "+NEUTRALIZE_CLASSES.join(", "))||"").trim(); if(!c)return false; e.features.push("Neutralize ("+c+")"); }
+  else if(feat==="Terrain (Type)"){ const t=(prompt("Terrain type? — "+world.lists.terrains.join(", "))||"").trim(); if(!t)return false; e.features.push("Terrain ("+t+")"); }
+  else { if(!e.features.includes(feat)) e.features.push(feat); else return false; }
+  return true;
+}
+// Full editable field grid for one element. `withType` adds a template picker (force editor).
+function elementFieldGrid(e, ro, withType){
+  const typeRow = withType ? `<div class="field"><label>Element type</label><select class="elType" ${ro?"disabled":""}>${
+      (world.elementTypes||[]).map(t=>`<option value="${t.id}" ${e.type===t.name?"selected":""}>${esc(t.name)} (TL${t.tl||0})</option>`).join("")
+      + ((world.elementTypes||[]).some(t=>t.name===e.type)?"":`<option value="" selected>(custom)</option>`)}</select></div>` : "";
+  const cnt=elCount(e);
+  return `
+    ${typeRow}
+    <div class="field2">
+      <div class="field"><label>Name</label><input class="elName" value="${esc(e.name||"")}" placeholder="${withType?"e.g. 3rd Legion":"template name"}" ${ro?"disabled":""}/></div>
+      <div class="field" style="flex:0 0 68px"><label>Count ×</label><input class="elCount" type="number" min="1" value="${cnt}" title="How many of this element are in this group" ${ro?"disabled":""}/></div>
+    </div>
+    <div class="field2">
+      <div class="field"><label>Class</label>${elClsSelect(e.cls,ro)}</div>
+      <div class="field"><label>Mobility</label>${elMobSelect(e.mob,ro)}</div>
+    </div>
+    <div class="field3">
+      <div class="field"><label>TS <span class="note">(each)</span></label><input class="elTs" type="number" min="0" value="${e.ts||0}" ${ro?"disabled":""}/></div>
+      <div class="field"><label>(TS) <span class="note">(each)</span></label><input class="elPts" type="number" min="0" value="${e.pts||0}" title="Parenthetical TS — tracked separately, not added to total" ${ro?"disabled":""}/></div>
+      <div class="field"><label>WT <span class="note">(each)</span></label><input class="elWt" type="number" value="${e.wt||0}" title="Transport Weight" ${ro?"disabled":""}/></div>
+      <div class="field"><label>TL</label><input class="elTl" type="number" min="0" value="${e.tl||0}" ${ro?"disabled":""}/></div>
+    </div>
+    <div class="field2">
+      <div class="field"><label>Equipment quality</label>${elQualSelect("elEquip",EQUIP_QUALITY,e.equip,ro)}</div>
+      <div class="field"><label>Troop quality</label>${elQualSelect("elTroop",TROOP_QUALITY,e.troop,ro)}</div>
+    </div>
+    <div class="field"><label>Optional features</label>${elFeaturesHTML(e,ro)}</div>
+    <div class="field2">
+      <div class="field"><label>Colour <span class="note">(optional)</span></label>
+        <span style="display:flex;align-items:center;gap:6px">
+          <input type="checkbox" class="elColorOn" ${e.color?"checked":""} ${ro?"disabled":""} title="Give this element a colour"/>
+          <input type="color" class="elColor" value="${e.color||'#c0392b'}" ${(ro||!e.color)?"disabled":""} style="width:40px;height:28px;padding:1px"/>
+        </span>
+      </div>
+      <div class="field"><label>Embroidery <span class="note">(elite emblem)</span></label>
+        <input class="elEmb" value="${esc(e.embroidery||'')}" placeholder="e.g. ★ ⚜ 👑" maxlength="10" ${ro?"disabled":""}/></div>
+    </div>
+    <div class="elTally">${cnt}× &nbsp;·&nbsp; TS <b>${elementTS(e)}</b>${(e.pts>0)?` &nbsp;·&nbsp; (TS) <b>${elementPTS(e)}</b>`:""} &nbsp;·&nbsp; WT <b>${elementWT(e)}</b></div>`;
+}
+// apply the element's colour accent + elite emblem to its row (works in editor and read-only viewer)
+function applyElStyle(row, e){
+  row.style.borderColor = e.color || "";
+  row.style.boxShadow = e.color ? `inset 5px 0 0 ${e.color}` : "";
+  row.classList.toggle("embroidered", !!e.embroidery);
+  let em=row.querySelector(":scope > .elEmblem");
+  if(e.embroidery){ if(!em){ em=document.createElement("span"); em.className="elEmblem"; em.title="Notable / elite"; row.insertBefore(em, row.firstChild); } em.textContent=e.embroidery; }
+  else if(em){ em.remove(); }
+}
+// Wire the field grid inside `row` to element `e`. Updates the block tally in place
+// (so text fields keep focus). `rerender` rebuilds the list (used when features change);
+// `onTotals` refreshes any parent totals (force TS badge + map token).
+function bindElementFields(row, e, rerender, onTotals){
+  const q=s=>row.querySelector(s);
+  const tally=()=>{ const t=q(".elTally"); if(t)t.innerHTML=`${elCount(e)}× &nbsp;·&nbsp; TS <b>${elementTS(e)}</b>${e.pts>0?` &nbsp;·&nbsp; (TS) <b>${elementPTS(e)}</b>`:""} &nbsp;·&nbsp; WT <b>${elementWT(e)}</b>`; if(onTotals)onTotals(); markDirty(); };
+  const on=(sel,ev,fn)=>{ const el=q(sel); if(el)el.addEventListener(ev,fn); };
+  on(".elName","input",x=>{e.name=x.target.value; markDirty(); renderMap();});
+  on(".elCount","input",x=>{e.count=Math.max(1,Math.round(+x.target.value||1)); tally();});
+  on(".elCls","change",x=>{e.cls=x.target.value; markDirty();});
+  on(".elMob","change",x=>{e.mob=x.target.value; markDirty();});
+  on(".elTs","input",x=>{e.ts=+x.target.value||0; tally();});
+  on(".elPts","input",x=>{e.pts=+x.target.value||0; tally();});
+  on(".elWt","input",x=>{e.wt=+x.target.value||0; tally();});
+  on(".elTl","input",x=>{e.tl=+x.target.value||0; markDirty();});
+  on(".elEquip","change",x=>{e.equip=x.target.value; tally();});
+  on(".elTroop","change",x=>{e.troop=x.target.value; tally();});
+  on(".elEmb","input",x=>{e.embroidery=x.target.value; applyElStyle(row,e); markDirty();});
+  const con=q(".elColorOn"), cp=q(".elColor");
+  if(con)con.addEventListener("change",x=>{ e.color = x.target.checked ? (cp?cp.value:"#c0392b") : ""; if(cp)cp.disabled=!x.target.checked; applyElStyle(row,e); markDirty(); });
+  if(cp)cp.addEventListener("input",x=>{ e.color=x.target.value; if(con)con.checked=true; applyElStyle(row,e); markDirty(); });
+  const fa=q(".elFeatAdd"); if(fa)fa.addEventListener("change",x=>{ const v=x.target.value; x.target.value=""; if(v&&addElementFeature(e,v)&&rerender)rerender(); });
+  q(".elFeats") && q(".elFeats").querySelectorAll(".tag .x").forEach(xb=>xb.onclick=()=>{ const i=+xb.parentElement.dataset.i; e.features.splice(i,1); if(rerender)rerender(); });
+  applyElStyle(row, e);
+}
 
 /* ============================================================
    STATE
@@ -268,10 +383,10 @@ function normalize(w){
     r.dominantRace = r.adminRaces[0] || "";   // keep the single field in sync for pop defaults/state-group logic
   });
   w.forces=w.forces||[];   // military units
-  w.forces.forEach(f=>{ if(f.scale==null)f.scale=1; });
+  w.forces.forEach(f=>{ if(f.scale==null)f.scale=1; (f.elements||[]).forEach(migrateElement); });
   // army element-type library (editable in the GM screen)
   w.elementTypes = (Array.isArray(w.elementTypes)&&w.elementTypes.length) ? w.elementTypes : DEFAULT_ELEMENT_TYPES.map(t=>({id:uid(),...t}));
-  w.elementTypes.forEach(t=>{ if(!t.id)t.id=uid(); });
+  w.elementTypes.forEach(t=>{ if(!t.id)t.id=uid(); migrateElement(t); });
   w.monsters=w.monsters||[];   // free-floating legendary creatures
   w.tune=w.tune||{};           // GM-editable simulation values
   w.tune.terrainHab=w.tune.terrainHab||{};
@@ -1687,23 +1802,10 @@ function renderForceEditor(){
   const ro=VIEWER;
   const realmOpts=`<option value="">— Independent —</option>`+world.realms.map(r=>`<option value="${r.id}" ${f.realmId===r.id?"selected":""}>${esc(r.name)}</option>`).join("");
   const domOpts=Object.entries(FORCE_DOMAINS).map(([k,v])=>`<option value="${k}" ${f.domain===k?"selected":""}>${v.icon} ${esc(v.label)}</option>`).join("");
-  const clsOpts=e=>ELEMENT_CLASSES.map(c=>`<option ${c===e.cls?"selected":""}>${esc(c)}</option>`).join("");
-  const typeOpts=e=>{ const known=(world.elementTypes||[]).some(t=>t.name===e.type);
-    return (world.elementTypes||[]).map(t=>`<option value="${t.id}" ${e.type===t.name?"selected":""}>${esc(t.name)} (TL${t.tl||0})</option>`).join("")
-      + (known?"":`<option value="" selected>(custom)</option>`); };
   const els=(f.elements||[]).map((e,i)=>`
     <div class="elRow" data-i="${i}">
-      <div class="field"><label>Element type</label><select class="elType" ${ro?"disabled":""}>${typeOpts(e)}</select></div>
-      <div class="field2">
-        <div class="field"><label>Class</label><select class="elCls" ${ro?"disabled":""}>${clsOpts(e)}</select></div>
-        <div class="field" style="flex:0 0 70px"><label>TS</label><input class="elTs" type="number" min="0" value="${e.ts||0}" ${ro?"disabled":""}/></div>
-      </div>
-      <div class="field3">
-        <div class="field"><label>WT</label><input class="elWt" type="number" value="${e.wt||0}" ${ro?"disabled":""}/></div>
-        <div class="field"><label>Mob</label><input class="elMob" type="number" step="0.5" value="${e.mob||1}" ${ro?"disabled":""}/></div>
-        <div class="field"><label>TL</label><input class="elTl" type="number" min="0" value="${e.tl||0}" ${ro?"disabled":""}/></div>
-        ${ro?"":`<div style="flex:0 0 auto;display:flex;align-items:flex-end"><button class="btn tiny elDel" title="Remove element">✕</button></div>`}
-      </div>
+      ${ro?"":`<div class="elRowHead"><button class="btn tiny elDel" title="Remove element">✕</button></div>`}
+      ${elementFieldGrid(e, ro, true)}
     </div>`).join("");
   ins.innerHTML=`
     <div class="insTitle"><input id="fname" value="${esc(f.name)}" ${ro?"disabled":""}/></div>
@@ -1711,7 +1813,7 @@ function renderForceEditor(){
       <div class="field"><label>Type</label><select id="fdom" ${ro?"disabled":""}>${domOpts}</select></div>
       <div class="field"><label>Allegiance</label><select id="frealm" ${ro?"disabled":""}>${realmOpts}</select></div>
     </div>
-    <div class="note">Total Troop Strength (TS): <b id="fts">${forceTS(f)}</b></div>
+    <div class="note">Total Troop Strength (TS): <b id="fts">${forceTS(f)}</b>${forcePTS(f)>0?` · parenthetical (TS): <b>${forcePTS(f)}</b>`:""}</div>
     ${ro?"":`<div class="btnrow"><button class="btn${state.moveMode==="force"&&state.selForce===f.id?" primary":""}" id="fmove">✥ ${state.moveMode==="force"&&state.selForce===f.id?"Moving… (click to stop)":"Move"}</button><button class="btn danger" id="fdel">Delete</button></div>
     <div class="field"><label>Token size — <b id="fscv">${(f.scale||1).toFixed(1)}×</b></label><input id="fscale" type="range" min="0.6" max="3" step="0.1" value="${f.scale||1}"/></div>`}
 
@@ -1745,6 +1847,8 @@ function renderForceEditor(){
       <div class="field"><label>Quartermaster</label><input id="fqname" value="${esc(f.quartermaster?.name||"")}" placeholder="—" ${ro?"disabled":""}/></div>
       <div class="field" style="flex:0 0 90px"><label>Administration</label><input id="fqskill" type="number" value="${f.quartermaster?.skill??12}" ${ro?"disabled":""}/></div>
     </div>`;
+  // colour accent + elite emblem on every element block (editor and read-only viewer)
+  const felsBox=$("#fels"); if(felsBox)felsBox.querySelectorAll(".elRow").forEach(row=>{ const e=f.elements[+row.dataset.i]; if(e)applyElStyle(row,e); });
   if(ro)return;
   const upd=()=>{ $("#fts").textContent=forceTS(f); renderMap(); markDirty(); };
   $("#fname").addEventListener("input",e=>{f.name=e.target.value;renderMap();markDirty();});
@@ -1764,13 +1868,9 @@ function renderForceEditor(){
   $("#fqskill").addEventListener("input",e=>{f.quartermaster.skill=+e.target.value||0;markDirty();});
   $("#fels").querySelectorAll(".elRow").forEach(row=>{
     const i=+row.dataset.i, e=f.elements[i]; if(!e)return;
-    { const et=row.querySelector(".elType"); if(et)et.addEventListener("change",ev=>{ const t=(world.elementTypes||[]).find(x=>x.id===ev.target.value); if(t){ e.type=t.name; e.cls=t.cls; e.ts=+t.ts||0; e.wt=+t.wt||0; e.mob=+t.mob||0; e.tl=+t.tl||0; renderForceEditor(); renderMap(); markDirty(); } }); }
-    row.querySelector(".elCls").addEventListener("change",ev=>{e.cls=ev.target.value;e.type="";markDirty();});
-    row.querySelector(".elTs").addEventListener("input",ev=>{e.ts=+ev.target.value||0;upd();});
-    row.querySelector(".elWt").addEventListener("input",ev=>{e.wt=+ev.target.value||0;markDirty();});
-    row.querySelector(".elMob").addEventListener("input",ev=>{e.mob=+ev.target.value||0;markDirty();});
-    row.querySelector(".elTl").addEventListener("input",ev=>{e.tl=+ev.target.value||0;markDirty();});
-    row.querySelector(".elDel").addEventListener("click",()=>{ if(f.elements.length<=1){flash("A force needs at least one element.");return;} beginEdit(); f.elements.splice(i,1); renderForceEditor(); renderMap(); markDirty(); });
+    { const et=row.querySelector(".elType"); if(et)et.addEventListener("change",ev=>{ const t=(world.elementTypes||[]).find(x=>x.id===ev.target.value); if(t){ Object.assign(e,{type:t.name,name:e.name||t.name,cls:t.cls,ts:+t.ts||0,pts:+t.pts||0,wt:+t.wt||0,mob:t.mob,tl:+t.tl||0,features:(t.features||[]).slice(),equip:t.equip,troop:t.troop}); renderForceEditor(); renderMap(); markDirty(); } }); }
+    bindElementFields(row, e, ()=>renderForceEditor(), ()=>{ const b=$("#fts"); if(b)b.textContent=forceTS(f); renderMap(); });
+    const del=row.querySelector(".elDel"); if(del)del.addEventListener("click",()=>{ if(f.elements.length<=1){flash("A force needs at least one element.");return;} beginEdit(); f.elements.splice(i,1); renderForceEditor(); renderMap(); markDirty(); });
   });
   $("#feladd").addEventListener("click",()=>{ beginEdit(); f.elements.push(newElement()); renderForceEditor(); renderMap(); markDirty(); });
   // merge / split
@@ -1783,24 +1883,38 @@ function renderForceEditor(){
 function leaderScore(c){ return (c&&c.name?1000:0)+((c&&c.strategy)||0)+((c&&c.leadership)||0); }
 function mergeForces(target,src){
   beginEdit();
-  target.elements=(target.elements||[]).concat(src.elements||[]);
+  const before=(target.elements||[]).length, add=(src.elements||[]).length;
+  target.elements=(target.elements||[]).concat(src.elements||[]);   // keep every element from both — no override/dedup
   // keep the stronger commander; higher-skilled intel & quartermaster
   if(leaderScore(src.commander)>leaderScore(target.commander)) target.commander={...src.commander};
   if(((src.intel&&src.intel.skill)||0)+((src.intel&&src.intel.name)?100:0) > ((target.intel&&target.intel.skill)||0)+((target.intel&&target.intel.name)?100:0)) target.intel={...src.intel};
   if(((src.quartermaster&&src.quartermaster.skill)||0)+((src.quartermaster&&src.quartermaster.name)?100:0) > ((target.quartermaster&&target.quartermaster.skill)||0)+((target.quartermaster&&target.quartermaster.name)?100:0)) target.quartermaster={...src.quartermaster};
   world.forces=world.forces.filter(x=>x.id!==src.id);
-  markDirty(); selectForce(target.id); renderLegend(); flash("Forces merged into “"+target.name+"”.");
+  markDirty(); selectForce(target.id); renderLegend(); flash(`Merged — “${target.name}” now has all ${before+add} elements.`);
 }
 function splitForce(f){
   if((f.elements||[]).length<2){ flash("Need at least 2 elements to split off a detachment."); return; }
-  beginEdit();
-  const half=Math.floor(f.elements.length/2);
-  const moved=f.elements.splice(f.elements.length-half, half);
-  const det=newForce(f.x+18, f.y+18, f.realmId);
-  det.name=f.name+" (detachment)"; det.domain=f.domain; det.scale=f.scale||1; det.elements=moved;
-  // leaders stay with the parent; detachment starts leaderless (default staff)
-  world.forces.push(det); separateForce(det);
-  markDirty(); selectForce(det.id); renderLegend(); flash("Detachment split off from “"+f.name+"”.");
+  const rows=f.elements.map((e,i)=>`<label class="splitRow"><input type="checkbox" data-i="${i}"/>
+    <span class="splitName">${esc(e.name||("Element "+(i+1)))}</span>
+    <span class="note">${esc(e.cls)} · ${elCount(e)}× · TS ${elementTS(e)}</span></label>`).join("");
+  openModal(`<button class="btn close" onclick="closeModal()">✕ Close</button><h2>✂ Split “${esc(f.name)}”</h2>
+    <p class="note">Tick the elements to move into a new detachment; unticked ones stay with “${esc(f.name)}”. Every element is preserved — none are lost or merged. Leaders stay with the parent force.</p>
+    <div class="field"><label>New detachment name</label><input id="splitName" value="${esc(f.name+" (detachment)")}"/></div>
+    <div id="splitList">${rows}</div>
+    <div class="btnrow" style="margin-top:8px"><button class="btn primary" id="splitGo">✂ Split off selected</button></div>`);
+  $("#splitGo").onclick=()=>{
+    const idxs=[...$("#splitList").querySelectorAll("input:checked")].map(c=>+c.dataset.i);
+    if(!idxs.length){ flash("Tick at least one element to split off."); return; }
+    if(idxs.length>=f.elements.length){ flash("Leave at least one element with the parent force."); return; }
+    beginEdit();
+    const moved=[];
+    idxs.sort((a,b)=>b-a).forEach(i=>{ moved.unshift(f.elements.splice(i,1)[0]); });   // descending so indices stay valid
+    const det=newForce(f.x+18, f.y+18, f.realmId);
+    det.name=($("#splitName").value.trim())||(f.name+" (detachment)");
+    det.domain=f.domain; det.scale=f.scale||1; det.elements=moved;
+    world.forces.push(det); separateForce(det);
+    closeModal(); markDirty(); selectForce(det.id); renderLegend(); flash("Detachment “"+det.name+"” split off from “"+f.name+"”.");
+  };
 }
 // Pre-rolled GURPS Mass Combat battle summary (framework — no logistics).
 function renderMonsterEditor(){
@@ -1934,9 +2048,22 @@ function buildMapLegend(){
   const entries=legendEntries(state.mapmode);
   if(!entries.length){ box.classList.add("hidden"); return; }
   box.classList.remove("hidden");
-  const rows=entries.map(([c,l])=>`<div class="mlRow"><span class="sw" style="background:${c}"></span>${esc(l)}</div>`).join("");
+  const rows=entries.map(([c,l,v],idx)=>{
+    const active = v!==undefined && ((state.mapmode==="resource")? state.selResource===v
+      : (state.legendFilter && state.legendFilter.mode===state.mapmode && state.legendFilter.value===v));
+    return `<div class="mlRow${active?' active':''}" data-vi="${idx}"${v!==undefined?' style="cursor:pointer"':''}><span class="sw" style="background:${c}"></span>${esc(l)}</div>`;
+  }).join("");
   box.innerHTML=`<button class="mlHead">${esc(MODE_TITLES[state.mapmode]||"Legend")}</button><div class="mlList">${rows}</div>`;
   box.querySelector(".mlHead").onclick=()=>box.classList.toggle("open");
+  // tap a legend entry: political → open that realm's info; other modes → spotlight matching provinces
+  box.querySelectorAll(".mlRow").forEach(row=>{
+    const idx=+row.dataset.vi, ent=entries[idx], v=ent&&ent[2];
+    if(v===undefined)return;
+    row.onclick=(ev)=>{ ev.stopPropagation();
+      if(state.mapmode==="political" && v!=="__none__"){ selectRealm(v); }
+      else { legendClickValue(v); }
+    };
+  });
 }
 function renderForceLegend(box){
   if(!VIEWER){ const b=document.createElement("button"); b.className="btn tiny primary"; b.style.marginBottom="6px"; b.textContent="＋ Add force";
@@ -3411,33 +3538,19 @@ function wireTuneValues(){
 function renderElementTypes(){
   const box=$("#elemTypes"); if(!box)return; box.innerHTML="";
   world.elementTypes=world.elementTypes||[];
-  const clsOpts=v=>ELEMENT_CLASSES.map(c=>`<option ${c===v?"selected":""}>${esc(c)}</option>`).join("");
   world.elementTypes.forEach((t,i)=>{
     const row=div("elRow");
     row.innerHTML=`
-      <div class="field2">
-        <div class="field"><label>Name</label><input class="etName" value="${esc(t.name||"")}"/></div>
-        <div class="field" style="flex:0 0 auto;display:flex;align-items:flex-end;gap:4px">
+      <div class="elRowHead">
+        <span style="display:flex;gap:4px;margin-left:auto">
           <button class="btn tiny etUp" title="Move up">↑</button>
           <button class="btn tiny etDown" title="Move down">↓</button>
           <button class="btn tiny etDel" title="Delete" style="color:var(--bad)">✕</button>
-        </div>
+        </span>
       </div>
-      <div class="field2">
-        <div class="field"><label>Class</label><select class="etCls">${clsOpts(t.cls)}</select></div>
-        <div class="field" style="flex:0 0 64px"><label>Base TS</label><input class="etTs" type="number" min="0" value="${t.ts||0}"/></div>
-      </div>
-      <div class="field3">
-        <div class="field"><label>WT</label><input class="etWt" type="number" value="${t.wt||0}"/></div>
-        <div class="field"><label>Mob</label><input class="etMob" type="number" step="0.5" value="${t.mob||1}"/></div>
-        <div class="field"><label>TL</label><input class="etTl" type="number" min="0" value="${t.tl||0}"/></div>
-      </div>`;
-    row.querySelector(".etName").addEventListener("input",e=>{t.name=e.target.value;markDirty();});
-    row.querySelector(".etCls").addEventListener("change",e=>{t.cls=e.target.value;markDirty();});
-    row.querySelector(".etTs").addEventListener("input",e=>{t.ts=+e.target.value||0;markDirty();});
-    row.querySelector(".etWt").addEventListener("input",e=>{t.wt=+e.target.value||0;markDirty();});
-    row.querySelector(".etMob").addEventListener("input",e=>{t.mob=+e.target.value||0;markDirty();});
-    row.querySelector(".etTl").addEventListener("input",e=>{t.tl=+e.target.value||0;markDirty();});
+      ${elementFieldGrid(t, false, false)}`;
+    bindElementFields(row, t, ()=>renderElementTypes());
+    applyElStyle(row, t);
     row.querySelector(".etUp").addEventListener("click",()=>{ if(i>0){ const a=world.elementTypes; [a[i-1],a[i]]=[a[i],a[i-1]]; renderElementTypes(); markDirty(); } });
     row.querySelector(".etDown").addEventListener("click",()=>{ const a=world.elementTypes; if(i<a.length-1){ [a[i+1],a[i]]=[a[i],a[i+1]]; renderElementTypes(); markDirty(); } });
     row.querySelector(".etDel").addEventListener("click",()=>{ if(world.elementTypes.length<=1){flash("Keep at least one element type.");return;} if(!confirm(`Delete element type "${t.name}"?`))return; world.elementTypes.splice(i,1); renderElementTypes(); markDirty(); });
@@ -3529,7 +3642,7 @@ function openGMScreen(){
   };
   wireTuneValues();
   renderElementTypes();
-  { const ea=$("#elemAdd"); if(ea)ea.addEventListener("click",()=>{ world.elementTypes.push({id:uid(),name:"New Element",cls:"Infantry (PF)",ts:5,wt:0,mob:1,tl:1}); renderElementTypes(); markDirty(); }); }
+  { const ea=$("#elemAdd"); if(ea)ea.addEventListener("click",()=>{ world.elementTypes.push(migrateElement({id:uid(),name:"New Element",cls:"Fire (F)",ts:5,pts:0,wt:0,mob:"Foot",tl:1,features:[],equip:"Basic",troop:"Average"})); renderElementTypes(); markDirty(); }); }
 }
 async function openMenu(){
   const worlds=await listWorlds();
