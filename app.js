@@ -101,13 +101,16 @@ const DEFAULT_ELEMENT_TYPES=[
   {name:"Stone Age Warriors", cls:"Fire (F)", ts:2, pts:0, wt:1, mob:"Foot", tl:0, features:[], equip:"Basic", troop:"Average"},
 ];
 function elementTypeList(){ return (world&&Array.isArray(world.elementTypes)&&world.elementTypes.length)?world.elementTypes:DEFAULT_ELEMENT_TYPES; }
+function round2(n){ return Math.round(n*100)/100; }                          // trim float noise, keep halves
 function elementMult(e){ return 1 + (EQUIP_QUALITY[e.equip]??0) + (TROOP_QUALITY[e.troop]??0); }   // quality-adjusted TS multiplier
 function elCount(e){ return Math.max(1, Math.round(+e.count||1)); }          // how many of this element in the block
-function elementTS(e){ return Math.round((+e.ts||0)*elementMult(e))*elCount(e); }    // block TS (counts toward total)
-function elementPTS(e){ return Math.round((+e.pts||0)*elementMult(e))*elCount(e); }  // block parenthetical (TS), separate
-function elementWT(e){ return (+e.wt||0)*elCount(e); }                                // block transport weight
-function forceTS(f){ return (f.elements||[]).reduce((a,e)=>a+elementTS(e),0); }
-function forcePTS(f){ return (f.elements||[]).reduce((a,e)=>a+elementPTS(e),0); }
+// block value = base × count × quality, rounded LAST (e.g. 1 TS × 5 × 1.5 = 7.5, not 10)
+function elementTS(e){ return round2((+e.ts||0)*elCount(e)*elementMult(e)); }    // block TS (counts toward total)
+function elementPTS(e){ return round2((+e.pts||0)*elCount(e)*elementMult(e)); }  // block parenthetical (TS), separate
+function elementWT(e){ return round2((+e.wt||0)*elCount(e)); }                    // block transport weight
+function elTallyHTML(e){ const m=elementMult(e); return `${elCount(e)}× &nbsp;·&nbsp; TS <b>${elementTS(e)}</b>${e.pts>0?` &nbsp;·&nbsp; (TS) <b>${elementPTS(e)}</b>`:""} &nbsp;·&nbsp; WT <b>${elementWT(e)}</b>${m!==1?` &nbsp;<span class="note">(quality ×${round2(m)})</span>`:""}`; }
+function forceTS(f){ return round2((f.elements||[]).reduce((a,e)=>a+elementTS(e),0)); }
+function forcePTS(f){ return round2((f.elements||[]).reduce((a,e)=>a+elementPTS(e),0)); }
 function migrateElement(e){
   e.name = typeof e.name==="string"?e.name:"";
   e.count = Math.max(1, Math.round(+e.count||1));
@@ -187,7 +190,7 @@ function elementFieldGrid(e, ro, withType){
       <div class="field"><label>Embroidery <span class="note">(elite emblem)</span></label>
         <input class="elEmb" value="${esc(e.embroidery||'')}" placeholder="e.g. ★ ⚜ 👑" maxlength="10"/></div>
     </div>`}
-    <div class="elTally">${cnt}× &nbsp;·&nbsp; TS <b>${elementTS(e)}</b>${(e.pts>0)?` &nbsp;·&nbsp; (TS) <b>${elementPTS(e)}</b>`:""} &nbsp;·&nbsp; WT <b>${elementWT(e)}</b></div>`;
+    <div class="elTally">${elTallyHTML(e)}</div>`;
 }
 // apply the element's colour accent + elite emblem to its row (works in editor and read-only viewer)
 function applyElStyle(row, e){
@@ -203,7 +206,7 @@ function applyElStyle(row, e){
 // `onTotals` refreshes any parent totals (force TS badge + map token).
 function bindElementFields(row, e, rerender, onTotals){
   const q=s=>row.querySelector(s);
-  const tally=()=>{ const t=q(".elTally"); if(t)t.innerHTML=`${elCount(e)}× &nbsp;·&nbsp; TS <b>${elementTS(e)}</b>${e.pts>0?` &nbsp;·&nbsp; (TS) <b>${elementPTS(e)}</b>`:""} &nbsp;·&nbsp; WT <b>${elementWT(e)}</b>`; if(onTotals)onTotals(); markDirty(); };
+  const tally=()=>{ const t=q(".elTally"); if(t)t.innerHTML=elTallyHTML(e); if(onTotals)onTotals(); markDirty(); };
   const on=(sel,ev,fn)=>{ const el=q(sel); if(el)el.addEventListener(ev,fn); };
   on(".elName","input",x=>{e.name=x.target.value; markDirty(); renderMap();});
   on(".elCount","input",x=>{e.count=Math.max(1,Math.round(+x.target.value||1)); tally();});
@@ -1796,7 +1799,55 @@ function renderLabelEditor(){
 /* ============================================================
    MILITARY — force editor & battle framework (GURPS Mass Combat)
    ============================================================ */
+// Read-only army view (site + mobile viewer): everything as plain text, no controls.
+function renderForceView(){
+  const ins=$("#inspector"); const f=world.forces.find(x=>x.id===state.selForce);
+  if(!f){ins.innerHTML='<div class="empty">No force selected.</div>';return;}
+  const r=world.realms.find(x=>x.id===f.realmId), dom=(FORCE_DOMAINS[f.domain]||FORCE_DOMAINS.land);
+  const row=(l,v)=>`<div class="rvRow"><span class="rvLbl">${l}</span><span class="rvVal">${(v===0||v)?v:"—"}</span></div>`;
+  const pct=m=>(m>=0?"+":"")+Math.round((m||0)*100)+"%";
+  const els=(f.elements||[]).map((e,i)=>{
+    const mult=elementMult(e), each=round2((+e.ts||0)*mult), eachP=round2((+e.pts||0)*mult);
+    const tsCell = mult!==1 ? `${e.ts||0} → <b>${each}</b>` : `${e.ts||0}`;
+    const ptsCell = mult!==1 ? `${e.pts||0} → ${eachP}` : `${e.pts||0}`;
+    const feats=(e.features||[]).length?e.features.map(x=>`<span class="tag">${esc(x)}</span>`).join(" "):"—";
+    const style=e.color?` style="border-color:${e.color};box-shadow:inset 5px 0 0 ${e.color}"`:"";
+    return `<div class="elRow${e.embroidery?' embroidered':''}"${style}>
+      ${e.embroidery?`<span class="elEmblem">${esc(e.embroidery)}</span>`:""}
+      <div class="elViewName">${esc(e.name||("Element "+(i+1)))}${elCount(e)>1?` <span class="note">×${elCount(e)}</span>`:""}</div>
+      ${row("Class",esc(e.cls))}
+      ${row("Mobility",esc(e.mob))}
+      ${row("TS "+(mult!==1?"<span class='note'>(each→adj.)</span>":"<span class='note'>(each)</span>"),tsCell)}
+      ${e.pts>0?row("(TS) <span class='note'>(each)</span>",ptsCell):""}
+      ${row("WT <span class='note'>(each)</span>",e.wt||0)}
+      ${row("TL",e.tl||0)}
+      ${row("Equipment",esc(e.equip)+` <span class="note">(${pct(EQUIP_QUALITY[e.equip])})</span>`)}
+      ${row("Troops",esc(e.troop)+` <span class="note">(${pct(TROOP_QUALITY[e.troop])})</span>`)}
+      ${row("Features",feats)}
+      <div class="elTally">${elTallyHTML(e)}</div>
+    </div>`;
+  }).join("");
+  const leaderRow=(l,c,skillLbls)=> row(l, (c&&c.name)? `${esc(c.name)} <span class="note">(${skillLbls})</span>` : "—");
+  ins.innerHTML=`
+    <div class="realmCard" style="--rc:${r?r.color:'#5a6172'}">
+      <div class="realmName" style="font-size:19px">${dom.icon} ${esc(f.name)}</div>
+      <div class="rvSub">${esc(dom.label)}${r?` · ${esc(r.name)}`:" · Independent"}</div>
+      <div class="rvBlock rvGov">
+        ${row("Total TS", forceTS(f))}
+        ${forcePTS(f)>0?row("Total (TS)", forcePTS(f)):""}
+      </div>
+      <div class="sectionH">Elements (${(f.elements||[]).length})</div>
+      ${els||'<div class="note">None</div>'}
+      <div class="sectionH">Command</div>
+      <div class="rvBlock rvSociety">
+        ${leaderRow("Commander", f.commander, f.commander?`Strategy ${f.commander.strategy}, Leadership ${f.commander.leadership}`:"")}
+        ${leaderRow("Intelligence Chief", f.intel, f.intel?`Intelligence Analysis ${f.intel.skill}`:"")}
+        ${leaderRow("Quartermaster", f.quartermaster, f.quartermaster?`Administration ${f.quartermaster.skill}`:"")}
+      </div>
+    </div>`;
+}
 function renderForceEditor(){
+  if(VIEWER)return renderForceView();
   const ins=$("#inspector"); const f=world.forces.find(x=>x.id===state.selForce);
   if(!f){ins.innerHTML='<div class="empty">No force selected.</div>';return;}
   const ro=VIEWER;
