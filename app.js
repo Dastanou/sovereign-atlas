@@ -135,6 +135,8 @@ function newForce(x,y,realmId){ return {id:uid(), name:"New Force", domain:"land
   intel:{name:"", skill:12},
   quartermaster:{name:"", skill:12} }; }
 function newMonster(x,y){ return {id:uid(), name:"New Creature", icon:"🐉", x:Math.round(x), y:Math.round(y), scale:1.4}; }
+// Built-in custom monster images (transparent PNGs in static/img/monsters/).
+const MONSTER_IMAGES=[ {name:"Cyclone", src:"img/monsters/cyclone.png"} ];
 function roll3d6(){ return (1+Math.floor(Math.random()*6))+(1+Math.floor(Math.random()*6))+(1+Math.floor(Math.random()*6)); }
 // ---- element field builders (shared by the GM template editor and the force editor) ----
 function elClsSelect(v,ro){ return `<select class="elCls" ${ro?"disabled":""}>${ELEMENT_CLASSES.map(c=>`<option ${c===v?"selected":""}>${esc(c)}</option>`).join("")}</select>`; }
@@ -894,21 +896,29 @@ function drawFeatureIcons(ctx,cam,s,cw,ch,cat){
   ctx.restore();
 }
 // Monster map: free-floating, draggable, scalable legendary-creature tokens.
+function isImgIcon(s){ return typeof s==="string" && (/^(img\/|data:|https?:)/i.test(s) || /\.(png|jpe?g|svg|webp|gif)$/i.test(s)); }
 function drawMonsters(ctx,cam,s,cw,ch){
   ctx.save(); ctx.textAlign="center"; ctx.textBaseline="middle";
   for(const m of world.monsters){
-    const sc=m.scale||1.4, R=13*sc;
-    const X=(m.x-cam.x)*s, Y=(m.y-cam.y)*s; if(X<-R*3||Y<-R*3||X>cw+R*3||Y>ch+R*3)continue;
-    const selm=state.selMonster===m.id;
-    ctx.beginPath();ctx.arc(X,Y,R,0,7);ctx.fillStyle="rgba(255,255,255,.9)";ctx.fill();
-    ctx.lineWidth=selm?3.4:2; ctx.strokeStyle=(state.moveMode==="monster"&&selm)?"#e0b24e":"#7a3b3b"; ctx.stroke();
-    ctx.font=`${Math.round(18*sc)}px "Segoe UI Emoji",system-ui,sans-serif`; ctx.fillStyle="#2b3038"; ctx.fillText(m.icon||"🐉",X,Y);
-    if(m.name){ ctx.font="600 11px system-ui,sans-serif"; ctx.lineWidth=3.2; ctx.strokeStyle="rgba(255,255,255,.92)"; ctx.strokeText(m.name,X,Y+R+9); ctx.fillStyle="#5a2330"; ctx.fillText(m.name,X,Y+R+9); }
+    const sc=m.scale||1.4, R=13*sc*s;             // world-anchored: size scales with zoom (constant vs. the map)
+    const X=(m.x-cam.x)*s, Y=(m.y-cam.y)*s; if(X<-R*3-40||Y<-R*3-40||X>cw+R*3+40||Y>ch+R*3+40)continue;
+    const selm=state.selMonster===m.id, icon=m.icon||"🐉";
+    if(isImgIcon(icon)){                          // custom image — no frame, just the picture
+      const im=ensureImg(icon), D=R*2.6;
+      if(im && im.complete && im.naturalWidth){ ctx.drawImage(im, X-D/2, Y-D/2, D, D); }
+      else { ctx.font=`${Math.max(6,Math.round(20*sc*s))}px "Segoe UI Emoji",system-ui,sans-serif`; ctx.fillStyle="#2b3038"; ctx.fillText("🐉",X,Y); }
+    } else {                                      // emoji — soft halo so it stays legible without a frame
+      ctx.save(); ctx.shadowColor="rgba(255,255,255,.95)"; ctx.shadowBlur=Math.min(6,R*0.35);
+      ctx.font=`${Math.max(6,Math.round(20*sc*s))}px "Segoe UI Emoji",system-ui,sans-serif`; ctx.fillStyle="#2b3038"; ctx.fillText(icon,X,Y); ctx.restore();
+    }
+    if(selm){ ctx.beginPath(); ctx.arc(X,Y,R*1.35,0,7); ctx.lineWidth=2.5; ctx.strokeStyle=(state.moveMode==="monster")?"#e0b24e":"#6f8fc9"; ctx.stroke(); }
+    if(m.name){ ctx.font="600 11px system-ui,sans-serif"; ctx.lineWidth=3.2; ctx.strokeStyle="rgba(255,255,255,.92)"; ctx.strokeText(m.name,X,Y+R+11); ctx.fillStyle="#5a2330"; ctx.fillText(m.name,X,Y+R+11); }
   }
   ctx.restore();
 }
 function monsterAt(wx,wy){
-  for(let i=world.monsters.length-1;i>=0;i--){const m=world.monsters[i];const r=(13*(m.scale||1.4))/state.cam.scale;const dx=m.x-wx,dy=m.y-wy;if(dx*dx+dy*dy<r*r)return m;}
+  // world-anchored radius (matches the drawn image extent in world units)
+  for(let i=world.monsters.length-1;i>=0;i--){const m=world.monsters[i];const r=13*(m.scale||1.4)*1.3;const dx=m.x-wx,dy=m.y-wy;if(dx*dx+dy*dy<r*r)return m;}
   return null;
 }
 // Military map: force tokens + battle overlays.
@@ -1992,13 +2002,15 @@ function renderMonsterEditor(){
     <div class="insTitle"><input id="mname" value="${esc(m.name||"")}" placeholder="Creature name" ${ro?"disabled":""}/></div>
     <div class="note">A free-floating map token — drag it anywhere on the <b>Monsters</b> map.</div>
     <div class="field2">
-      <div class="field" style="flex:0 0 80px"><label>Icon</label><input id="mico" value="${esc(m.icon||"🐉")}" placeholder="🐉" maxlength="4" ${ro?"disabled":""}/></div>
+      <div class="field"><label>Icon <span class="note">(emoji or image path)</span></label><input id="mico" value="${esc(m.icon||"🐉")}" placeholder="🐉 or img/monsters/cyclone.png" ${ro?"disabled":""}/></div>
       <div class="field"><label>Size — <b id="mscv">${(m.scale||1.4).toFixed(1)}×</b></label><input id="mscale" type="range" min="0.6" max="4" step="0.1" value="${m.scale||1.4}" ${ro?"disabled":""}/></div>
     </div>
+    ${ro?"":`<div class="field"><label>Custom images</label><div class="monImgRow">${MONSTER_IMAGES.map(mi=>`<button class="monImgBtn" data-src="${mi.src}" title="${esc(mi.name)}"><img src="${mi.src}"/></button>`).join("")}</div></div>`}
     ${ro?"":`<div class="btnrow"><button class="btn${state.moveMode==="monster"?" primary":""}" id="mmove">✥ ${state.moveMode==="monster"?"Moving… (click to stop)":"Move"}</button><button class="btn danger" id="mdel">Delete</button></div>`}`;
   if(ro)return;
   $("#mname").addEventListener("input",e=>{m.name=e.target.value;renderMap();renderLegend();markDirty();});
   $("#mico").addEventListener("input",e=>{m.icon=e.target.value;renderMap();renderLegend();markDirty();});
+  ins.querySelectorAll(".monImgBtn").forEach(b=>b.addEventListener("click",()=>{ m.icon=b.dataset.src; const mi=$("#mico"); if(mi)mi.value=m.icon; renderMap(); renderLegend(); markDirty(); }));
   $("#mscale").addEventListener("input",e=>{m.scale=+e.target.value;$("#mscv").textContent=(+e.target.value).toFixed(1)+"×";renderMap();markDirty();});
   $("#mmove").addEventListener("click",()=>{ if(state.moveMode==="monster"){ state.moveMode=null; } else { state.moveMode="monster"; flash("Move mode on — click the map to relocate “"+(m.name||"creature")+"”. Click Move again (or Esc) to stop."); } renderMap(); renderMonsterEditor(); });
   $("#mdel").addEventListener("click",()=>{ if(!confirm("Delete this creature?"))return; beginEdit(); world.monsters=world.monsters.filter(x=>x.id!==m.id); state.selMonster=null; state.moveMode=null; clearSelection(); ins.innerHTML='<div class="empty">Creature deleted.</div>'; markDirty(); });
@@ -2151,7 +2163,9 @@ function renderMonsterLegend(box){
   if(!world.monsters.length){ const n=div("note"); n.textContent=VIEWER?"No legendary creatures.":"No creatures yet. Click ＋ Add creature, then use ✥ Move to place it."; box.appendChild(n); return; }
   world.monsters.forEach(m=>{
     const row=div("li"+(state.selMonster===m.id?" sel":""));
-    row.innerHTML=`<span style="width:16px;display:inline-block;text-align:center">${esc(m.icon||"🐉")}</span> ${esc(m.name||"(unnamed)")}`;
+    const ic=m.icon||"🐉";
+    const icHTML=isImgIcon(ic)?`<img src="${esc(ic)}" style="width:16px;height:16px;object-fit:contain;vertical-align:middle"/>`:`<span style="width:16px;display:inline-block;text-align:center">${esc(ic)}</span>`;
+    row.innerHTML=`${icHTML} ${esc(m.name||"(unnamed)")}`;
     if(state.selMonster===m.id){row.style.outline="2px solid var(--accent)";row.style.borderRadius="6px";}
     row.style.cursor="pointer"; row.onclick=()=>{selectMonster(m.id);centerOn(m.x,m.y);};
     box.appendChild(row);

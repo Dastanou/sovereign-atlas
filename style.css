@@ -215,6 +215,12 @@ details.rvProvinces[open]>summary::before{content:"▾"}
 .pvLeg .sw{width:9px; height:9px; border-radius:2px; flex:none}
 .pvLeg .nm{flex:1; text-align:left; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
 .pvLeg b{flex:none}
+/* monster image picker */
+.monImgRow{display:flex; flex-wrap:wrap; gap:6px}
+.monImgBtn{width:40px; height:40px; padding:3px; border:1px solid var(--line); border-radius:8px;
+  background:var(--panel2); cursor:pointer; display:flex; align-items:center; justify-content:center}
+.monImgBtn:hover{border-color:var(--accent)}
+.monImgBtn img{max-width:100%; max-height:100%}
 /* editor multi-race picker */
 .raceMulti{display:flex; flex-wrap:wrap; gap:4px; min-height:22px; margin-bottom:2px}
 .raceMulti .tag .swatch{width:10px; height:10px; border-radius:3px; display:inline-block; margin-right:4px; vertical-align:middle}
