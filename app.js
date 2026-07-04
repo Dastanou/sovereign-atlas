@@ -3708,6 +3708,7 @@ async function openMenu(){
       <button class="btn" id="mArchiveData">🗄 Archive full data to disk…</button>
       <button class="btn" id="mPublish">🌐 Publish player viewer…</button>
       <button class="btn" id="mGitStatus">🔎 Check publish/git status…</button>
+      <button class="btn" id="mGitCancel">🛠 Repair GitHub Pages deploy…</button>
       <button class="btn" id="mExportSvg">⬇ Export map (PNG)…</button>
       <button class="btn" id="mExportAll">⬇ Export maps (Herald)…</button>
       <button class="btn" id="mImport">⬆ Import / restore JSON</button>
@@ -3735,6 +3736,7 @@ async function openMenu(){
   $("#mArchiveData").onclick=archiveDataToDisk;
   $("#mPublish").onclick=publishViewer;
   $("#mGitStatus").onclick=checkGitStatus;
+  $("#mGitCancel").onclick=forceCancelDeploys;
   $("#mExportSvg").onclick=()=>{closeModal();openExport();};
   $("#mExportAll").onclick=()=>{closeModal();openExportAll();};
   $("#mImport").onclick=()=>$("#fileInput").click();
@@ -3785,6 +3787,16 @@ async function checkGitStatus(){
   flash("Checking git status…");
   try{
     const r=await fetch("/api/gitstatus",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({folder:_viewerPublishDir})});
+    const j=await r.json();
+    alert(j.output||j.error||"No response.");
+  }catch(e){alert("Error: "+e.message);}
+}
+async function forceCancelDeploys(){
+  const folder=prompt("Repair GitHub Pages for the repo in this folder (switch to Actions build, clear stuck deployments, cancel stuck runs):",_viewerPublishDir);
+  if(!folder)return; _viewerPublishDir=folder.trim();
+  flash("Repairing GitHub Pages deploy…");
+  try{
+    const r=await fetch("/api/gitcancel",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({folder:_viewerPublishDir})});
     const j=await r.json();
     alert(j.output||j.error||"No response.");
   }catch(e){alert("Error: "+e.message);}
