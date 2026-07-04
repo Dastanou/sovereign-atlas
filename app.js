@@ -3835,12 +3835,12 @@ async function publishViewer(){
     const res=await fetch("/api/publish",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({folder:_viewerPublishDir,world})});
     const j=await res.json();
     if(!j.ok){flash("Error: "+(j.error||"publish failed"));return;}
-    // one button: publish then push automatically
-    flash("Published — pushing to GitHub…");
-    const gr=await fetch("/api/gitpush",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({folder:_viewerPublishDir,message:"Update viewer "+tstamp()})});
+    // one button: publish then upload straight to GitHub via the API (no git push)
+    flash("Published — uploading to GitHub…");
+    const gr=await fetch("/api/ghupload",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({folder:_viewerPublishDir})});
     const gj=await gr.json();
-    if(gj.ok) flash("Published & pushed ✓ — live in ~1 minute.");
-    else alert("Published the files, but the git push didn't complete:\n\n"+(gj.output||gj.error||"unknown")+"\n\nIf it's an auth error, open a terminal in "+_viewerPublishDir+" and run 'git push' once so Git caches your token, then try again.");
+    if(gj.ok) flash("Published & uploaded ✓ — GitHub deploys in ~1 minute.");
+    else alert("Published the files, but the GitHub upload didn't complete:\n\n"+(gj.output||gj.error||"unknown"));
   }catch(e){flash("Error: "+e.message);}
 }
 async function archiveDataToDisk(){
