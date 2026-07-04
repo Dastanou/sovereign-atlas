@@ -171,6 +171,50 @@ details.rvProvinces>summary::before{content:"▸"; display:inline-block; width:1
 details.rvProvinces[open]>summary::before{content:"▾"}
 .rvSearch{width:100%; margin:6px 0; padding:5px 8px; border:1px solid var(--line);
   border-radius:8px; background:var(--panel); font-size:13px; box-sizing:border-box}
+/* ===== province viewer panel (read-only) — distinct from the realm card ===== */
+.provCard{--rc:#6f8fc9; --tc:#7a8a5a; border:1px solid var(--line); border-radius:12px; padding:10px 11px 13px;
+  background:var(--panel)}
+.provName{text-align:center; font-family:"Georgia","Palatino Linotype",serif; font-weight:700; font-size:18px;
+  letter-spacing:.4px; color:var(--ink); padding-bottom:5px; margin-bottom:2px;
+  border-bottom:2px solid color-mix(in srgb, var(--tc) 60%, var(--line))}
+.provBanner{height:82px; margin:8px 0 4px; border-radius:9px; background-color:var(--tc);
+  background-size:cover; background-position:center; position:relative; overflow:hidden;
+  box-shadow:inset 0 0 0 1px rgba(0,0,0,.15)}
+.provBanner span{position:absolute; left:0; right:0; bottom:0; padding:4px 8px; color:#fff; font-weight:700;
+  font-size:13px; letter-spacing:.3px; background:linear-gradient(transparent, rgba(0,0,0,.55))}
+/* province blocks: TOP accent stripe (realm uses LEFT) + earthy palette, for clear visual distinction */
+.pvBlock{border-radius:9px; padding:6px 10px; margin:7px 0; background:var(--panel2); border-top:3px solid var(--line)}
+.pvBlock.pvTerr{border-top-color:#7a8a5a; background:rgba(122,138,90,.10)}
+.pvBlock.pvGeo{border-top-color:#6f8fc9; background:rgba(111,143,201,.10)}
+.pvBlock.pvEcon{border-top-color:#e0b34e; background:rgba(224,179,78,.11)}
+.pvBlock.pvFeatBlock{border-top-color:#a98fd0; background:rgba(169,143,208,.10)}
+.pvBlock.pvPopBlock{border-top-color:#3fae9e; background:rgba(63,174,158,.10)}
+.pvBlockH{font-size:11px; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); font-weight:700; margin:1px 0 5px}
+.pvRow{display:flex; align-items:baseline; gap:10px; padding:2px 0; font-size:13.5px}
+.pvRow .pvLbl{flex:0 0 auto; min-width:104px; color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.4px}
+.pvRow .pvVal{flex:1; text-align:right; font-weight:600}
+.pvRow a{color:var(--accent); text-decoration:none}
+.pvDot, .pvRow .sw{display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:5px;
+  vertical-align:middle; border:1px solid rgba(0,0,0,.2)}
+/* features + type key */
+.pvFeats{display:flex; flex-wrap:wrap; gap:5px}
+.pvFeat{display:inline-flex; align-items:center; gap:5px; background:var(--panel); border:1px solid var(--line);
+  border-radius:20px; padding:2px 9px; font-size:12.5px; font-weight:600}
+.pvFeat .sw{width:9px; height:9px; border-radius:2px; display:inline-block}
+.pvKeyRow{display:flex; flex-wrap:wrap; gap:4px 12px; margin-top:7px; padding-top:6px; border-top:1px dashed var(--line)}
+.pvKey{display:inline-flex; align-items:center; gap:4px; font-size:11px; color:var(--muted)}
+.pvKey .sw{width:9px; height:9px; border-radius:2px; display:inline-block}
+/* population pies (2×2) */
+.pvPies{display:grid; grid-template-columns:1fr 1fr; gap:8px}
+.pvPie{display:flex; flex-direction:column; align-items:center; text-align:center; background:var(--panel);
+  border:1px solid var(--line); border-radius:9px; padding:6px 5px}
+.pvPie .pvPieH{font-size:11px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.4px; margin-bottom:4px}
+.pvPie svg{margin:0 auto 4px}
+.pvLegs{width:100%; display:flex; flex-direction:column; gap:1px}
+.pvLeg{display:flex; align-items:center; gap:4px; font-size:11px; line-height:1.35}
+.pvLeg .sw{width:9px; height:9px; border-radius:2px; flex:none}
+.pvLeg .nm{flex:1; text-align:left; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.pvLeg b{flex:none}
 /* editor multi-race picker */
 .raceMulti{display:flex; flex-wrap:wrap; gap:4px; min-height:22px; margin-bottom:2px}
 .raceMulti .tag .swatch{width:10px; height:10px; border-radius:3px; display:inline-block; margin-right:4px; vertical-align:middle}

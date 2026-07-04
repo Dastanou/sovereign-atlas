@@ -1449,6 +1449,22 @@ function restoreSnapshot(json){
 }
 function doUndo(){ if(!_undo.length){flash("Nothing to undo.");return;} _redo.push(JSON.stringify(world)); restoreSnapshot(_undo.pop()); flash("Undo"); }
 function doRedo(){ if(!_redo.length){flash("Nothing to redo.");return;} _undo.push(JSON.stringify(world)); restoreSnapshot(_redo.pop()); flash("Redo"); }
+// Dedicated undo for realm-expansion paint strokes (conquer / settle / override).
+// A full-world snapshot is taken before each expansion stroke, so restoring it puts
+// every pop — including migrated settlers — back exactly where it was.
+let _expandUndo=[];
+function beginExpandStroke(){
+  if(VIEWER)return; if(state.tool!=="paint"||state.mapmode!=="political"||!state.selRealm||state.paintUnclaim)return;
+  try{ _expandUndo.push({snap:JSON.stringify(world), realm:(world.realms.find(r=>r.id===state.selRealm)||{}).name||"", mode:state.expandMode||"conquer"}); }catch(e){return;}
+  if(_expandUndo.length>25)_expandUndo.shift();
+}
+function undoLastExpansion(){
+  if(VIEWER)return;
+  if(!_expandUndo.length){ flash("No expansion to undo."); return; }
+  const e=_expandUndo.pop();
+  restoreSnapshot(e.snap);   // full-world restore → all pops (incl. settlers) return
+  flash("Reverted last "+(e.mode||"expansion")+(e.realm?" of "+e.realm:"")+" — pops restored.");
+}
 
 /* ============================================================
    SPLIT & MERGE province geometry
@@ -2208,29 +2224,85 @@ function pctBars(arr,listKey){
   const rows=sorted.map(e=>`<div style="display:flex;justify-content:space-between;gap:8px"><span>${esc(e.name)}</span><span class="note">${e.pct}%</span></div>`).join("");
   return `<div style="display:flex;height:11px;border-radius:4px;overflow:hidden;margin:3px 0 5px">${seg}</div>${rows}`;
 }
+function slugify(s){ return (s||"").toLowerCase().replace(/[^a-z0-9]+/g,"_").replace(/^_+|_+$/g,""); }
+// small inline SVG pie for a population-breakdown axis
+function pieSVG(arr,listKey,size){
+  size=size||70; const r=size/2;
+  const data=(arr||[]).filter(e=>e.pct>0).sort((a,b)=>b.pct-a.pct);
+  if(!data.length) return `<svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}"><circle cx="${r}" cy="${r}" r="${r-1}" fill="#39415e"/></svg>`;
+  const total=data.reduce((a,e)=>a+e.pct,0)||1;
+  if(data.length===1) return `<svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}"><circle cx="${r}" cy="${r}" r="${r-1}" fill="${catColor(listKey,data[0].name)}"/></svg>`;
+  let ang=-Math.PI/2, paths="";
+  for(const e of data){
+    const frac=e.pct/total, a2=ang+frac*2*Math.PI;
+    const x1=(r+ (r-1)*Math.cos(ang)).toFixed(2), y1=(r+(r-1)*Math.sin(ang)).toFixed(2);
+    const x2=(r+ (r-1)*Math.cos(a2)).toFixed(2), y2=(r+(r-1)*Math.sin(a2)).toFixed(2);
+    const large=frac>0.5?1:0;
+    paths+=`<path d="M${r},${r} L${x1},${y1} A${r-1},${r-1} 0 ${large} 1 ${x2},${y2} Z" fill="${catColor(listKey,e.name)}"/>`;
+    ang=a2;
+  }
+  return `<svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}">${paths}</svg>`;
+}
+function pieCell(label,arr,listKey){
+  const data=(arr||[]).filter(e=>e.pct>0).sort((a,b)=>b.pct-a.pct);
+  const leg = data.length ? data.slice(0,4).map(e=>`<div class="pvLeg"><span class="sw" style="background:${catColor(listKey,e.name)}"></span><span class="nm">${esc(e.name)}</span><b>${Math.round(e.pct)}%</b></div>`).join("")
+                          : '<div class="note">—</div>';
+  return `<div class="pvPie"><div class="pvPieH">${label}</div>${pieSVG(data,listKey,72)}<div class="pvLegs">${leg}</div></div>`;
+}
 function renderProvinceView(){
   const p=world.provinces.find(x=>x.id===state.selProvince); const ins=$("#inspector");
   if(!p){ins.innerHTML='<div class="empty">No province selected.</div>';return;}
   const realm=world.realms.find(r=>r.id===p.realmId);
   const cont=world.continents.find(c=>c.id===p.continentId);
-  const feats=(p.features&&p.features.length)?p.features.map(f=>{const c=FEATURE_CAT_COLORS[featureCat(f)];return `<span class="tag" style="border-color:${c}"><span style="width:9px;height:9px;border-radius:2px;background:${c};display:inline-block"></span> ${esc(f)}</span>`;}).join(" "):'<span class="note">None</span>';
+  const rc=realm?realm.color:"#6f8fc9";
+  const terr=p.terrain||"", terrCol=catColor("terrains",terr);
+  const row=(l,v)=>`<div class="pvRow"><span class="pvLbl">${l}</span><span class="pvVal">${(v===0||v)?v:"—"}</span></div>`;
+  const feats=(p.features&&p.features.length)
+    ? p.features.map(f=>{const cat=featureCat(f),c=FEATURE_CAT_COLORS[cat];return `<span class="pvFeat" title="${FEATURE_CAT_LABEL[cat]}"><span class="sw" style="background:${c}"></span>${esc(f)}</span>`;}).join("")
+    : '<span class="pvVal">None</span>';
+  const featKey=FEATURE_CAT_ORDER.map(cat=>`<span class="pvKey"><span class="sw" style="background:${FEATURE_CAT_COLORS[cat]}"></span>${FEATURE_CAT_GLYPH[cat]||""} ${FEATURE_CAT_LABEL[cat]}</span>`).join("");
   const hist=(p.history&&p.history.length)?p.history.map(h=>{const era=world.eras.find(e=>e.id===h.eraId);
     return `<div class="h"><div class="meta">${era?esc(era.name):""}${h.auto?" · auto":""}</div><div style="font-weight:600">${esc(h.title)}</div>${h.text?`<div class="note">${esc(h.text)}</div>`:""}</div>`;}).join(""):'<div class="note">No recorded history.</div>';
-  const row=(a,b)=>`<div class="field2"><div class="field"><label>${a[0]}</label><div>${a[1]}</div></div><div class="field"><label>${b[0]}</label><div>${b[1]}</div></div></div>`;
   ins.innerHTML=`
-    <div class="insTitle" style="font-weight:700;font-size:17px">${esc(p.name)}</div>
-    ${row(["Realm", realm?`<a href="#" id="pvRealm" style="color:var(--accent);text-decoration:none"><span class="swatch" style="background:${realm.color}"></span>${esc(realm.name)}</a>`:'<span class="note">Unclaimed</span>'], ["Continent", cont?esc(cont.name):"—"])}
-    ${row(["Terrain", esc(p.terrain||"—")], ["Settlement", esc(p.settlement||"—")])}
-    ${row(["Top resource", (isPrestige(p.resource)?"★ ":"")+esc(p.resource||"—")+(isPrestige(p.resource)?" (prestige)":"")], ["Mode of Production", esc(economyOf(p))])}
-    ${p.hidden?row(["Strategic resource",(HIDDEN_RES_GLYPH[p.hidden]||"⛏")+" "+esc(p.hidden)],["",""]):""}
-    ${row(["Population", (p.population||0).toLocaleString()], ["", ""])}
-    <div class="sectionH">Notable features</div><div>${feats}</div>
-    <div class="sectionH">Population breakdown</div>
-    <div class="field"><label>Religion</label>${pctBars(p.religion,"religions")}</div>
-    <div class="field"><label>Culture</label>${pctBars(p.culture,"cultures")}</div>
-    <div class="field"><label>Race</label>${pctBars(p.race,"races")}</div>
-    <div class="field"><label>Language</label>${pctBars(p.language,"languages")}</div>
-    <details class="histBox"><summary>History${p.history&&p.history.length?` (${p.history.length})`:""}</summary><div class="histBody">${hist}</div></details>
+    <div class="provCard" style="--rc:${rc};--tc:${terrCol}">
+      <div class="provName">${esc(p.name)}</div>
+      <div class="provBanner" style="background-image:url('img/terrain/${slugify(terr)}.png')"><span>${esc(terr||"Unknown terrain")}</span></div>
+
+      <div class="pvBlock pvTerr">
+        ${row("Terrain", terr?`<span class="pvDot" style="background:${terrCol}"></span>${esc(terr)}`:"—")}
+        ${row("Settlement", esc(p.settlement||"—"))}
+      </div>
+
+      <div class="pvBlock pvGeo">
+        ${row("Realm", realm?`<a href="#" id="pvRealm"><span class="sw" style="background:${realm.color}"></span>${esc(realm.name)}</a>`:'Unclaimed')}
+        ${row("Continent", cont?esc(cont.name):"—")}
+      </div>
+
+      <div class="pvBlock pvEcon">
+        ${row("Population", (p.population||0).toLocaleString())}
+        ${row("Mode of Production", esc(economyOf(p)))}
+        ${row("Resource", (isPrestige(p.resource)?"★ ":"")+esc(p.resource||"—")+(isPrestige(p.resource)?" (prestige)":""))}
+        ${row("Hidden resource", p.hidden?((HIDDEN_RES_GLYPH[p.hidden]||"⛏")+" "+esc(p.hidden)):"—")}
+      </div>
+
+      <div class="pvBlock pvFeatBlock">
+        <div class="pvBlockH">Notable features</div>
+        <div class="pvFeats">${feats}</div>
+        <div class="pvKeyRow">${featKey}</div>
+      </div>
+
+      <div class="pvBlock pvPopBlock">
+        <div class="pvBlockH">Population breakdown</div>
+        <div class="pvPies">
+          ${pieCell("Religion",p.religion,"religions")}
+          ${pieCell("Culture",p.culture,"cultures")}
+          ${pieCell("Race",p.race,"races")}
+          ${pieCell("Language",p.language,"languages")}
+        </div>
+      </div>
+
+      <details class="histBox"><summary>History${p.history&&p.history.length?` (${p.history.length})`:""}</summary><div class="histBody">${hist}</div></details>
+    </div>
   `;
   const rl=$("#pvRealm"); if(rl&&realm)rl.onclick=e=>{e.preventDefault();selectRealm(realm.id);};
 }
@@ -2583,6 +2655,8 @@ function renderRealmEditor(){
       <label style="font-size:13px;margin-left:10px"><input type="checkbox" id="rexLan" ${state.settleParams.byLanguage?"checked":""}/> Language</label>
       <label style="font-size:13px;margin-left:10px"><input type="checkbox" id="rexRac" ${state.settleParams.byRace?"checked":""}/> Race</label>
     </div>
+    <div class="btnrow" style="margin-top:6px"><button class="btn" id="rexUndo">↶ Undo last expansion</button></div>
+    <div class="note">Reverts the most recent conquer/settle/override paint — moved settlers return to their origin provinces.</div>
     <div class="btnrow">
       <button class="btn primary" id="rpaint">🖌 Paint with this realm</button>
       <button class="btn" id="rrecolor">🎨 Random color</button>
@@ -2661,6 +2735,7 @@ function renderRealmEditor(){
   const rexUpd=()=>{state.settleParams={pct:Math.max(0,Math.min(100,+($("#rexPct")?.value)||0)),byReligion:$("#rexRel")?.checked,byCulture:$("#rexCul")?.checked,byLanguage:$("#rexLan")?.checked,byRace:$("#rexRac")?.checked};};
   const rexm=$("#rexmode"); if(rexm)rexm.addEventListener("change",e=>{state.expandMode=e.target.value;const rs=$("#rexSettle");if(rs)rs.classList.toggle("hidden",e.target.value!=="settle");});
   ["rexPct","rexRel","rexCul","rexLan","rexRac"].forEach(id=>{const el=$("#"+id); if(el)el.addEventListener("input",rexUpd);});
+  { const ub=$("#rexUndo"); if(ub)ub.addEventListener("click",undoLastExpansion); }
   $("#rpaint").addEventListener("click",()=>{
     if(rexm)state.expandMode=rexm.value; rexUpd();
     if(state.mapmode==="imported"){state.mapmode="political";const ms=$("#mapmode");if(ms)ms.value="political";}
@@ -2904,7 +2979,7 @@ function setupMapInteraction(){
     if(state.tool==="select" && state.showNames){ const cid=continentLabelAt(ev); if(cid){ beginEdit(); state.labelDrag=cid; down=true; dragged=false; return; } }
     if(state.tool==="nodes"){ const h=nodeAt(ev); if(h){ beginEdit(); state.nodeDrag=h; down=true; dragged=false; return; } }
     if(state.tool==="move"){ const w=screenToWorld(ev); const p=provinceAt(w[0],w[1]); if(p){ beginEdit(); state.moveDrag={p,start:p.points.map(pt=>pt.slice()),grab:[w[0],w[1]]}; down=true; dragged=false; return; } }
-    if(state.tool==="paint" && paintReady()) beginEdit();
+    if(state.tool==="paint" && paintReady()){ beginEdit(); beginExpandStroke(); }
     down=true; dragged=false; painted=false; sx0=ev.clientX; sy0=ev.clientY; camStart={x:state.cam.x,y:state.cam.y};
   });
   window.addEventListener("mousemove",ev=>{
@@ -3118,7 +3193,7 @@ function handleTapWorld(wx,wy){
   }
   const mobile=document.body.classList.contains("mobile");
   const p=provinceAt(wx,wy);
-  if(p && state.tool==="paint" && paintReady()){ if(paintProvince(p)){_labelsDirty=true;renderMap();renderLeft();markDirty();} return; }
+  if(p && state.tool==="paint" && paintReady()){ beginEdit(); beginExpandStroke(); if(paintProvince(p)){_labelsDirty=true;renderMap();renderLeft();markDirty();} return; }
   if(p && state.mapmode==="resource"){ toggleResourceHighlight(p); if(!mobile){selectProvince(p.id);}else{renderMap();} return; }
   if(p && !mobile){ selectProvince(p.id); return; }   // mobile: no province view — just pan the map
   document.body.classList.remove("has-sel");
