@@ -3706,8 +3706,7 @@ async function openMenu(){
       <button class="btn" id="mSaveAs">💾 Save now</button>
       <button class="btn" id="mExport">⬇ Export JSON</button>
       <button class="btn" id="mArchiveData">🗄 Archive full data to disk…</button>
-      <button class="btn" id="mPublish">🌐 Publish player viewer…</button>
-      <button class="btn" id="mGitPush">⬆ Push to GitHub…</button>
+      <button class="btn primary" id="mPublish">🌐 Publish &amp; push live…</button>
       <button class="btn" id="mGitStatus">🔎 Check publish/git status…</button>
       <button class="btn" id="mGitCancel">🛠 Repair GitHub Pages deploy…</button>
       <button class="btn" id="mExportSvg">⬇ Export map (PNG)…</button>
@@ -3736,7 +3735,6 @@ async function openMenu(){
   $("#mPopulate").onclick=()=>{closeModal();openGMScreen();};
   $("#mArchiveData").onclick=archiveDataToDisk;
   $("#mPublish").onclick=publishViewer;
-  $("#mGitPush").onclick=pushToGithub;
   $("#mGitStatus").onclick=checkGitStatus;
   $("#mGitCancel").onclick=forceCancelDeploys;
   $("#mExportSvg").onclick=()=>{closeModal();openExport();};
@@ -3755,20 +3753,19 @@ function tstamp(){const d=new Date(),p=n=>String(n).padStart(2,"0");return `${d.
 let _dataArchiveDir="Z:\\herald\\data";
 let _viewerPublishDir="Z:\\herald\\viewer";
 async function publishViewer(){
-  const folder=prompt("Publish the read-only player viewer (index.html, app.js, style.css, world.json) into this folder:",_viewerPublishDir);
+  const folder=prompt("Publish the player viewer & push it live into this folder:",_viewerPublishDir);
   if(!folder)return; _viewerPublishDir=folder.trim();
   try{
+    flash("Publishing…");
     const res=await fetch("/api/publish",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({folder:_viewerPublishDir,world})});
     const j=await res.json();
     if(!j.ok){flash("Error: "+(j.error||"publish failed"));return;}
-    flash("Published player viewer → "+j.folder);
-    if(confirm("Files written. Push to GitHub now (players see the update in ~1 min)?")){
-      flash("Pushing to GitHub…");
-      const gr=await fetch("/api/gitpush",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({folder:_viewerPublishDir,message:"Update viewer "+tstamp()})});
-      const gj=await gr.json();
-      if(gj.ok) flash("Pushed to GitHub ✓ — live in ~1 minute.");
-      else alert("Publish succeeded, but the git push didn't complete:\n\n"+(gj.output||gj.error||"unknown")+"\n\nIf this is your first time, do the one-time git setup in "+_viewerPublishDir+" (see instructions), then try again.");
-    }
+    // one button: publish then push automatically
+    flash("Published — pushing to GitHub…");
+    const gr=await fetch("/api/gitpush",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({folder:_viewerPublishDir,message:"Update viewer "+tstamp()})});
+    const gj=await gr.json();
+    if(gj.ok) flash("Published & pushed ✓ — live in ~1 minute.");
+    else alert("Published the files, but the git push didn't complete:\n\n"+(gj.output||gj.error||"unknown")+"\n\nIf it's an auth error, open a terminal in "+_viewerPublishDir+" and run 'git push' once so Git caches your token, then try again.");
   }catch(e){flash("Error: "+e.message);}
 }
 async function archiveDataToDisk(){
@@ -3782,17 +3779,6 @@ async function archiveDataToDisk(){
     if(j.ok)flash("Archived full data → "+j.folder+"\\"+name);
     else flash("Error: "+(j.error||"archive failed"));
   }catch(e){flash("Error: "+e.message);}
-}
-async function pushToGithub(){
-  const folder=prompt("Commit & push this folder to GitHub:",_viewerPublishDir);
-  if(!folder)return; _viewerPublishDir=folder.trim();
-  flash("Pushing to GitHub…");
-  try{
-    const r=await fetch("/api/gitpush",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({folder:_viewerPublishDir,message:"Update viewer "+tstamp()})});
-    const j=await r.json();
-    if(j.ok) flash("Pushed to GitHub ✓ — deploy runs in ~1 min.");
-    else alert("Push didn't complete:\n\n"+(j.output||j.error||"unknown")+"\n\nIf it's an auth error, open a terminal in this folder and run 'git push' once so Git caches your token.");
-  }catch(e){alert("Error: "+e.message);}
 }
 async function checkGitStatus(){
   const folder=prompt("Check the git/publish status of this folder:",_viewerPublishDir);
