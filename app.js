@@ -2260,7 +2260,7 @@ function renderProvinceView(){
   const feats=(p.features&&p.features.length)
     ? p.features.map(f=>{const cat=featureCat(f),c=FEATURE_CAT_COLORS[cat];return `<span class="pvFeat" title="${FEATURE_CAT_LABEL[cat]}"><span class="sw" style="background:${c}"></span>${esc(f)}</span>`;}).join("")
     : '<span class="pvVal">None</span>';
-  const featKey=FEATURE_CAT_ORDER.map(cat=>`<span class="pvKey"><span class="sw" style="background:${FEATURE_CAT_COLORS[cat]}"></span>${FEATURE_CAT_GLYPH[cat]||""} ${FEATURE_CAT_LABEL[cat]}</span>`).join("");
+  const featKey=FEATURE_CAT_ORDER.map(cat=>`<span class="pvKey"><span class="sw" style="background:${FEATURE_CAT_COLORS[cat]}"></span>${FEATURE_CAT_LABEL[cat]}</span>`).join("");
   const hist=(p.history&&p.history.length)?p.history.map(h=>{const era=world.eras.find(e=>e.id===h.eraId);
     return `<div class="h"><div class="meta">${era?esc(era.name):""}${h.auto?" · auto":""}</div><div style="font-weight:600">${esc(h.title)}</div>${h.text?`<div class="note">${esc(h.text)}</div>`:""}</div>`;}).join(""):'<div class="note">No recorded history.</div>';
   ins.innerHTML=`
