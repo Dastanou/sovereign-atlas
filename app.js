@@ -47,10 +47,50 @@ function inResourceFamily(res,sel){
   if(!isPrestige(sel) && RESOURCE_PRESTIGE[res]===sel) return true;  // base → its prestige goods
   return false;
 }
+function isHiddenRes(res){ return (world&&world.lists&&(world.lists.hiddenResources||[]).includes(res)); }
+// Does province p fall inside the current resource spotlight (regular/prestige family OR a hidden resource)?
+function resSpotMatch(p,sel){
+  if(!sel) return true;
+  if(isHiddenRes(sel)) return p.hidden===sel;                   // hidden/strategic: match on the hidden resource
+  return inResourceFamily(p.resource,sel);                      // regular + its prestige goods
+}
+// short display labels for over-long resource names in the compact legend
+const RES_LEGEND_ABBR={"Semi-Precious Gems":"S-P Gems"};
+function resLabel(res){ return RES_LEGEND_ABBR[res]||res; }
 // canonical resource list, ordered base-then-its-prestige-goods
 const RESOURCE_LIST=(()=>{const out=[];REGULAR_RESOURCES.forEach(b=>{out.push(b);prestigeOf(b).forEach(p=>out.push(p));});return out;})();
 const HIDDEN_RESOURCES=["Horses","Iron","Coal","Saltpeter","Oil","Uranium"];
 const HIDDEN_RES_GLYPH={Horses:"🐎",Iron:"⛓️",Coal:"◾",Saltpeter:"🧨",Oil:"🛢️",Uranium:"☢️"};
+// Semantic resource colours. Each regular resource has a colour that suits it, and its
+// prestige goods share the same hue family (a richer / lighter shade) so families read together.
+const RESOURCE_COLORS={
+  // Grains — wheat gold; orchard & cane in the warm-amber family
+  Grains:"#e3b93e", Fruit:"#e58b3a", Sugar:"#ecd89a",
+  // Stone — greys; marble pale, obsidian near-black
+  Stone:"#8b9198", Marble:"#d6dbdf", Obsidian:"#3b3f47",
+  // Timber — wood browns; hardwood richer, pitch tar-dark
+  Timber:"#7b5230", Hardwood:"#5c3a1f", Pitch:"#33251a",
+  // Fish — sea blues; whales deeper
+  Fish:"#3fa7c0", Whales:"#256f92",
+  // Livestock — pastoral tan/leather; honey golden, ivory cream
+  Livestock:"#bfa36a", Honey:"#e4a81c", Ivory:"#ece2c8",
+  // Cloth — linen warm neutrals; papyrus straw, silk rose sheen
+  Cloth:"#c39a86", Papyrus:"#dcc7a0", Silk:"#ce8fb0",
+  // Copper — copper orange; tin bronzed
+  Copper:"#c0703a", Tin:"#b08a5e",
+  // Stimulants — coffee/tea browns; intoxicants reddish
+  Stimulants:"#7b5a38", Intoxicants:"#94472b",
+  // Semi-Precious Gems — teal-green jewels; precious brighter
+  "Semi-Precious Gems":"#3e9e86", "Precious Gems":"#35c0ae",
+  // Dyes — vivid magenta/purple; royal deeper
+  Dyes:"#a94fa0", "Royal Dyes":"#6b2c8e",
+  // Silver — steel; gold warm (both precious metals)
+  Silver:"#aeb8c4", Gold:"#e4b62c",
+  // Salt — pale white; spices warm
+  Salt:"#e6ebee", Spices:"#c4632c",
+  // strategic / hidden resources
+  Horses:"#9c6b3f", Iron:"#7c8794", Coal:"#33373d", Saltpeter:"#c9b87a", Oil:"#2b2f3a", Uranium:"#5fb84c"
+};
 // migrate old default resource names to the new set
 const RES_MIGRATE={Grain:"Grains",Gold:"Silver",Gems:"Semi-Precious Gems",Wine:"Stimulants",Skystone:"Stone","Magical Reagents":"Dyes","Enchanted Items":"Gold","Aether Crystals":"Precious Gems",Iron:"Copper"};
 
@@ -77,6 +117,10 @@ function ramp(t){t=Math.max(0,Math.min(1,t));const a=[239,122,95],b=[95,208,160]
 
 const TERRAIN_COLORS={Plains:"#a7c957",Farmlands:"#c9d76a",Steppe:"#cabf76",Savannah:"#d3a24a",Forest:"#386641",Taiga:"#566f4d",Jungle:"#2d6a4f",Hills:"#9c8246",Mountains:"#8d99ae",Caverns:"#5e5a6e",Desert:"#e9c46a",Marsh:"#52796f",Tundra:"#cad2c5",Glacial:"#cfe3ec",Coast:"#76c7c0",Wasteland:"#6d597a","Floating Reef":"#48bfe3"};
 const SETTLE_COLORS={Uninhabited:"#26304a",Nomadic:"#b79b6a",Village:"#9bb25f",Town:"#e9c46a",City:"#f4a261",Megalopolis:"#e76f51"};
+// default province-view banner image per terrain (files in static/img/terrain/); GM-overridable
+const TERRAIN_IMAGE_DEFAULTS={Plains:"plains",Farmlands:"farmlands",Steppe:"steppe",Savannah:"savannah",Forest:"forest",
+  Taiga:"woods",Jungle:"jungle",Hills:"hills",Mountains:"mountains",Caverns:"cavern",Desert:"desert",Marsh:"marsh",
+  Tundra:"arctic",Glacial:"arctic",Wasteland:"drylands"};
 // terrain hospitability (population multiplier): grassland/coast thrive, mountains/desert/tundra are harsh
 const TERRAIN_HAB={Plains:1.0,Farmlands:1.25,Steppe:0.55,Savannah:0.6,Coast:1.0,Forest:0.65,Taiga:0.3,Jungle:0.6,Hills:0.5,Marsh:0.4,Desert:0.22,Mountains:0.2,Caverns:0.28,Tundra:0.2,Glacial:0.08,Wasteland:0.1,"Floating Reef":0.5};
 // ---- pop growth/decline model (GM-tunable via world.tune.pop) ----
@@ -162,10 +206,14 @@ function raceGrowthMod(race){ const o=(world&&world.tune&&world.tune.raceGrowth)
 const FEATURE_CATS_DEFAULT={"Ancient Ruin":"wonder","Floating Monolith":"wonder","Sunken City":"wonder","Sacred Grove":"wonder","Ley-line Nexus":"resource","Volcanic Rift":"resource","Impact Crater":"misc","Arcane Scar":"misc"};
 const FEATURE_CAT_COLORS={wonder:"#e0b34e",resource:"#5fb26a",misc:"#8a93a6"};
 const FEATURE_CAT_ORDER=["wonder","resource","misc"];
+// "wonder" is retired as a feature type (Wonders are now their own objects) — hidden from the
+// UI but kept in the code/data so existing worlds don't break. Only these show/cycle now:
+const FEATURE_CAT_VISIBLE=["resource","misc"];
 const FEATURE_CAT_LABEL={wonder:"Wonder",resource:"Resource feature",misc:"Misc"};
 const FEATURE_CAT_GLYPH={wonder:"🏛️",resource:"💎",misc:"❖"};
 function featureCat(name){ return (world.featureCats&&world.featureCats[name])||"misc"; }
 function setFeatureCat(name,cat){ world.featureCats=world.featureCats||{}; world.featureCats[name]=cat; }
+function featureMeta(name){ world.featureInfo=world.featureInfo||{}; if(!world.featureInfo[name])world.featureInfo[name]={description:""}; return world.featureInfo[name]; }
 // military forces (GURPS Mass Combat framework)
 const FORCE_DOMAINS={land:{icon:"⚔️",label:"Army"},sea:{icon:"⚓",label:"Fleet"},air:{icon:"✈️",label:"Air Wing"}};
 const ELEMENT_CLASSES=["Air Combat (Air)","Armor (Arm)","Artillery (Art)","Cavalry (Cv)","Command, Control, Communications, and Intelligence (C3I)","Engineering (Eng)","Fire (F)","Naval (Nav)","Recon (Rec)","Transport (T)"];
@@ -330,6 +378,7 @@ let state = {
   mapmode: "political",
   selProvince: null,
   selRealm: null,
+  selReligion: null,        // religion info panel: selected religion name
   focusedContinent: null,   // continent currently targeted for drawing
   tilt: false,
   cam: { x: 0, y: 0, scale: 0.3 },  // x,y = world coord at canvas top-left; scale = px/world-unit
@@ -460,6 +509,12 @@ function normalize(w){
   // feature categories (Wonder / Resource / Misc)
   w.featureCats=w.featureCats||{};
   (w.lists.features||[]).forEach(f=>{ if(!w.featureCats[f]) w.featureCats[f]=FEATURE_CATS_DEFAULT[f]||"misc"; });
+  // per-feature blurb shown in a bubble when clicked
+  w.featureInfo = (w.featureInfo && typeof w.featureInfo==="object") ? w.featureInfo : {};
+  (w.lists.features||[]).forEach(f=>{ if(!w.featureInfo[f]) w.featureInfo[f]={description:""}; });
+  // default province-view banner image per terrain type (GM-editable; per-province override lives on p.terrainImage)
+  w.terrainImages = (w.terrainImages && typeof w.terrainImages==="object") ? w.terrainImages : {};
+  (w.lists.terrains||[]).forEach(t=>{ if(w.terrainImages[t]===undefined){ const d=TERRAIN_IMAGE_DEFAULTS[t]; if(d) w.terrainImages[t]="img/terrain/"+d+".png"; } });
   // resource overhaul: one-time swap to the canonical regular+prestige list + province migration
   w.lists.hiddenResources=(w.lists.hiddenResources&&w.lists.hiddenResources.length)?w.lists.hiddenResources:HIDDEN_RESOURCES.slice();
   if(!w.resourcesV2){
@@ -473,6 +528,7 @@ function normalize(w){
     ["religion","culture","race","language"].forEach(k=>p[k]=p[k]||[]);
     p.features=p.features||[]; p.history=p.history||[];
     if(typeof p.settlementName!=="string") p.settlementName="";   // "" = follow the province name; else a custom settlement name
+    if(typeof p.terrainImage!=="string") p.terrainImage="";       // "" = use the terrain default; else a per-province override
     const oldEcon=(typeof p.economy==="string" && p.economy)?p.economy:null;   // old per-province override
     if(!Array.isArray(p.pops)) p.pops=migratePops(p,w.lists);   // one-time migration from the old model
     const r=p.realmId?w.realms.find(x=>x.id===p.realmId):null;
@@ -480,13 +536,14 @@ function normalize(w){
     deriveProvince(p);                                          // keep population + %s in sync with pops
   });
   w.realms.forEach(r=>{r.adminCenters=r.adminCenters||[];r.dominantLanguage=r.dominantLanguage||"";
+    if(typeof r.description!=="string")r.description="";
     // racial administration (was single "dominantRace") + new racial military — both are race lists
     if(!Array.isArray(r.adminRaces)) r.adminRaces = r.dominantRace ? [r.dominantRace] : [];
     if(!Array.isArray(r.militaryRaces)) r.militaryRaces = [];
     r.dominantRace = r.adminRaces[0] || "";   // keep the single field in sync for pop defaults/state-group logic
   });
   w.forces=w.forces||[];   // military units
-  w.forces.forEach(f=>{ if(f.scale==null)f.scale=1; (f.elements||[]).forEach(migrateElement); });
+  w.forces.forEach(f=>{ if(f.scale==null)f.scale=1; if(typeof f.description!=="string")f.description=""; (f.elements||[]).forEach(migrateElement); });
   // army element-type library (editable in the GM screen)
   w.elementTypes = (Array.isArray(w.elementTypes)&&w.elementTypes.length) ? w.elementTypes : DEFAULT_ELEMENT_TYPES.map(t=>({id:uid(),...t}));
   w.elementTypes.forEach(t=>{ if(!t.id)t.id=uid(); migrateElement(t); });
@@ -500,6 +557,14 @@ function normalize(w){
   w.monsters.forEach(m=>{ if(!m.id)m.id=uid();
     m.icon=m.icon||MONSTER_DEFAULT_ICON; m.description=typeof m.description==="string"?m.description:"";
     m.creatureType=m.creatureType||""; if(m.groupId===undefined)m.groupId=null; if(m.scale==null)m.scale=0.6; });
+  // Wonders (great projects) — their own objects, attached to a province. No longer a "Feature".
+  w.wonders = Array.isArray(w.wonders) ? w.wonders : [];
+  w.wonders.forEach((x,i)=>{ if(!x.id)x.id=uid(); x.name=x.name||"New Wonder"; x.image=x.image||"";
+    x.description=typeof x.description==="string"?x.description:""; x.provinceId=x.provinceId||null;
+    x.holySite=!!x.holySite; x.religion=x.religion||""; if(typeof x.order!=="number")x.order=i; });
+  // Religion info panels: symbol image + description, keyed by religion name
+  w.religionInfo = (w.religionInfo && typeof w.religionInfo==="object") ? w.religionInfo : {};
+  (w.lists.religions||[]).forEach(rn=>{ if(!w.religionInfo[rn]) w.religionInfo[rn]={symbol:"",description:""}; });
   w.tune=w.tune||{};           // GM-editable simulation values
   w.tune.terrainHab=w.tune.terrainHab||{};
   w.tune.raceGrowth=w.tune.raceGrowth||{};
@@ -733,10 +798,10 @@ function renderMap(){ _geoDirty=true; _labelsDirty=true; requestRender(); }
 function labelKeyer(mode){
   switch(mode){
     case "political": return p=>p.realmId;
-    case "religion": return p=>dominant(p.religion);
-    case "culture": return p=>dominant(p.culture);
-    case "race": return p=>dominant(p.race);
-    case "language": return p=>dominant(p.language);
+    case "religion": return p=>axisLabelName(p,"religion");
+    case "culture": return p=>axisLabelName(p,"culture");
+    case "race": return p=>axisLabelName(p,"race");
+    case "language": return p=>axisLabelName(p,"language");
     case "terrain": return null;   // terrain uses custom labels, not auto region names
     case "settlement": return p=>(p.settlement&&p.settlement!=="Uninhabited")?p.settlement:null;
     case "economy": return p=>economyOf(p);
@@ -1097,12 +1162,13 @@ function battleAt(wx,wy){
 // Resource-map icons: ✦ on prestige-good provinces, and (when toggled) hidden/strategic resource glyphs.
 function drawResourceIcons(ctx,cam,s,cw,ch){
   const hid=state.hiddenResMode;
+  const selHidden=isHiddenRes(state.selResource)?state.selResource:null;   // spotlighting a hidden resource
   ctx.save(); ctx.font='14px "Segoe UI Emoji",system-ui,sans-serif'; ctx.textAlign="center"; ctx.textBaseline="middle";
   for(const g of _provGeo){
     if((g.maxx-g.minx)*s<12) continue;
-    const p=g.p, h=hid&&p.hidden;
+    const p=g.p, h=(hid&&p.hidden) || (selHidden&&p.hidden===selHidden?p.hidden:false);
     // hide the prestige ✦ marker on provinces dimmed by the resource spotlight
-    const pres=isPrestige(p.resource) && !(state.selResource && !inResourceFamily(p.resource,state.selResource));
+    const pres=isPrestige(p.resource) && !(state.selResource && !resSpotMatch(p,state.selResource));
     if(!pres && !h) continue;
     const feat=p.features&&p.features.some(f=>featureCat(f)==="resource");
     const X=(g.cx-cam.x)*s, Y=(g.cy-cam.y)*s-8-(feat?15:0); if(X<-20||Y<-20||X>cw+20||Y>ch+20) continue;
@@ -1363,11 +1429,13 @@ function drawFrame(){
     ctx.fillStyle=provinceFill(gp.p); ctx.fill();
     if(drawStroke)ctx.stroke();
   }
+  // identity maps: diagonal hatching for large-minority / melting-pot provinces
+  drawAxisStripes(ctx, state.mapmode, s);
   // prestige goods get a gold outline on the resource map
   if(state.mapmode==="resource"){
     ctx.lineWidth=2.5/s; ctx.strokeStyle="#e8b21f"; ctx.lineJoin="round";
     for(const gp of _provGeo){ if(!isPrestige(gp.p.resource))continue;
-      if(state.selResource && !inResourceFamily(gp.p.resource,state.selResource))continue;   // hide outline on dimmed provinces
+      if(state.selResource && !resSpotMatch(gp.p,state.selResource))continue;   // hide outline on dimmed provinces
       const pts=gp.pts; if(!pts.length)continue;
       ctx.beginPath(); ctx.moveTo(pts[0][0],pts[0][1]); for(let i=1;i<pts.length;i++)ctx.lineTo(pts[i][0],pts[i][1]); ctx.closePath(); ctx.stroke(); }
   }
@@ -1456,7 +1524,7 @@ function drawFrame(){
   }
 
   // feature icons: wonders on the Settlements map, resource features on the Resource map
-  if(state.mapmode==="settlement") drawFeatureIcons(ctx,cam,s,cw,ch,"wonder");
+  // (wonder-feature icons retired — Wonders are their own objects now)
   else if(state.mapmode==="resource"){ drawFeatureIcons(ctx,cam,s,cw,ch,"resource"); drawResourceIcons(ctx,cam,s,cw,ch); }
   else if(state.mapmode==="monster") drawMonsters(ctx,cam,s,cw,ch);
   else if(state.mapmode==="military") drawForces(ctx,cam,s,cw,ch);
@@ -1504,6 +1572,7 @@ function catColor(key,name){
   const cm=world.colors&&world.colors[key]; if(cm&&cm[name])return cm[name];
   if(key==="terrains")return TERRAIN_COLORS[name]||hashColor(name);
   if(key==="settlements")return SETTLE_COLORS[name]||"#39415e";
+  if(key==="resources")return RESOURCE_COLORS[name]||listColor(world.lists[key]||[],name);
   return listColor(world.lists[key]||[],name);
 }
 const _hexcx=document.createElement("canvas").getContext("2d");
@@ -1534,7 +1603,7 @@ function provinceFill(p){
     case "population":return popColor(p.population);
     case "tolerance":return ramp((p.tolerance??50)/100);
     case "resource":{
-      if(state.selResource && !inResourceFamily(p.resource,state.selResource)) return "#333a46";  // dim non-matching
+      if(state.selResource && !resSpotMatch(p,state.selResource)) return "#333a46";  // dim non-matching
       return catColor("resources",p.resource);
     }
     case "economy":return catColor("economies",economyOf(p));
@@ -1545,6 +1614,45 @@ function provinceFill(p){
   }
 }
 function colorByAxis(arr,key){const d=dominant(arr);return d?catColor(key,d):"#39415e";}
+// ---- identity "melting pot" shading (religion / culture / race / language) ----
+// Solid dominant colour when a group holds > 2/3. Diagonal hatch (dominant + minority)
+// when the majority is 1/2–2/3 AND another group is ≥ 1/4. Diagonal hatch (dominant + black)
+// when no group reaches 1/2. Otherwise solid.
+const AXIS_CAT={religion:"religions",culture:"cultures",race:"races",language:"languages"};
+function axisStripe(p,key){                // overlay hatch colour, or null for a solid fill
+  const arr=p[key]; if(!arr||!arr.length)return null;
+  const f1=arr[0].pct/100;
+  if(f1>2/3) return null;                                   // overwhelming majority → solid
+  if(f1<0.5) return "#141518";                              // no majority → dominant + black hatch
+  const f2=arr[1]?arr[1].pct/100:0;                         // 1/2–2/3: hatch only vs a ≥1/4 minority
+  if(f2>=0.25) return catColor(AXIS_CAT[key]||key, arr[1].name);
+  return null;                                              // majority-ish with only small minorities → solid
+}
+function axisLabelName(p,key){             // name for the label map, or null if too fragmented (no ≥½ majority)
+  const arr=p[key]; if(!arr||!arr.length)return null;
+  return (arr[0].pct/100)>=0.5 ? arr[0].name : null;
+}
+// EU4-style diagonal hatching (top-right → bottom-left) for large-minority / melting-pot provinces.
+function drawAxisStripes(ctx,key,s){
+  if(!AXIS_CAT[key])return;
+  const spot = (state.legendFilter && state.legendFilter.mode===state.mapmode) ? state.legendFilter : null;
+  const step=9/s, lw=3.4/s;
+  ctx.save(); ctx.lineWidth=lw; ctx.lineCap="butt";
+  for(const gp of _provGeo){
+    const p=gp.p;
+    if(spot && !provinceMatchesLegend(p,spot.value)) continue;       // don't hatch dimmed provinces
+    if((gp.maxx-gp.minx)*s<5 && (gp.maxy-gp.miny)*s<5) continue;     // too small on screen to bother
+    const col=axisStripe(p,key); if(!col)continue;
+    const pts=gp.pts; if(pts.length<3)continue;
+    ctx.save();
+    ctx.beginPath(); ctx.moveTo(pts[0][0],pts[0][1]); for(let i=1;i<pts.length;i++)ctx.lineTo(pts[i][0],pts[i][1]); ctx.closePath(); ctx.clip();
+    ctx.strokeStyle=col;
+    const c0=gp.minx+gp.miny, c1=gp.maxx+gp.maxy;   // lines x+y=c run top-right → bottom-left
+    for(let c=c0;c<=c1;c+=step){ ctx.beginPath(); ctx.moveTo(c-gp.miny,gp.miny); ctx.lineTo(c-gp.maxy,gp.maxy); ctx.stroke(); }
+    ctx.restore();
+  }
+  ctx.restore();
+}
 
 /* ============================================================
    AUTOMATIC HISTORY TRACKER
@@ -1977,55 +2085,68 @@ function updateResSpot(){
   if(state.mapmode!=="resource" || !state.selResource){ if(el)el.remove(); return; }
   if(!el){ el=document.createElement("div"); el.id="resSpot"; ($("#stage")||document.body).appendChild(el); }
   const sel=state.selResource, sw=c=>`<span class="rsw" style="background:${c}"></span>`;
-  let html=`<span class="rsLbl">Showing</span> ${sw(catColor("resources",sel))}<b>${esc(sel)}</b>`;
-  if(isPrestige(sel)) html+=`<span class="rsPlus">prestige good</span>`;
+  const glyph=isHiddenRes(sel)?(HIDDEN_RES_GLYPH[sel]||"⛏")+" ":"";
+  let html=`<span class="rsLbl">Showing</span> ${sw(catColor("resources",sel))}<b>${glyph}${esc(sel)}</b>`;
+  if(isHiddenRes(sel)) html+=`<span class="rsPlus">strategic resource</span>`;
+  else if(isPrestige(sel)) html+=`<span class="rsPlus">prestige good</span>`;
   else { const pg=prestigeOf(sel); if(pg.length) html+=`<span class="rsPlus">+ prestige:</span> `+pg.map(x=>`${sw(catColor("resources",x))}${esc(x)}`).join(" "); }
   html+=`<span class="rsX" title="Clear highlight">✕</span>`;
   el.innerHTML=html;
   el.querySelector(".rsX").onclick=()=>{ state.selResource=null; updateResSpot(); renderMap(); };
 }
+// ---- wonders (great projects) & religion-info helpers ----
+function wondersOf(pid){ return (world.wonders||[]).filter(w=>w.provinceId===pid).sort((a,b)=>(a.order||0)-(b.order||0)); }
+function newWonder(pid){ const n=(world.wonders||[]).filter(w=>w.provinceId===pid).length; return {id:uid(),name:"New Wonder",image:"",description:"",provinceId:pid,holySite:false,religion:"",order:n}; }
+function religionMeta(name){ world.religionInfo=world.religionInfo||{}; if(!world.religionInfo[name])world.religionInfo[name]={symbol:"",description:""}; return world.religionInfo[name]; }
+function holyWondersOf(rel){ return (world.wonders||[]).filter(w=>w.holySite && w.religion===rel).sort((a,b)=>(a.order||0)-(b.order||0)); }
+function holySiteProvincesOf(rel){ const seen=new Set(),out=[]; holyWondersOf(rel).forEach(w=>{ if(w.provinceId&&!seen.has(w.provinceId)){seen.add(w.provinceId); const p=world.provinces.find(x=>x.id===w.provinceId); if(p)out.push(p);} }); return out; }
 function selectProvince(id){
-  state.selProvince=id;state.selRealm=null;state.selWater=null;state.selLabel=null;
+  state.selProvince=id;state.selRealm=null;state.selReligion=null;state.selWater=null;state.selLabel=null;
   const p=world.provinces.find(p=>p.id===id);
   if(p) state.focusedContinent=p.continentId;
   document.body.classList.add("has-sel");
-  renderMap();renderLeft();renderProvinceEditor();
+  renderMap();renderLeft();renderProvinceEditor();renderWonderPanel();
 }
 function selectRealm(id){
-  state.selRealm=id;state.selProvince=null;state.selWater=null;state.selLabel=null;state.paintUnclaim=false;
+  state.selRealm=id;state.selProvince=null;state.selReligion=null;state.selWater=null;state.selLabel=null;state.paintUnclaim=false;
   document.body.classList.add("has-sel");
-  renderLeft();renderRealmEditor();
+  renderLeft();renderRealmEditor();renderWonderPanel();
+}
+function selectReligion(name){
+  state.selReligion=name;state.selProvince=null;state.selRealm=null;state.selWater=null;state.selLabel=null;state.selForce=null;state.selBattle=null;state.selMonster=null;
+  document.body.classList.add("has-sel");
+  renderMap();renderReligionEditor();renderWonderPanel();
 }
 function selectContinent(id){
-  state.focusedContinent=id;state.selProvince=null;state.selRealm=null;state.selWater=null;state.selLabel=null;
+  state.focusedContinent=id;state.selProvince=null;state.selRealm=null;state.selReligion=null;state.selWater=null;state.selLabel=null;
   document.body.classList.add("has-sel");
-  renderMap();renderLeft();renderContinentEditor();
+  renderMap();renderLeft();renderContinentEditor();renderWonderPanel();
 }
 function selectCustomLabel(id){
-  state.selLabel=id;state.selProvince=null;state.selRealm=null;state.selWater=null;
+  state.selLabel=id;state.selProvince=null;state.selRealm=null;state.selReligion=null;state.selWater=null;
   document.body.classList.add("has-sel");
-  renderMap();renderLabelEditor();
+  renderMap();renderLabelEditor();renderWonderPanel();
 }
 function clearSelection(){   // click on empty void: deselect and hide the inspector
-  state.selProvince=null;state.selRealm=null;state.selWater=null;state.selLabel=null;state.selForce=null;state.selBattle=null;state.selMonster=null;state.selResource=null;state.legendFilter=null;
+  state.selProvince=null;state.selRealm=null;state.selReligion=null;state.selWater=null;state.selLabel=null;state.selForce=null;state.selBattle=null;state.selMonster=null;state.selResource=null;state.legendFilter=null;
   document.body.classList.remove("has-sel");
   updateResSpot();
-  renderMap();renderLegend();
+  renderMap();renderLegend();renderWonderPanel();
 }
 function selectForce(id){
-  state.selForce=id;state.selBattle=null;state.selMonster=null;state.selProvince=null;state.selRealm=null;state.selWater=null;state.selLabel=null;
+  state.selForce=id;state.selBattle=null;state.selMonster=null;state.selProvince=null;state.selRealm=null;state.selReligion=null;state.selWater=null;state.selLabel=null;
   document.body.classList.add("has-sel");
-  renderMap();renderForceEditor();renderLegend();
+  renderMap();renderForceEditor();renderLegend();renderWonderPanel();
 }
 function selectBattle(aId,bId){
-  state.selBattle=[aId,bId];state.selForce=null;state.selMonster=null;state.moveMode=null;state.selProvince=null;state.selRealm=null;state.selWater=null;state.selLabel=null;
+  state.selBattle=[aId,bId];state.selForce=null;state.selMonster=null;state.moveMode=null;state.selProvince=null;state.selRealm=null;state.selReligion=null;state.selWater=null;state.selLabel=null;
   document.body.classList.add("has-sel");
-  renderMap();renderBattleView();
+  renderMap();renderBattleView();renderWonderPanel();
 }
 function selectMonster(id){
-  state.selMonster=id;state.selForce=null;state.selBattle=null;state.selProvince=null;state.selRealm=null;state.selWater=null;state.selLabel=null;
+  state.selMonster=id;state.selForce=null;state.selBattle=null;state.selProvince=null;state.selRealm=null;state.selReligion=null;state.selWater=null;state.selLabel=null;
   document.body.classList.add("has-sel");
-  renderMap();renderMonsterEditor();renderLegend();
+  renderMap();renderMonsterEditor();renderLegend();renderWonderPanel();
 }
 function renderLabelEditor(){
   const ins=$("#inspector"),lb=world.labels.find(x=>x.id===state.selLabel);
@@ -2039,6 +2160,114 @@ function renderLabelEditor(){
   $("#lbsize").addEventListener("input",e=>{lb.size=+e.target.value;$("#lbsv").textContent=e.target.value;renderMap();markDirty();});
   $("#lbcolor").addEventListener("input",e=>{lb.color=e.target.value;renderMap();markDirty();});
   $("#lbdel").addEventListener("click",()=>{beginEdit();world.labels=world.labels.filter(x=>x.id!==lb.id);state.selLabel=null;renderMap();ins.innerHTML='<div class="empty">Label deleted.</div>';markDirty();});
+}
+// ===== Wonders: floating box panel attached to the bottom-left of the province info panel (viewer) =====
+function renderWonderPanel(){
+  let wp=document.getElementById("wonderPanel");
+  const p = (VIEWER && state.selProvince) ? world.provinces.find(x=>x.id===state.selProvince) : null;
+  const list = p ? wondersOf(p.id) : [];
+  if(!list.length){ if(wp)wp.remove(); const nav=document.getElementById("wonderNav"); if(nav)nav.remove(); return; }
+  if(!wp){ wp=document.createElement("div"); wp.id="wonderPanel"; ($("#stage")||document.body).appendChild(wp); }
+  wp.innerHTML=`<div class="wpScroll">`+list.map(w=>{
+    const rel=(w.holySite&&w.religion)?w.religion:"";
+    const sym=rel?religionMeta(rel).symbol:"";
+    const holyIcon=rel?`<button class="wpHoly" data-rel="${esc(rel)}" title="Holy site of ${esc(rel)} — open faith">${sym?`<img src="${esc(sym)}" alt=""/>`:"⛪"}</button>`:"";
+    const banner=w.image?`<div class="wpBanner"><img src="${esc(w.image)}" alt="${esc(w.name)}"/></div>`:"";
+    return `<div class="wpCard">
+      <div class="wpHead">${holyIcon}<span class="wpName">${esc(w.name)}</span></div>
+      ${banner}
+      ${w.description?`<div class="wpDesc">${esc(w.description).replace(/\n/g,"<br>")}</div>`:""}
+    </div>`;
+  }).join("")+`</div>`;
+  wp.querySelectorAll(".wpHoly").forEach(b=>b.onclick=()=>selectReligion(b.dataset.rel));
+  renderWonderNav(list.length);
+  positionWonderPanel();
+}
+// left-side numbered jump buttons (only when a province holds several wonders)
+function renderWonderNav(n){
+  let nav=document.getElementById("wonderNav");
+  if(!n || n<2){ if(nav)nav.remove(); return; }
+  if(!nav){ nav=document.createElement("div"); nav.id="wonderNav"; ($("#stage")||document.body).appendChild(nav); }
+  nav.innerHTML="";
+  for(let i=0;i<n;i++){ const b=document.createElement("button"); b.className="wnDot"+(i===0?" active":""); b.textContent=(i+1);
+    b.title="Jump to wonder "+(i+1); b.onclick=()=>scrollToWonder(i); nav.appendChild(b); }
+  // keep the active dot in sync as the box is scrolled
+  const wp=document.getElementById("wonderPanel"), sc=wp&&wp.querySelector(".wpScroll");
+  if(sc)sc.onscroll=()=>{ const cards=wp.querySelectorAll(".wpCard"); let act=0;
+    cards.forEach((c,k)=>{ if(c.offsetTop - sc.scrollTop <= 12) act=k; });
+    nav.querySelectorAll(".wnDot").forEach((d,k)=>d.classList.toggle("active",k===act)); };
+}
+function scrollToWonder(i){
+  const wp=document.getElementById("wonderPanel"); if(!wp)return;
+  const sc=wp.querySelector(".wpScroll"), cards=wp.querySelectorAll(".wpCard");
+  if(!sc||!cards[i])return;
+  sc.scrollTo({top:cards[i].offsetTop, behavior:"smooth"});
+  const nav=document.getElementById("wonderNav");
+  if(nav)nav.querySelectorAll(".wnDot").forEach((d,k)=>d.classList.toggle("active",k===i));
+}
+function positionWonderPanel(){
+  const wp=document.getElementById("wonderPanel"), right=$("#right"), stage=$("#stage");
+  if(!wp||!right||!stage)return;
+  if(document.body.classList.contains("mobile")){ wp.style.right="8px"; wp.style.left="8px"; wp.style.top="auto"; wp.style.bottom="calc(50vh + 6px)"; positionWonderNav(); return; }
+  const r=right.getBoundingClientRect(), s=stage.getBoundingClientRect();
+  wp.style.left="auto"; wp.style.top="auto";
+  wp.style.right=Math.max(8,(s.right - r.left + 10))+"px";
+  wp.style.bottom=Math.max(8,(s.bottom - r.bottom))+"px";
+  positionWonderNav();
+}
+function positionWonderNav(){
+  const nav=document.getElementById("wonderNav"), wp=document.getElementById("wonderPanel"), stage=$("#stage");
+  if(!nav||!wp||!stage)return;
+  const w=wp.getBoundingClientRect(), s=stage.getBoundingClientRect();
+  nav.style.bottom="auto";
+  if(document.body.classList.contains("mobile")){ nav.style.right="auto"; nav.style.left="6px"; nav.style.top=Math.max(6,(w.top - s.top + 4))+"px"; return; }
+  nav.style.left="auto";
+  nav.style.right=Math.max(8,(s.right - w.left + 8))+"px";   // just to the left of the wonder box
+  nav.style.top=Math.max(6,(w.top - s.top))+"px";            // aligned near the top of the box
+}
+// ===== Religion info panel (like realms) =====
+function renderReligionEditor(){
+  if(VIEWER)return renderReligionView();
+  const ins=$("#inspector"); const name=state.selReligion;
+  if(!name){ins.innerHTML='<div class="empty">No religion selected.</div>';return;}
+  const meta=religionMeta(name), col=catColor("religions",name);
+  const holyW=holyWondersOf(name);
+  const provName=w=>{const p=world.provinces.find(x=>x.id===w.provinceId);return p?p.name:"unplaced";};
+  const cand=(world.wonders||[]).filter(w=>!(w.holySite&&w.religion===name));
+  ins.innerHTML=`
+    <div class="insTitle"><span class="rvDot" style="background:${col};width:16px;height:16px"></span><b style="flex:1;font-size:17px">${esc(name)}</b></div>
+    ${meta.symbol?`<div class="relSymbol"><img src="${esc(meta.symbol)}" alt=""/></div>`:""}
+    <div class="field"><label>Symbol image ${RELIGION_IMAGES.length?"":'<span class="note">(drop files into static/img/religions/)</span>'}</label>
+      <div style="display:flex;gap:6px"><select id="relSymPick" style="flex:1">${imagePickerOptions(RELIGION_IMAGES, meta.symbol)}</select><button class="btn tiny" id="relRescan" title="Rescan the image folder">🔄</button></div></div>
+    <div class="field"><label>Description <span class="note">(shown in the viewer)</span></label><textarea id="relDesc" rows="4">${esc(meta.description||"")}</textarea></div>
+    <div class="sectionH">Holy wonders (${holyW.length})</div>
+    <div class="list" id="relHolyList">${holyW.length?holyW.map(w=>`<div class="li" style="display:flex;align-items:center"><span style="flex:1">🏛️ ${esc(w.name)} <span class="note">— ${esc(provName(w))}</span></span><button class="btn tiny hwRemove" data-wid="${w.id}" title="Remove as holy site">✕</button></div>`).join(""):'<div class="note">None yet.</div>'}</div>
+    <div class="field"><label>Add a holy wonder</label>
+      <select id="relAddHoly"><option value="">— pick from existing wonders —</option>${cand.map(w=>`<option value="${w.id}">${esc(w.name)} (${esc(provName(w))})</option>`).join("")}</select></div>
+    <div class="note">Wonders are created inside a province's editor. Marking one here flags it as a holy site of ${esc(name)}.</div>`;
+  $("#relSymPick").addEventListener("change",e=>{meta.symbol=e.target.value;markDirty();renderReligionEditor();renderMap();renderWonderPanel();});
+  { const rr=$("#relRescan"); if(rr)rr.onclick=async()=>{ await loadExtraImages(); renderReligionEditor(); flash(RELIGION_IMAGES.length+" image(s) in static/img/religions/."); }; }
+  $("#relDesc").addEventListener("input",e=>{meta.description=e.target.value;markDirty();});
+  ins.querySelectorAll(".hwRemove").forEach(b=>b.onclick=()=>{ const w=(world.wonders||[]).find(x=>x.id===b.dataset.wid); if(w){beginEdit();w.holySite=false;w.religion="";markDirty();renderReligionEditor();renderMap();} });
+  $("#relAddHoly").addEventListener("change",e=>{ const w=(world.wonders||[]).find(x=>x.id===e.target.value); if(w){beginEdit();w.holySite=true;w.religion=name;markDirty();renderReligionEditor();renderMap();} });
+}
+function renderReligionView(){
+  const ins=$("#inspector"); const name=state.selReligion;
+  if(!name){ins.innerHTML='<div class="empty">No religion selected.</div>';return;}
+  const meta=religionMeta(name), col=catColor("religions",name);
+  const holyW=holyWondersOf(name), holyP=holySiteProvincesOf(name);
+  ins.innerHTML=`
+    <div class="realmCard" style="--rc:${col}">
+      <div class="relHead"><span class="rvDot" style="background:${col};width:16px;height:16px"></span><span class="realmName">${esc(name)}</span></div>
+      ${meta.symbol?`<div class="relSymbol"><img src="${esc(meta.symbol)}" alt=""/></div>`:""}
+      ${meta.description?`<div class="rvBlock rvDesc">${esc(meta.description).replace(/\n/g,"<br>")}</div>`:""}
+      <div class="sectionH">Holy sites (${holyP.length})</div>
+      <div class="list">${holyP.length?holyP.map(p=>`<div class="li pvp" data-pid="${p.id}" style="cursor:pointer">⛪ ${esc(p.name)}</div>`).join(""):'<div class="note">None</div>'}</div>
+      <div class="sectionH">Holy wonders (${holyW.length})</div>
+      <div class="list">${holyW.length?holyW.map(w=>`<div class="li hwlink" data-wid="${w.id}" style="cursor:pointer">🏛️ ${esc(w.name)}</div>`).join(""):'<div class="note">None</div>'}</div>
+    </div>`;
+  ins.querySelectorAll(".pvp").forEach(el=>el.onclick=()=>{ const p=world.provinces.find(x=>x.id===el.dataset.pid); if(p){zoomToProvince(p);selectProvince(p.id);} });
+  ins.querySelectorAll(".hwlink").forEach(el=>el.onclick=()=>{ const w=(world.wonders||[]).find(x=>x.id===el.dataset.wid); if(w&&w.provinceId){ const p=world.provinces.find(x=>x.id===w.provinceId); if(p){zoomToProvince(p);selectProvince(p.id);} } });
 }
 
 /* ============================================================
@@ -2081,6 +2310,7 @@ function renderForceView(){
         ${row("Total TS", forceTS(f))}
         ${forcePTS(f)>0?row("Total (TS)", forcePTS(f)):""}
       </div>
+      ${f.description?`<div class="rvBlock rvDesc">${esc(f.description).replace(/\n/g,"<br>")}</div>`:""}
       <div class="sectionH">Elements (${(f.elements||[]).length})</div>
       ${els||'<div class="note">None</div>'}
       <div class="sectionH">Command</div>
@@ -2110,6 +2340,7 @@ function renderForceEditor(){
       <div class="field"><label>Allegiance</label><select id="frealm" ${ro?"disabled":""}>${realmOpts}</select></div>
     </div>
     <div class="note">Total Troop Strength (TS): <b id="fts">${forceTS(f)}</b>${forcePTS(f)>0?` · parenthetical (TS): <b>${forcePTS(f)}</b>`:""}</div>
+    <div class="field"><label>Description <span class="note">(shown in the viewer below Total TS)</span></label><textarea id="fdesc" rows="3" placeholder="Notes about this force…">${esc(f.description||"")}</textarea></div>
     ${ro?"":`<div class="btnrow"><button class="btn${state.moveMode==="force"&&state.selForce===f.id?" primary":""}" id="fmove">✥ ${state.moveMode==="force"&&state.selForce===f.id?"Moving… (click to stop)":"Move"}</button><button class="btn danger" id="fdel">Delete</button></div>
     <div class="field"><label>Token size — <b id="fscv">${(f.scale||1).toFixed(1)}×</b></label><input id="fscale" type="range" min="0.6" max="3" step="0.1" value="${f.scale||1}"/></div>`}
 
@@ -2150,6 +2381,7 @@ function renderForceEditor(){
   $("#fname").addEventListener("input",e=>{f.name=e.target.value;renderMap();markDirty();});
   $("#fdom").addEventListener("change",e=>{f.domain=e.target.value;renderMap();markDirty();});
   $("#frealm").addEventListener("change",e=>{f.realmId=e.target.value||null;renderMap();markDirty();});
+  { const fd=$("#fdesc"); if(fd)fd.addEventListener("input",e=>{f.description=e.target.value;markDirty();}); }
   $("#fmove").addEventListener("click",()=>{ if(state.moveMode==="force"){ state.moveMode=null; } else { state.moveMode="force"; flash("Move mode on — click the map to relocate “"+f.name+"”. Click Move again (or Esc) to stop."); } renderMap(); renderForceEditor(); });
   { const sc=$("#fscale"); if(sc)sc.addEventListener("input",e=>{ f.scale=+e.target.value; $("#fscv").textContent=(+e.target.value).toFixed(1)+"×"; renderMap(); markDirty(); }); }
   $("#fdel").addEventListener("click",()=>{ if(!confirm("Delete this force?"))return; beginEdit(); world.forces=world.forces.filter(x=>x.id!==f.id); state.selForce=null; state.moveMode=null; clearSelection(); ins.innerHTML='<div class="empty">Force deleted.</div>'; markDirty(); });
@@ -2365,12 +2597,14 @@ const PAINTABLE_MODES=["political","terrain","settlement","religion","culture","
 function buildMapLegend(){
   const box=$("#mapLegend"); if(!box)return;
   if(typeof world==="undefined" || !world || state.mapmode==="imported"){ box.classList.add("hidden"); return; }
-  if(state.mapmode==="monster" || state.mapmode==="military"){   // custom legends rendered right on the map
+  if(state.mapmode==="monster" || state.mapmode==="military" || state.mapmode==="resource"){   // custom legends rendered right on the map
     box.classList.remove("hidden");
     box.innerHTML=`<button class="mlHead">${esc(MODE_TITLES[state.mapmode]||"Legend")}</button><div class="mlList" id="mlCustomBody"></div>`;
     box.querySelector(".mlHead").onclick=()=>box.classList.toggle("open");
     const body=box.querySelector("#mlCustomBody");
-    if(state.mapmode==="monster") renderMonsterLegend(body); else renderForceLegend(body);
+    if(state.mapmode==="monster") renderMonsterLegend(body);
+    else if(state.mapmode==="military") renderForceLegend(body);
+    else renderResourceLegend(body);
     return;
   }
   const entries=legendEntries(state.mapmode);
@@ -2389,9 +2623,40 @@ function buildMapLegend(){
     if(v===undefined)return;
     row.onclick=(ev)=>{ ev.stopPropagation();
       if(state.mapmode==="political" && v!=="__none__"){ selectRealm(v); }
+      else if(state.mapmode==="religion"){ state.legendFilter={mode:"religion",value:v}; renderLegend(); selectReligion(v); }   // spotlight + open faith panel
       else { legendClickValue(v); }
     };
   });
+}
+// Resource legend: each regular resource on a row with its prestige goods to the right,
+// then a section listing the strategic (hidden) resources.
+function renderResourceLegend(box){
+  const list=world.lists.resources||[];
+  const act=res=>state.selResource===res;
+  const item=(res,cls,star)=>`<span class="resLegItem${cls?" "+cls:""}${act(res)?" active":""}" data-res="${esc(res)}" title="${esc(res)}"><span class="sw" style="background:${catColor("resources",res)}"></span>${star?"★ ":""}${esc(resLabel(res))}</span>`;
+  const shown=new Set();
+  REGULAR_RESOURCES.forEach(base=>{
+    if(!list.includes(base))return;
+    shown.add(base);
+    const pres=prestigeOf(base).filter(p=>list.includes(p)); pres.forEach(p=>shown.add(p));
+    const row=div("resLegRow");
+    // base in column 1, first prestige in column 2, second prestige in column 3 (grid keeps them aligned)
+    row.innerHTML=item(base,"resLegBase",false)+pres.map(p=>item(p,"resLegPresCell",true)).join("");
+    box.appendChild(row);
+  });
+  // any custom / orphaned resources not covered above
+  list.filter(x=>!shown.has(x)).forEach(x=>{ const row=div("resLegRow"); row.innerHTML=item(x,"resLegBase",isPrestige(x)); box.appendChild(row); });
+  // strategic (hidden) resources — reference section
+  const hid=world.lists.hiddenResources||[];
+  if(hid.length){
+    const h=div("resLegSection"); h.textContent="Strategic (hidden) resources"; box.appendChild(h);
+    const wrap=div("resLegHidden");
+    hid.forEach(x=>{ const c=div("resLegItem"+(act(x)?" active":"")); c.dataset.res=x; c.title=x;
+      c.innerHTML=`<span class="sw" style="background:${catColor("resources",x)}"></span>${HIDDEN_RES_GLYPH[x]||"⛏"} ${esc(resLabel(x))}`; wrap.appendChild(c); });
+    box.appendChild(wrap);
+  }
+  // click a regular/prestige/hidden resource to spotlight it on the map
+  box.querySelectorAll("[data-res]").forEach(el=>{ el.onclick=ev=>{ ev.stopPropagation(); legendClickValue(el.dataset.res); buildMapLegend(); }; });
 }
 function renderForceLegend(box){
   if(!VIEWER){ const b=document.createElement("button"); b.className="btn tiny primary"; b.style.marginBottom="6px"; b.textContent="＋ Add force";
@@ -2528,6 +2793,12 @@ function pctBars(arr,listKey){
   return `<div style="display:flex;height:11px;border-radius:4px;overflow:hidden;margin:3px 0 5px">${seg}</div>${rows}`;
 }
 function slugify(s){ return (s||"").toLowerCase().replace(/[^a-z0-9]+/g,"_").replace(/^_+|_+$/g,""); }
+// Province-view banner image: per-province override → GM default for the terrain → slug fallback.
+function provTerrainImageURL(p){
+  if(p.terrainImage) return p.terrainImage;
+  const d=(world.terrainImages&&world.terrainImages[p.terrain]); if(d) return d;
+  return "img/terrain/"+slugify(p.terrain||"")+".png";
+}
 // small inline SVG pie for a population-breakdown axis
 function pieSVG(arr,listKey,size){
   size=size||70; const r=size/2;
@@ -2561,16 +2832,16 @@ function renderProvinceView(){
   const terr=p.terrain||"", terrCol=catColor("terrains",terr);
   const row=(l,v)=>`<div class="pvRow"><span class="pvLbl">${l}</span><span class="pvVal">${(v===0||v)?v:"—"}</span></div>`;
   const feats=(p.features&&p.features.length)
-    ? p.features.map(f=>{const cat=featureCat(f),c=FEATURE_CAT_COLORS[cat];return `<span class="pvFeat" title="${FEATURE_CAT_LABEL[cat]}"><span class="sw" style="background:${c}"></span>${esc(f)}</span>`;}).join("")
+    ? p.features.map(f=>{const cat=featureCat(f),c=FEATURE_CAT_COLORS[cat];return `<span class="pvFeat" data-f="${esc(f)}" title="Click for details" style="cursor:pointer"><span class="sw" style="background:${c}"></span>${esc(f)}</span>`;}).join("")
     : '<span class="pvVal">None</span>';
-  const featKey=FEATURE_CAT_ORDER.map(cat=>`<span class="pvKey"><span class="sw" style="background:${FEATURE_CAT_COLORS[cat]}"></span>${FEATURE_CAT_LABEL[cat]}</span>`).join("");
+  const featKey=FEATURE_CAT_VISIBLE.map(cat=>`<span class="pvKey"><span class="sw" style="background:${FEATURE_CAT_COLORS[cat]}"></span>${FEATURE_CAT_LABEL[cat]}</span>`).join("");
   const hist=(p.history&&p.history.length)?p.history.map(h=>{const era=world.eras.find(e=>e.id===h.eraId);
     return `<div class="h"><div class="meta">${era?esc(era.name):""}${h.auto?" · auto":""}</div><div style="font-weight:600">${esc(h.title)}</div>${h.text?`<div class="note">${esc(h.text)}</div>`:""}</div>`;}).join(""):'<div class="note">No recorded history.</div>';
   ins.innerHTML=`
     <div class="provCard" style="--rc:${rc};--tc:${terrCol}">
       <div class="provName">${esc(p.name)}</div>
       <div class="provSettName">${esc(p.settlementName||p.name)}</div>
-      <div class="provBanner" style="background-image:url('img/terrain/${slugify(terr)}.png')"><span>${esc(terr||"Unknown terrain")}</span></div>
+      <div class="provBanner" style="background-image:url('${esc(provTerrainImageURL(p))}')"><span>${esc(terr||"Unknown terrain")}</span></div>
 
       <div class="pvBlock pvTerr">
         ${row("Terrain", terr?`<span class="pvDot" style="background:${terrCol}"></span>${esc(terr)}`:"—")}
@@ -2582,17 +2853,17 @@ function renderProvinceView(){
         ${row("Continent", cont?esc(cont.name):"—")}
       </div>
 
+      <div class="pvBlock pvFeatBlock">
+        <div class="pvBlockH">Features</div>
+        <div class="pvFeats">${feats}</div>
+        <div class="pvKeyRow">${featKey}</div>
+      </div>
+
       <div class="pvBlock pvEcon">
         ${row("Population", (p.population||0).toLocaleString())}
         ${row("Mode of Production", esc(economyOf(p)))}
         ${row("Resource", (isPrestige(p.resource)?"★ ":"")+esc(p.resource||"—")+(isPrestige(p.resource)?" (prestige)":""))}
         ${row("Hidden resource", p.hidden?((HIDDEN_RES_GLYPH[p.hidden]||"⛏")+" "+esc(p.hidden)):"—")}
-      </div>
-
-      <div class="pvBlock pvFeatBlock">
-        <div class="pvBlockH">Notable features</div>
-        <div class="pvFeats">${feats}</div>
-        <div class="pvKeyRow">${featKey}</div>
       </div>
 
       <div class="pvBlock pvPopBlock">
@@ -2609,6 +2880,27 @@ function renderProvinceView(){
     </div>
   `;
   const rl=$("#pvRealm"); if(rl&&realm)rl.onclick=e=>{e.preventDefault();selectRealm(realm.id);};
+  ins.querySelectorAll(".pvFeat[data-f]").forEach(el=>el.onclick=()=>showFeatureBubble(el.dataset.f, el, false));
+}
+// A small blurb bubble for a feature (read-only in the viewer, editable in the editor).
+let _featBubbleEl=null;
+function closeFeatureBubble(){ if(_featBubbleEl){ _featBubbleEl.remove(); _featBubbleEl=null; document.removeEventListener("mousedown",_featBubbleOutside,true); } }
+function _featBubbleOutside(e){ if(_featBubbleEl && !_featBubbleEl.contains(e.target)) closeFeatureBubble(); }
+function showFeatureBubble(name, anchor, editable){
+  closeFeatureBubble();
+  const meta=featureMeta(name), cat=featureCat(name), col=FEATURE_CAT_COLORS[cat];
+  const b=document.createElement("div"); b.className="featBubble"; _featBubbleEl=b;
+  b.innerHTML=`<div class="fbHead"><span class="sw" style="background:${col}"></span><b>${esc(name)}</b><button class="fbX" title="Close">✕</button></div>`
+    +(editable
+       ? `<textarea class="fbDesc" rows="4" placeholder="Describe this feature… (shown to players)">${esc(meta.description||"")}</textarea>`
+       : `<div class="fbBody">${meta.description?esc(meta.description).replace(/\n/g,"<br>"):'<span class="note">No description yet.</span>'}</div>`);
+  document.body.appendChild(b);
+  const r=anchor.getBoundingClientRect();
+  b.style.left=Math.max(8, Math.min(window.innerWidth-b.offsetWidth-8, r.left))+"px";
+  b.style.top=Math.min(window.innerHeight-b.offsetHeight-8, r.bottom+6)+"px";
+  b.querySelector(".fbX").onclick=closeFeatureBubble;
+  if(editable){ const ta=b.querySelector(".fbDesc"); ta.addEventListener("input",e=>{meta.description=e.target.value;markDirty();}); ta.focus(); }
+  setTimeout(()=>document.addEventListener("mousedown",_featBubbleOutside,true),0);
 }
 function renderRealmView(){
   const r=world.realms.find(x=>x.id===state.selRealm); const ins=$("#inspector");
@@ -2650,6 +2942,8 @@ function renderRealmView(){
         <div class="rvRow"><span class="rvLbl">Admin centres</span><span class="rvVal">${admins.length?admins.map(p=>`<span class="rvChip">◆ ${esc(p.name)}</span>`).join(""):"—"}</span></div>
       </div>
 
+      ${r.description?`<div class="rvBlock rvDesc">${esc(r.description).replace(/\n/g,"<br>")}</div>`:""}
+
       <details class="rvProvinces">
         <summary>Provinces (${provs.length})</summary>
         <input id="rvProvSearch" class="rvSearch" type="text" placeholder="🔍 Search provinces…" autocomplete="off"/>
@@ -2689,6 +2983,9 @@ function renderProvinceEditor(){
       <div class="field"><label>Terrain</label><select id="pterr">${opt(world.lists.terrains,p.terrain)}</select></div>
       <div class="field"><label>Settlement</label><select id="psett">${opt(world.lists.settlements,p.settlement)}</select></div>
     </div>
+    <div class="field"><label>Terrain image override <span class="note">(blank = terrain default; doesn't change terrain)</span></label>
+      <select id="ptimg"><option value="">— use ${esc(p.terrain||"terrain")} default —</option>${TERRAIN_IMAGES.map(mi=>`<option value="${esc(mi.src)}" ${p.terrainImage===mi.src?"selected":""}>${esc(mi.name)}</option>`).join("")}${(p.terrainImage&&!TERRAIN_IMAGES.some(mi=>mi.src===p.terrainImage))?`<option value="${esc(p.terrainImage)}" selected>(current) ${esc(p.terrainImage)}</option>`:""}</select></div>
+    <div id="ptimgPrev" style="margin:2px 0 6px">${provTerrainImageURL(p)?`<img src="${esc(provTerrainImageURL(p))}" style="width:100%;height:64px;object-fit:cover;border-radius:8px;border:1px solid var(--line)"/>`:""}</div>
     <div class="field2">
       <div class="field"><label>Top resource</label><select id="pres">${opt(world.lists.resources,p.resource)}</select></div>
       <div class="field"><label>Strategic resource (hidden)</label><select id="phidden"><option value="" ${!p.hidden?"selected":""}>— none —</option>${(world.lists.hiddenResources||[]).map(o=>`<option ${o===p.hidden?"selected":""}>${esc(o)}</option>`).join("")}</select></div>
@@ -2696,6 +2993,11 @@ function renderProvinceEditor(){
 
     <div class="sectionH">Notable features</div>
     <div id="pfeat"></div>
+
+    <div class="sectionH">Wonders (great projects)</div>
+    <div class="note">Placed in this province. Each has an image, name and description, and can be flagged as a holy site of a religion. In the viewer they appear as a box attached to this province's panel.</div>
+    <div id="pwonders"></div>
+    <button class="btn tiny" id="pwonderAdd" style="margin-top:6px">＋ Add wonder</button>
 
     <div class="sectionH">Population — <span id="ppopTot">${(p.population||0).toLocaleString()}</span> · <span id="ppopN">${p.pops.length}</span> group(s)</div>
     <div class="note">Each group is a chunk of people sharing one religion, culture, race and language. Add groups for minorities — the map-mode percentages update automatically from the groups.</div>
@@ -2732,6 +3034,7 @@ function renderProvinceEditor(){
   $("#pname").addEventListener("input",e=>{p.name=e.target.value;const sn=$("#psettname");if(sn)sn.placeholder=e.target.value;renderMapLabelsSoon();renderLeft();markDirty();});
   { const sn=$("#psettname"); if(sn)sn.addEventListener("input",e=>{p.settlementName=e.target.value;markDirty();}); }
   bindTracked("pterr","terrain",v=>p.terrain=v);
+  { const ti=$("#ptimg"); if(ti)ti.addEventListener("change",e=>{ p.terrainImage=e.target.value; markDirty(); const pv=$("#ptimgPrev"); const u=provTerrainImageURL(p); if(pv)pv.innerHTML=u?`<img src="${esc(u)}" style="width:100%;height:64px;object-fit:cover;border-radius:8px;border:1px solid var(--line)"/>`:""; }); }
   bindTracked("psett","settlement",v=>p.settlement=v);
   bindTracked("pres","resource",v=>p.resource=v);
   { const ph=$("#phidden"); if(ph)ph.addEventListener("change",e=>{p.hidden=e.target.value;renderMap();markDirty();}); }
@@ -2766,6 +3069,8 @@ function renderProvinceEditor(){
   });
   // features
   renderFeatures(p);
+  renderProvinceWonders(p);
+  { const wa=$("#pwonderAdd"); if(wa)wa.addEventListener("click",()=>{ beginEdit(); world.wonders.push(newWonder(p.id)); renderProvinceWonders(p); markDirty(); }); }
   // population pop-groups
   renderPops(p);
   $("#ppopAdd").addEventListener("click",()=>{
@@ -2842,7 +3147,8 @@ function renderFeatures(p){
     const cat=featureCat(f), col=FEATURE_CAT_COLORS[cat];
     const t=document.createElement("span");t.className="tag";t.style.borderColor=col;
     t.innerHTML=`<span class="fcat" title="${FEATURE_CAT_LABEL[cat]} — click to change type" style="width:11px;height:11px;border-radius:3px;background:${col};display:inline-block;cursor:pointer"></span> <b>${esc(f)}</b> <span class="x">✕</span>`;
-    t.querySelector(".fcat").onclick=()=>{const cur=featureCat(f);setFeatureCat(f,FEATURE_CAT_ORDER[(FEATURE_CAT_ORDER.indexOf(cur)+1)%FEATURE_CAT_ORDER.length]);renderFeatures(p);renderMap();markDirty();};
+    t.querySelector(".fcat").onclick=()=>{const cur=featureCat(f);const vi=FEATURE_CAT_VISIBLE.indexOf(cur);setFeatureCat(f,FEATURE_CAT_VISIBLE[(vi+1)%FEATURE_CAT_VISIBLE.length]);renderFeatures(p);renderMap();markDirty();};
+    { const nb=t.querySelector("b"); if(nb){ nb.style.cursor="pointer"; nb.title="Click to edit this feature's description"; nb.onclick=()=>showFeatureBubble(f,t,true); } }
     t.querySelector(".x").onclick=()=>{p.features.splice(i,1);renderFeatures(p);renderMap();markDirty();};
     wrap.appendChild(t);
   });
@@ -2850,8 +3156,42 @@ function renderFeatures(p){
   sel.innerHTML=`<option value="">＋ add feature…</option>`+world.lists.features.map(f=>`<option>${esc(f)}</option>`).join("")+`<option value="__custom">Custom…</option>`;
   sel.onchange=()=>{let v=sel.value;if(v==="__custom"){v=(prompt("Feature name:")||"").trim();}if(v){p.features.push(v);if(!world.lists.features.includes(v))world.lists.features.push(v);if(!world.featureCats[v])world.featureCats[v]="misc";renderFeatures(p);renderMap();markDirty();}sel.value="";};
   wrap.appendChild(sel);
-  const note=div("note");note.style.marginTop="4px";note.innerHTML=`Types: <span style="color:${FEATURE_CAT_COLORS.wonder}">■ Wonder</span> (🏛️ on Settlements map) · <span style="color:${FEATURE_CAT_COLORS.resource}">■ Resource feature</span> (💎 on Resource map) · <span style="color:${FEATURE_CAT_COLORS.misc}">■ Misc</span>. Click a feature's colour to change its type.`;
+  const note=div("note");note.style.marginTop="4px";note.innerHTML=`Types: <span style="color:${FEATURE_CAT_COLORS.resource}">■ Resource feature</span> (💎 on Resource map) · <span style="color:${FEATURE_CAT_COLORS.misc}">■ Misc</span>. Click a feature's colour to change its type. <span class="note">(Wonders are now their own section above.)</span>`;
   wrap.appendChild(note);
+}
+function moveWonder(p,w,dir){
+  const list=wondersOf(p.id), i=list.indexOf(w), j=i+dir; if(j<0||j>=list.length)return;
+  [list[i],list[j]]=[list[j],list[i]]; list.forEach((x,k)=>x.order=k); markDirty();
+}
+function renderProvinceWonders(p){
+  const box=$("#pwonders"); if(!box)return; box.innerHTML="";
+  { const rb=document.createElement("button"); rb.className="btn tiny"; rb.style.marginBottom="6px"; rb.textContent="🔄 Rescan image folder";
+    rb.onclick=async()=>{ await loadExtraImages(); renderProvinceWonders(p); flash(WONDER_IMAGES.length+" image(s) in static/img/wonders/."); };
+    box.appendChild(rb); }
+  const list=wondersOf(p.id);
+  const relOpts=v=>`<option value="">— pick a religion —</option>`+(world.lists.religions||[]).map(rn=>`<option value="${esc(rn)}" ${v===rn?"selected":""}>${esc(rn)}</option>`).join("");
+  list.forEach((w,i)=>{
+    const row=div("elRow");
+    row.innerHTML=`
+      <div class="elRowHead"><span style="flex:1;font-weight:600">🏛️ Wonder</span><span class="monReorder"><button class="btn tiny woUp">↑</button><button class="btn tiny woDn">↓</button><button class="btn tiny woDel" style="color:var(--bad)">✕</button></span></div>
+      <div class="field"><label>Name</label><input class="woName" value="${esc(w.name||"")}"/></div>
+      <div class="field"><label>Image ${WONDER_IMAGES.length?"":'<span class="note">(drop files into static/img/wonders/)</span>'}</label>
+        <select class="woImgPick">${imagePickerOptions(WONDER_IMAGES, w.image)}</select></div>
+      ${w.image?`<div class="wpBanner" style="margin:2px 0 6px"><img src="${esc(w.image)}" alt=""/></div>`:""}
+      <div class="field"><label>Description</label><textarea class="woDesc" rows="3">${esc(w.description||"")}</textarea></div>
+      <label style="font-size:13px;display:flex;align-items:center;gap:6px;margin:2px 0"><input type="checkbox" class="woHoly" ${w.holySite?"checked":""}/> Holy site</label>
+      <div class="field woRelWrap" style="${w.holySite?"":"display:none"}"><label>Holy site of</label><select class="woRel">${relOpts(w.religion)}</select></div>`;
+    row.querySelector(".woName").addEventListener("input",e=>{w.name=e.target.value;markDirty();renderWonderPanel();});
+    row.querySelector(".woImgPick").addEventListener("change",e=>{w.image=e.target.value;markDirty();renderProvinceWonders(p);renderWonderPanel();});
+    row.querySelector(".woDesc").addEventListener("input",e=>{w.description=e.target.value;markDirty();renderWonderPanel();});
+    row.querySelector(".woHoly").addEventListener("change",e=>{ w.holySite=e.target.checked; if(!w.holySite)w.religion=""; markDirty(); renderProvinceWonders(p); renderWonderPanel(); });
+    { const rs=row.querySelector(".woRel"); if(rs)rs.addEventListener("change",e=>{w.religion=e.target.value;markDirty();renderWonderPanel();}); }
+    row.querySelector(".woUp").addEventListener("click",()=>{ moveWonder(p,w,-1); renderProvinceWonders(p); renderWonderPanel(); });
+    row.querySelector(".woDn").addEventListener("click",()=>{ moveWonder(p,w,1); renderProvinceWonders(p); renderWonderPanel(); });
+    row.querySelector(".woDel").addEventListener("click",()=>{ if(!confirm(`Delete wonder "${w.name}"?`))return; beginEdit(); world.wonders=world.wonders.filter(x=>x.id!==w.id); renderProvinceWonders(p); markDirty(); renderWonderPanel(); });
+    box.appendChild(row);
+  });
+  if(!list.length){ const n=div("note"); n.textContent="No wonders here yet."; box.appendChild(n); }
 }
 function renderHistory(p){
   const wrap=$("#phist");wrap.innerHTML="";
@@ -2924,7 +3264,8 @@ function renderRealmEditor(){
       <div class="field"><label>Leader title</label><input id="rltitle" value="${esc(r.leaderTitle||"")}"/></div>
       <div class="field"><label>Leader name</label><input id="rlname" value="${esc(r.leaderName||"")}"/></div>
     </div>
-    <div class="field"><label>Notes</label><textarea id="rnote">${esc(r.note||"")}</textarea></div>
+    <div class="field"><label>Description <span class="note">(shown in the viewer, below Capital/Admin)</span></label><textarea id="rdesc" rows="3">${esc(r.description||"")}</textarea></div>
+    <div class="field"><label>Notes <span class="note">(private — not shown in the viewer)</span></label><textarea id="rnote">${esc(r.note||"")}</textarea></div>
 
     <div class="sectionH">Population</div>
     <div class="field2">
@@ -3005,6 +3346,7 @@ function renderRealmEditor(){
   { const s=$("#rmilSelRace"); if(s)s.addEventListener("change",e=>{ const v=e.target.value; e.target.value=""; if(!v)return; r.militaryRaces=r.militaryRaces||[]; if(!r.militaryRaces.includes(v))r.militaryRaces.push(v); renderRaceMulti("militaryRaces","rmilRaces"); markDirty(); }); }
   $("#rcap").addEventListener("change",e=>{r.capitalId=e.target.value||null;renderMap();markDirty();});
   $("#rnote").addEventListener("input",e=>{r.note=e.target.value;markDirty();});
+  { const rd=$("#rdesc"); if(rd)rd.addEventListener("input",e=>{r.description=e.target.value;markDirty();}); }
   // administrative centres list
   const renderAdminList=()=>{
     const wrap=$("#radminList"); if(!wrap)return; wrap.innerHTML="";
@@ -3429,6 +3771,7 @@ function setupMapInteraction(){
     if(ev.key==="e")setTool("nodes");
   });
   window.addEventListener("resize",requestRender);
+  window.addEventListener("resize",positionWonderPanel);
   setupTouch(cv);
 }
 // ---- touch controls (mobile): one-finger pan, pinch zoom, tap to select ----
@@ -3620,6 +3963,7 @@ function exportRender(rect,outW,mode,legend,legendPos,provNames=true){
       ctx.drawImage(lc.canvas,lc.x,lc.y,lc.w,lc.h);}});
   if(s>0.12){ctx.lineWidth=1/s;ctx.strokeStyle="rgba(90,98,112,.45)";}
   for(const gp of _provGeo){const pts=gp.pts;if(!pts.length)continue;ctx.beginPath();ctx.moveTo(pts[0][0],pts[0][1]);for(let i=1;i<pts.length;i++)ctx.lineTo(pts[i][0],pts[i][1]);ctx.closePath();ctx.fillStyle=provinceFill(gp.p);ctx.fill();if(s>0.12)ctx.stroke();}
+  drawAxisStripes(ctx, renderMode, s);   // identity maps: melting-pot hatching
   // resource map: gold outline on prestige-good provinces (no icons — outline only, to distinguish them)
   if(mode==="resource"){
     ctx.lineWidth=2.5/s; ctx.strokeStyle="#e8b21f"; ctx.lineJoin="round";
@@ -3816,7 +4160,7 @@ function applyListRename(k,ov,nv){
   else if(k==="settlements"){P.forEach(p=>{if(p.settlement===ov)p.settlement=nv;});}
   else if(k==="resources"){P.forEach(p=>{if(p.resource===ov)p.resource=nv;});}
   else if(k==="hiddenResources"){P.forEach(p=>{if(p.hidden===ov)p.hidden=nv;});}
-  else if(k==="features"){P.forEach(p=>p.features=p.features.map(f=>f===ov?nv:f));if(world.featureCats&&world.featureCats[ov]!==undefined){world.featureCats[nv]=world.featureCats[ov];delete world.featureCats[ov];}}
+  else if(k==="features"){P.forEach(p=>p.features=p.features.map(f=>f===ov?nv:f));if(world.featureCats&&world.featureCats[ov]!==undefined){world.featureCats[nv]=world.featureCats[ov];delete world.featureCats[ov];}if(world.featureInfo&&world.featureInfo[ov]!==undefined){world.featureInfo[nv]=world.featureInfo[ov];delete world.featureInfo[ov];}}
   else if(k==="governments"){R.forEach(r=>{if(r.government===ov)r.government=nv;});}
   else if(k==="economies"){ax("economy");R.forEach(r=>{if(r.economy===ov)r.economy=nv;});}
   // carry the GM-screen modifier over to the new name
@@ -3828,6 +4172,7 @@ function applyListRename(k,ov,nv){
       if(k==="terrains"){ carry(world.tune.pop.terrainGrow); carry(world.tune.pop.terrainCeil); }
       if(k==="settlements"){ carry(world.tune.pop.settleGrow); carry(world.tune.pop.settleCeil); }
     }
+    if(k==="terrains") carry(world.terrainImages);
   }
 }
 function listUsageCount(k,v){
@@ -3852,7 +4197,7 @@ function applyListDelete(k,v){
   else if(k==="races"){axDel("race");R.forEach(r=>{if(r.dominantRace===v)r.dominantRace="";
     ["adminRaces","militaryRaces"].forEach(kk=>{ if(Array.isArray(r[kk])) r[kk]=r[kk].filter(x=>x!==v); }); if(r.adminRaces&&r.adminRaces.length)r.dominantRace=r.adminRaces[0];});}
   else if(k==="languages"){axDel("language");R.forEach(r=>{if(r.dominantLanguage===v)r.dominantLanguage="";});}
-  else if(k==="features"){P.forEach(p=>p.features=p.features.filter(f=>f!==v));if(world.featureCats)delete world.featureCats[v];}
+  else if(k==="features"){P.forEach(p=>p.features=p.features.filter(f=>f!==v));if(world.featureCats)delete world.featureCats[v];if(world.featureInfo)delete world.featureInfo[v];}
   else if(k==="terrains"){const fb=(world.lists.terrains.find(x=>x!==v))||"Plains";P.forEach(p=>{if(p.terrain===v)p.terrain=fb;});}
   else if(k==="settlements"){const fb=(world.lists.settlements.find(x=>x!==v))||"Uninhabited";P.forEach(p=>{if(p.settlement===v)p.settlement=fb;});}
   else if(k==="resources"){const fb=(world.lists.resources.find(x=>x!==v))||"Grains";P.forEach(p=>{if(p.resource===v)p.resource=fb;});}
@@ -3865,6 +4210,7 @@ function applyListDelete(k,v){
     if(k==="races"&&world.tune.raceGrowth)delete world.tune.raceGrowth[v];
     if(world.tune.pop){
       if(k==="terrains"){ delete world.tune.pop.terrainGrow[v]; delete world.tune.pop.terrainCeil[v]; }
+      if(k==="terrains"&&world.terrainImages)delete world.terrainImages[v];
       if(k==="settlements"){ delete world.tune.pop.settleGrow[v]; delete world.tune.pop.settleCeil[v]; }
     }
   }
@@ -3896,9 +4242,11 @@ function renderListCard(k){
     const row=div("li");
     const custom=colorable&&world.colors[k]&&world.colors[k][v]!==undefined;
     const colInput=colorable?`<input class="lcol" type="color" value="${toHex(catColor(k,v))}" title="Map colour" style="width:30px;height:26px;padding:1px;flex:0 0 auto"/><span class="rst" title="Reset to default colour" style="cursor:pointer;font-size:15px;flex:0 0 auto;color:${custom?'var(--accent)':'var(--muted)'}">↺</span>`:"";
-    row.innerHTML=`<input class="lname" value="${esc(v)}"/>${colInput}<span class="x" title="Delete">✕</span>`;
+    const descBtn = k==="features" ? `<button class="btn tiny lfdesc" title="Edit this feature's blurb" style="flex:0 0 auto">✎</button>` : "";
+    row.innerHTML=`<input class="lname" value="${esc(v)}"/>${colInput}${descBtn}<span class="x" title="Delete">✕</span>`;
     const inp=row.querySelector(".lname");
     inp.addEventListener("change",e=>{const ov=world.lists[k][i],nv=e.target.value.trim();if(!nv){e.target.value=ov;return;}world.lists[k][i]=nv;applyListRename(k,ov,nv);renderMap();renderLeft();markDirty();});
+    { const db=row.querySelector(".lfdesc"); if(db)db.onclick=()=>showFeatureBubble(world.lists[k][i], db, true); }
     if(colorable){
       row.querySelector(".lcol").addEventListener("input",e=>{world.colors[k]=world.colors[k]||{};world.colors[k][world.lists[k][i]]=e.target.value;row.querySelector(".rst").style.color="var(--accent)";renderMap();renderLeft();markDirty();});
       row.querySelector(".rst").onclick=()=>{if(world.colors[k])delete world.colors[k][world.lists[k][i]];renderListCard(k);renderMap();renderLeft();markDirty();};
@@ -4051,13 +4399,14 @@ function renderElementTypes(){
   });
 }
 /* ===== New GM Screen (v2) — pop growth + category tuning. Blank canvas we build up. ===== */
-function openGM2(){
+async function openGM2(){
   seedPopTune(world);   // ensure an entry exists for every current terrain & settlement tier
   openModal(`<button class="btn close" onclick="closeModal()">✕ Close</button>
     <h2>🧭 GM Screen</h2>
-    <div id="gm2Body"></div>`);
+    <div id="gm2Body"><div class="note">Loading…</div></div>`);
   const m=document.querySelector("#modalHost .modal"); if(m)m.classList.add("gmWide");
-  renderGM2();
+  await loadExtraImages();   // refresh terrain/wonder/religion image lists so pickers are current
+  if($("#gm2Body")) renderGM2();
 }
 function renderGM2(){
   const host=$("#gm2Body"); if(!host)return;
@@ -4075,6 +4424,14 @@ function renderGM2(){
       <td><input class="gmTCeil" data-t="${esc(tr)}" type="number" step="0.05" min="0" value="${terrainCeilMod(tr)}"/></td>
       <td><button class="btn tiny gmTDel" data-t="${esc(tr)}" style="color:var(--bad)">✕</button></td>
     </tr>`).join("");
+  const terrImgRows=(world.lists.terrains||[]).map(tr=>{
+    const cur=(world.terrainImages&&world.terrainImages[tr])||"";
+    return `<tr>
+      <td>${esc(tr)}</td>
+      <td><select class="gmTImg" data-t="${esc(tr)}">${imagePickerOptions(TERRAIN_IMAGES, cur)}</select></td>
+      <td>${cur?`<img class="gmTImgPrev" src="${esc(cur)}" alt=""/>`:'<span class="note">—</span>'}</td>
+    </tr>`;
+  }).join("");
   host.innerHTML=`
     <p class="note" style="margin-top:0">🌱 Grow adds a baseline number of people to each province, then bends it by terrain, settlement tier, capital/admin status, and how close the province sits to its <b>growth ceiling</b> — a soft cap that gently levels off (growth halves at the ceiling and tapers beyond it; it's never a hard wall). 📉 Reduce removes a percentage. Every action is a single undo.</p>
     <div class="gmGrid">
@@ -4109,6 +4466,12 @@ function renderGM2(){
           <button class="btn tiny" id="gmAddTerr">＋ Add terrain</button>
           <button class="btn tiny" id="gmEditLists">✎ Edit other categories…</button>
         </div>
+      </section>
+      <section class="gmBlock gmSpanAll">
+        <div class="gmBlockH">🖼 Terrain images (province-view banners)</div>
+        <p class="note">The default banner image shown for each terrain type in the province view. Individual provinces can override their own image in the province editor without changing terrain. Drop new files into <b>static/img/terrain/</b> and press Rescan. ${TERRAIN_IMAGES.length?`<b>${TERRAIN_IMAGES.length}</b> images available.`:'<b style="color:var(--bad)">No images loaded — restart the Python server, then reopen this screen.</b>'}</p>
+        <table class="gm2tbl"><thead><tr><th>Terrain</th><th>Default image</th><th>Preview</th></tr></thead><tbody>${terrImgRows}</tbody></table>
+        <div class="btnrow" style="margin-top:8px"><button class="btn tiny" id="gmTImgRescan">🔄 Rescan image folder</button></div>
       </section>
     </div>
     <div class="btnrow" style="margin-top:12px"><button class="btn" id="gmResetPop">↺ Reset growth tunables</button></div>`;
@@ -4148,6 +4511,9 @@ function renderGM2(){
   }));
   { const a=$("#gmAddTerr"); if(a)a.onclick=()=>{ let base="New Terrain",name=base,k=2; while(world.lists.terrains.includes(name))name=base+" "+(k++); world.lists.terrains.push(name); seedPopTune(world); markDirty(); renderMap(); renderLegend(); renderGM2(); }; }
   { const e=$("#gmEditLists"); if(e)e.onclick=()=>openLists("terrains"); }
+  // ---- terrain default images ----
+  host.querySelectorAll(".gmTImg").forEach(el=>el.addEventListener("change",e=>{ world.terrainImages=world.terrainImages||{}; const v=e.target.value; if(v)world.terrainImages[el.dataset.t]=v; else delete world.terrainImages[el.dataset.t]; markDirty(); renderGM2(); }));
+  { const rb=$("#gmTImgRescan"); if(rb)rb.onclick=async()=>{ await loadExtraImages(); renderGM2(); flash(TERRAIN_IMAGES.length+" image(s) in static/img/terrain/."); }; }
   { const r=$("#gmResetPop"); if(r)r.onclick=()=>{ if(!confirm("Reset all population growth tunables (baseline, ceilings, terrain & settlement modifiers) to defaults?"))return; delete world.tune.pop; seedPopTune(world); markDirty(); renderGM2(); }; }
 }
 function openGMScreen(){
@@ -4644,7 +5010,9 @@ function togglePreviewViewer(){
   else if(state.selBattle) renderBattleView();
   else if(state.selProvince) renderProvinceEditor();
   else if(state.selRealm) renderRealmEditor();
+  else if(state.selReligion) renderReligionEditor();
   else { const ins=$("#inspector"); if(ins)ins.innerHTML=`<div class="empty">${VIEWER?"Welcome to the atlas. Switch map mode and click any province, realm, or creature.":"Select a province, realm, or continent to edit."}</div>`; }
+  renderWonderPanel();
   flash(VIEWER?"👁 View Mode — seeing exactly what players see. Click again to return to editing.":"Back to the editor.");
 }
 async function loadMonsterImages(){
@@ -4652,10 +5020,20 @@ async function loadMonsterImages(){
     if(j&&Array.isArray(j.images)&&j.images.length) MONSTER_IMAGES=j.images;
   }catch(e){}
 }
+let WONDER_IMAGES=[], RELIGION_IMAGES=[], TERRAIN_IMAGES=[];   // populated from static/img/{wonders,religions,terrain}
+async function loadImageList(dir){ try{ const r=await fetch("/api/imglist?dir="+dir); const j=await r.json(); return (j&&Array.isArray(j.images))?j.images:[]; }catch(e){ return []; } }
+async function loadExtraImages(){ WONDER_IMAGES=await loadImageList("wonders"); RELIGION_IMAGES=await loadImageList("religions"); TERRAIN_IMAGES=await loadImageList("terrain"); }
+// build an <option> list for an image picker, marking the current value selected
+function imagePickerOptions(imgs, cur){
+  return `<option value="">— pick an image —</option>`+
+    imgs.map(mi=>`<option value="${esc(mi.src)}" ${cur===mi.src?"selected":""}>${esc(mi.name)}</option>`).join("")+
+    ((cur && !imgs.some(mi=>mi.src===cur))?`<option value="${esc(cur)}" selected>(current) ${esc(cur)}</option>`:"");
+}
 async function boot(){
   wireTopbar();
   setupMapInteraction();
   await loadMonsterImages();
+  await loadExtraImages();
   const worlds=await listWorlds();
   if(worlds.length){ await loadWorld(worlds[0]); }
   else { world=normalize(sampleWorld()); afterLoad(); saveWorld(true); }

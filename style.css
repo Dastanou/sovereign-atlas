@@ -144,18 +144,18 @@ body:not(.has-sel) #right{display:none}
 .btn.danger{border-color:#e6b3ad; color:var(--bad)}
 
 /* map-mode buttons: a boxed rectangle in the bottom-right of the map */
-#mapmodeBar{position:absolute; right:12px; bottom:12px; display:flex; flex-direction:row;
-  flex-wrap:wrap; justify-content:flex-end; gap:5px; max-width:min(58vw,520px);
+#mapmodeBar{position:absolute; right:12px; bottom:12px; display:grid;
+  grid-template-columns:repeat(6,36px); grid-auto-rows:36px; gap:5px; justify-items:center; align-items:center;
   background:rgba(255,255,255,.85); border:1px solid var(--line); border-radius:12px;
   padding:6px; box-shadow:0 3px 14px #00000022}
-.mmbtn{position:relative; width:34px; height:34px; font-size:16px; background:#ffffffee;
+.mmbtn{position:relative; width:36px; height:36px; font-size:16px; background:#ffffffee;
   border:1px solid var(--line); border-radius:9px; display:flex; align-items:center;
   justify-content:center; box-shadow:0 1px 4px #0000000f; transition:transform .06s}
 .mmbtn:hover{border-color:var(--accent); transform:translateY(-1px)}
 .mmbtn.active{background:var(--accent); color:#fff; border-color:var(--accent)}
 .mmbtn svg.mmi{width:20px; height:20px; display:block; pointer-events:none}
 /* EU4 button-art map modes: the sprite IS the button (normal + pressed frames) */
-.mmbtn.hasimg{width:38px; height:38px; background-color:transparent; border:none; box-shadow:none;
+.mmbtn.hasimg{width:36px; height:36px; background-color:transparent; border:none; box-shadow:none;
   background-image:var(--mm); background-repeat:no-repeat; background-position:center;
   background-size:contain; image-rendering:auto; transition:transform .06s, filter .1s}
 .mmbtn.hasimg:hover{filter:brightness(1.12); transform:translateY(-1px)}
@@ -190,6 +190,47 @@ details.histBox .histBody, details.histBox .hist{margin-top:4px}
 .rvSub{text-align:center; font-size:12px; color:var(--muted); margin-bottom:10px}
 .rvBlock{border-radius:10px; padding:7px 10px; margin:7px 0; border-left:4px solid var(--line);
   background:var(--panel2)}
+.rvBlock.rvDesc{border-left-color:#c9a86f; background:rgba(201,168,111,.10); font-size:13px; line-height:1.5; white-space:normal}
+/* wonder display panel (viewer) — attached to bottom-left of the province info panel */
+/* wonder info box — one framed box (echoing the province view) that scrolls when it holds
+   several wonders; capped to about a single wonder's height. */
+#wonderPanel{position:absolute; z-index:7; width:226px; --wc:#a98fd0;
+  background:var(--panel); border:1px solid var(--line); border-radius:11px; overflow:hidden;
+  box-shadow:0 6px 22px #0000002a}
+/* gold accent as an inner bar (rounded cleanly by the clip) instead of a border that mismatched the grey sides */
+#wonderPanel::before{content:""; display:block; height:3px; background:var(--wc)}
+/* inner scroller: the rounded outer box clips its scrollbar so it can't poke through the frame */
+.wpScroll{position:relative; max-height:min(324px, calc(100vh - 40px)); overflow-y:auto; overflow-x:hidden}
+/* left-side numbered jump buttons for provinces with several wonders */
+#wonderNav{position:absolute; z-index:7; display:flex; flex-direction:column; gap:5px}
+.wnDot{width:24px; height:24px; padding:0; border-radius:50%; cursor:pointer;
+  border:1.5px solid color-mix(in srgb, #a98fd0 55%, var(--line)); background:var(--panel); color:var(--ink);
+  font-family:"Georgia","Palatino Linotype",serif; font-weight:700; font-size:12px;
+  display:flex; align-items:center; justify-content:center; box-shadow:0 2px 8px #00000022; transition:transform .06s}
+.wnDot:hover{border-color:#a98fd0; background:rgba(169,143,208,.18); transform:translateX(-1px)}
+.wnDot.active{background:#a98fd0; border-color:#a98fd0; color:#fff}
+.wpCard{background:transparent; overflow:hidden}
+.wpCard + .wpCard{border-top:2px solid var(--line)}   /* clear divider between stacked wonders */
+.wpHead{display:flex; align-items:center; gap:7px; padding:8px 11px 5px; color:var(--ink);
+  font-family:"Georgia","Palatino Linotype",serif; font-weight:700; font-size:14px; letter-spacing:.3px;
+  background:linear-gradient(rgba(169,143,208,.18), transparent)}
+.wpName{flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.wpHoly{flex:0 0 auto; width:26px; height:26px; border:1.5px solid color-mix(in srgb, var(--wc) 60%, var(--line));
+  border-radius:7px; background:#fff; cursor:pointer; display:flex; align-items:center; justify-content:center;
+  padding:0; font-size:14px}
+.wpHoly:hover{border-color:var(--wc)}
+.wpHoly img{width:20px; height:20px; object-fit:contain; border-radius:4px}
+/* block auto-width fills the card minus its symmetric side margins, so the frame is centred (no overflow) */
+.wpCard .wpBanner{margin:2px 11px}
+/* wonder image fills the framed banner edge-to-edge, cropped to a fixed size */
+.wpBanner img{display:block; width:100%; height:130px; object-fit:cover; object-position:center; border-radius:8px;
+  border:2px solid color-mix(in srgb, var(--wc) 45%, var(--line)); box-shadow:0 1px 4px rgba(0,0,0,.18)}
+.wpDesc{padding:7px 12px 11px; font-size:12.5px; line-height:1.55; color:var(--ink); white-space:normal}
+/* religion info panel symbol */
+.relSymbol{display:flex; justify-content:center; margin:4px 0 8px}
+.relSymbol img{max-width:130px; max-height:130px; object-fit:contain; border-radius:8px; background:var(--panel2);
+  padding:6px; border:1px solid var(--line)}
+.relHead{display:flex; align-items:center; gap:8px; margin-bottom:6px}
 .rvBlock.rvGov{border-left-color:#6f8fc9; background:rgba(111,143,201,.10)}
 .rvBlock.rvSociety{border-left-color:#a98fd0; background:rgba(169,143,208,.11)}
 .rvBlock.rvRacial{border-left-color:#3fae9e; background:rgba(63,174,158,.12)}
@@ -230,12 +271,22 @@ details.rvProvinces[open]>summary::before{content:"▾"}
   font-size:13px; letter-spacing:.3px; background:linear-gradient(transparent, rgba(0,0,0,.55))}
 /* province blocks: TOP accent stripe (realm uses LEFT) + earthy palette, for clear visual distinction */
 .pvBlock{border-radius:9px; padding:6px 10px; margin:7px 0; background:var(--panel2); border-top:3px solid var(--line)}
-.pvBlock.pvTerr{border-top-color:#7a8a5a; background:rgba(122,138,90,.10)}
+.pvBlock.pvTerr{border-top-color:#386641; background:rgba(56,102,65,.13)}
 .pvBlock.pvGeo{border-top-color:#6f8fc9; background:rgba(111,143,201,.10)}
-.pvBlock.pvEcon{border-top-color:#e0b34e; background:rgba(224,179,78,.11)}
+.pvBlock.pvEcon{border-top-color:#3fae9e; background:rgba(63,174,158,.10)}
 .pvBlock.pvFeatBlock{border-top-color:#a98fd0; background:rgba(169,143,208,.10)}
 .pvBlock.pvPopBlock{border-top-color:#3fae9e; background:rgba(63,174,158,.10)}
 .pvBlockH{font-size:11px; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); font-weight:700; margin:1px 0 5px}
+/* feature blurb bubble (click a feature to see/edit its description) */
+.featBubble{position:fixed; z-index:60; width:236px; max-width:82vw; background:var(--panel); border:1px solid var(--line);
+  border-top:3px solid #a98fd0; border-radius:10px; box-shadow:0 10px 30px #00000038; padding:9px 11px 11px}
+.featBubble .fbHead{display:flex; align-items:center; gap:7px; font-size:14px; margin-bottom:6px}
+.featBubble .fbHead .sw{width:12px; height:12px; border-radius:3px; flex:none}
+.featBubble .fbHead b{flex:1; overflow:hidden; text-overflow:ellipsis}
+.featBubble .fbX{background:none; border:none; cursor:pointer; color:var(--muted); font-size:15px; line-height:1; padding:0 2px}
+.featBubble .fbBody{font-size:12.5px; line-height:1.55}
+.featBubble .fbDesc{width:100%; background:#fff; border:1px solid var(--line); color:var(--ink);
+  border-radius:7px; padding:7px 8px; font-size:12.5px; line-height:1.45; resize:vertical}
 .pvRow{display:flex; align-items:baseline; gap:10px; padding:2px 0; font-size:13.5px}
 .pvRow .pvLbl{flex:0 0 auto; min-width:104px; color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.4px}
 .pvRow .pvVal{flex:1; text-align:right; font-weight:600}
@@ -407,6 +458,8 @@ body.realviewer .editorchrome{ display:none !important; }
 .gm2tbl input[type=number]{width:96px; background:#fff; border:1px solid var(--line); color:var(--ink); padding:4px 6px; border-radius:6px}
 .gm2tbl input[type=text],.gm2tbl .gmTName{width:130px; background:#fff; border:1px solid var(--line); color:var(--ink); padding:4px 6px; border-radius:6px}
 .gm2tbl input[type=color]{width:30px; height:26px; padding:1px}
+.gm2tbl select{max-width:170px}
+.gmTImgPrev{width:130px; height:34px; object-fit:cover; border-radius:5px; border:1px solid var(--line); display:block}
 .modal h2{margin:0 0 12px; font-size:18px}
 .modal .close{position:sticky; top:0; float:right}
 .gridlists{display:grid; grid-template-columns:1fr 1fr; gap:14px}
@@ -476,6 +529,22 @@ body.viewer #inspector .insTitle input:disabled{font-weight:700; font-size:17px}
 #mapLegend .mlRow .sw{width:12px; height:12px; border-radius:3px; border:1px solid #00000022; flex:none}
 #mapLegend .mlRow.active{outline:2px solid var(--accent); border-radius:5px; font-weight:700}
 #mapLegend .mlRow:active{opacity:.7}
+/* resource legend: regular resource + its prestige goods on one row, hidden section below */
+/* base | first prestige | second prestige — a fixed 3-column grid so prestige goods line up */
+#mapLegend .resLegRow{display:grid; grid-template-columns:96px minmax(0,1fr) minmax(0,1fr);
+  column-gap:8px; align-items:center; padding:1px 0; max-width:360px}
+#mapLegend .resLegPresCell{min-width:0; overflow:hidden; text-overflow:ellipsis}
+#mapLegend .resLegItem{display:inline-flex; align-items:center; gap:6px; padding:1px 5px; font-size:12px;
+  white-space:nowrap; border-radius:5px; cursor:pointer; justify-self:start; max-width:100%}
+#mapLegend .resLegItem.hid{cursor:default}
+#mapLegend .resLegItem .sw{width:12px; height:12px; border-radius:3px; border:1px solid #00000022; flex:none}
+#mapLegend .resLegItem.active{outline:2px solid var(--accent); font-weight:700}
+#mapLegend .resLegItem:not(.hid):active{opacity:.7}
+#mapLegend .resLegBase{min-width:96px}
+#mapLegend .resLegSection{margin:8px 0 3px; font-size:10.5px; text-transform:uppercase; letter-spacing:.4px;
+  color:var(--muted); font-weight:600}
+/* first hidden column sits under the base resources, second aligns with the prestige column */
+#mapLegend .resLegHidden{display:grid; grid-template-columns:96px 1fr; column-gap:8px; row-gap:2px}
 
 /* ---------- mobile ---------- */
 #insClose{display:none}
@@ -508,7 +577,7 @@ body.viewer #inspector .insTitle input:disabled{font-weight:700; font-size:17px}
   #inspector{padding-top:46px}
 
   /* map-mode buttons wrap into a centred cluster along the bottom */
-  #mapmodeBar{left:8px; right:8px; bottom:8px; justify-content:center; flex-wrap:wrap-reverse; gap:7px}
+  #mapmodeBar{left:8px; right:8px; bottom:8px; display:flex; flex-direction:row; justify-content:center; flex-wrap:wrap-reverse; gap:7px}
   .mmbtn{width:46px; height:46px; font-size:19px}
   .mmkey{font-size:10px}
   #zoomctl{left:8px; bottom:8px}
