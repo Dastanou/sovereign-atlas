@@ -587,7 +587,7 @@ body.viewer #inspector .insTitle input:disabled{font-weight:700; font-size:17px}
   body.panels-hidden #left{display:flex}
 
   #right{position:absolute; z-index:30; left:0; right:0; bottom:0; top:auto; width:auto;
-    border-left:none; border-top:1px solid var(--line); border-radius:16px 16px 0 0; max-height:66vh;
+    border-left:none; border-top:1px solid var(--line); border-radius:16px 16px 0 0; max-height:86vh;
     transform:translateY(105%); transition:transform .25s ease; box-shadow:0 -8px 30px #00000033; display:flex}
   body.has-sel #right{transform:none}
   body.panels-hidden #right{display:flex}
@@ -595,7 +595,17 @@ body.viewer #inspector .insTitle input:disabled{font-weight:700; font-size:17px}
 
   #insClose{display:block; position:absolute; top:8px; right:10px; z-index:3; width:36px; height:36px;
     background:var(--panel); border:1px solid var(--line); border-radius:9px; font-size:16px; color:var(--ink)}
-  #inspector{padding-top:46px}
+  #inspector{padding:46px 12px 26px; -webkit-overflow-scrolling:touch}
+  /* readable info panels in the bottom sheet (no side-by-side squish, roomier rows) */
+  .field2{flex-direction:column; gap:8px}
+  .realmCard, .provCard{padding:12px 12px 16px}
+  .rvRow, .pvRow{font-size:14px; padding:5px 0; gap:12px}
+  .rvRow .rvLbl, .pvRow .pvLbl{min-width:84px; font-size:11.5px}
+  .rvBlock, .pvBlock{padding:9px 11px; margin:8px 0}
+  .provName{font-size:19px}
+  .realmName{font-size:19px}
+  .pvPie{padding:8px 6px}
+  .pvPie svg{width:84px; height:84px}
 
   /* map-mode buttons wrap into a centred cluster along the bottom */
   #mapmodeBar{left:8px; right:8px; bottom:8px; display:flex; flex-direction:row; justify-content:center; flex-wrap:wrap-reverse; gap:7px}
