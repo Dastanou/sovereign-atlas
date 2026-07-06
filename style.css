@@ -215,6 +215,11 @@ details.histBox .histBody, details.histBox .hist{margin-top:4px}
   font-family:"Georgia","Palatino Linotype",serif; font-weight:700; font-size:14px; letter-spacing:.3px;
   background:linear-gradient(rgba(217,165,33,.20), transparent)}
 .wpName{flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.wpHolies{display:flex; gap:4px; flex:0 0 auto; flex-wrap:wrap}
+/* mobile: wonders render inline at the bottom of the province sheet (a bordered gold-topped box) */
+.wonderInline{--wc:#d9a521; margin-top:12px; background:var(--panel); border:1px solid var(--line);
+  border-radius:11px; overflow:hidden}
+.wonderInline::before{content:""; display:block; height:3px; background:var(--wc)}
 .wpHoly{flex:0 0 auto; width:26px; height:26px; border:1.5px solid color-mix(in srgb, var(--wc) 60%, var(--line));
   border-radius:7px; background:#fff; cursor:pointer; display:flex; align-items:center; justify-content:center;
   padding:0; font-size:14px}
@@ -549,6 +554,7 @@ body.viewer #inspector .insTitle input:disabled{font-weight:700; font-size:17px}
 #mapLegend .resLegRow{display:grid; grid-template-columns:96px minmax(0,1fr) minmax(0,1fr);
   column-gap:8px; align-items:center; padding:1px 0; max-width:360px}
 #mapLegend .resLegPresCell{min-width:0; overflow:hidden; text-overflow:ellipsis}
+#mapLegend .resLegPres{display:flex; flex-wrap:wrap; gap:3px; min-width:0}   /* race legend: subraces under a group */
 #mapLegend .resLegItem{display:inline-flex; align-items:center; gap:6px; padding:1px 5px; font-size:12px;
   white-space:nowrap; border-radius:5px; cursor:pointer; justify-self:start; max-width:100%}
 #mapLegend .resLegItem.hid{cursor:default}
@@ -599,4 +605,19 @@ body.viewer #inspector .insTitle input:disabled{font-weight:700; font-size:17px}
   #zoomctl .btn{width:40px; height:40px; font-size:18px}
   #pingBar{top:8px; gap:6px; padding:5px 7px; max-width:96vw}
   .modal{width:96vw; padding:14px 14px}
+
+  /* grouped legends (resource / race) get more room and flow-wrap so nothing clips on phones */
+  #mapLegend{max-width:94vw}
+  #mapLegend .mlList{max-height:46vh}
+  #mapLegend .resLegRow{display:flex; flex-wrap:wrap; gap:3px 6px; max-width:none; align-items:center}
+  #mapLegend .resLegBase{min-width:0}
+  #mapLegend .resLegHidden{grid-template-columns:1fr 1fr}
+  #mapLegend .resLegItem{font-size:12.5px; padding:2px 7px}
+  #mapLegend .resLegSection{margin:7px 0 2px}
+
+  /* info panels in the bottom sheet: a bit more room for the wonder banner & religion symbol */
+  .wonderInline{margin-top:10px}
+  .wonderInline .wpBanner img{height:150px}
+  .relSymbol img{max-width:112px; max-height:112px}
+  .pvPies{gap:6px}
 }
