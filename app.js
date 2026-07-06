@@ -4655,6 +4655,7 @@ async function openMenu(){
       <button class="btn" id="mNew">＋ New world</button>
       <button class="btn" id="mSaveAs">💾 Save now</button>
       <button class="btn" id="mExport">⬇ Export JSON to herald folder</button>
+      <button class="btn" id="mTimelineSave">🕑 Save timeline snapshot (Phase/Turn)…</button>
       <button class="btn" id="mArchiveData">🗄 Archive full data to disk…</button>
       <button class="btn primary" id="mPublish">🌐 Publish &amp; push live…</button>
       <button class="btn" id="mGitStatus">🔎 Check publish/git status…</button>
@@ -4699,6 +4700,92 @@ async function openMenu(){
   $("#mExportAll").onclick=()=>{closeModal();openExportAll();};
   $("#mImport").onclick=()=>$("#fileInput").click();
   $("#fileInput").onchange=ev=>{const f=ev.target.files[0];if(!f)return;const rd=new FileReader();rd.onload=()=>{try{world=normalize(JSON.parse(rd.result));afterLoad();saveWorld(true);closeModal();}catch(e){alert("Invalid JSON: "+e.message);}};rd.readAsText(f);};
+  { const ts=$("#mTimelineSave"); if(ts)ts.onclick=()=>{ closeModal(); openTimelineSave(); }; }
+}
+// ===== Timeline: viewer-only turn snapshots ("Phase X - Turn Y"), organised by Age =====
+let _lastPhase=1, _lastTurn=1;
+let _presentSnapshot=null;   // JSON of the live world while browsing past turns
+let _timelineViewing=null;   // {age,label} currently shown, or null = present
+function currentAgeName(){ const e=(world.eras||[]).find(x=>x.id===world.currentEraId); return (e&&e.name)||"Age of Creation"; }
+// editor: save the current world as a timeline snapshot
+function openTimelineSave(){
+  const age=currentAgeName();
+  openModal(`<button class="btn close" onclick="closeModal()">✕ Close</button><h2>🕑 Save timeline snapshot</h2>
+    <p class="note">Saves the current world as a turn players can revisit in the viewer's Timeline. Filed under the current age: <b>${esc(age)}</b> (set the age in the top bar / Ages editor).</p>
+    <div class="field2">
+      <div class="field"><label>Phase</label><input id="tlPhase" type="number" min="0" step="1" value="${_lastPhase}"/></div>
+      <div class="field"><label>Turn</label><input id="tlTurn" type="number" min="0" step="1" value="${_lastTurn}"/></div>
+    </div>
+    <div class="btnrow"><button class="btn primary" id="tlSaveGo">💾 Save snapshot</button></div>
+    <div id="tlSaveMsg" class="note" style="margin-top:6px"></div>`);
+  $("#tlSaveGo").onclick=async()=>{
+    const phase=Math.max(0,Math.round(+$("#tlPhase").value||0)), turn=Math.max(0,Math.round(+$("#tlTurn").value||0));
+    _lastPhase=phase; _lastTurn=turn;
+    const msg=$("#tlSaveMsg"); msg.textContent="Saving…";
+    try{
+      const res=await fetch("/api/timeline_save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({age,phase,turn,world})});
+      const j=await res.json();
+      msg.innerHTML=j.ok?`✓ Saved <b>${esc(j.age)} / ${esc(j.file)}</b>`:`<span style="color:var(--bad)">Error: ${esc(j.error||"failed")}</span>`;
+    }catch(e){ msg.innerHTML=`<span style="color:var(--bad)">Error: ${esc(e.message)}</span>`; }
+  };
+}
+async function fetchTimeline(){
+  try{ const r=await fetch("/api/timeline_list"); if(r.ok){ const j=await r.json(); if(j&&j.ages)return {mode:"api",ages:j.ages}; } }catch(e){}
+  try{ const r=await fetch("timeline/index.json",{cache:"no-store"}); if(r.ok){ const j=await r.json(); if(j&&j.ages)return {mode:"static",ages:j.ages}; } }catch(e){}
+  return {mode:"none",ages:[]};
+}
+async function loadTimelineWorld(mode,age,file){
+  if(mode==="static"){ const r=await fetch("timeline/"+encodeURIComponent(age)+"/"+encodeURIComponent(file),{cache:"no-store"}); return await r.json(); }
+  const r=await fetch("/api/timeline_get?age="+encodeURIComponent(age)+"&file="+encodeURIComponent(file));
+  const j=await r.json(); if(!j.ok)throw new Error(j.error||"load failed"); return j.world;
+}
+function orderAges(ages){   // chronological: by the world's era order, then extras alphabetically
+  const era=(world.eras||[]).map(e=>e.name);
+  return ages.slice().sort((a,b)=>{ const ia=era.indexOf(a.age), ib=era.indexOf(b.age);
+    if(ia!==ib) return (ia<0?1e9:ia)-(ib<0?1e9:ib); return a.age.localeCompare(b.age); });
+}
+async function openTimeline(){
+  openModal(`<button class="btn close" onclick="closeModal()">✕ Close</button><h2>🕑 Timeline</h2>
+    <p class="note">Load a past turn to explore the map as it was — pan, zoom, switch map modes and click provinces just like the present. Grouped by Age, in chronological order.</p>
+    <div id="tlBody"><div class="note">Loading…</div></div>`);
+  const {mode,ages}=await fetchTimeline();
+  const host=$("#tlBody"); if(!host)return;
+  if(mode==="none" || !ages.length){ host.innerHTML='<div class="note">No saved snapshots yet. In the editor: ⋯ menu → “Save timeline snapshot”.</div>'; return; }
+  const ordered=orderAges(ages);
+  host.innerHTML =
+    (_timelineViewing?`<div class="tlNow">Viewing <b>${esc(_timelineViewing.age)} · ${esc(_timelineViewing.label)}</b><button class="btn tiny" id="tlPresent">⟲ Return to present</button></div>`:"")
+    + ordered.map(a=>`<div class="tlAge"><div class="tlAgeH">${esc(a.age)}</div><div class="tlSnaps">${
+        a.snaps.length?a.snaps.map(s=>`<button class="btn tlSnap${(_timelineViewing&&_timelineViewing.age===a.age&&_timelineViewing.label===s.label)?" primary":""}" data-age="${esc(a.age)}" data-file="${esc(s.file)}" data-mode="${mode}">${esc(s.label)}</button>`).join(""):'<span class="note">No snapshots.</span>'
+      }</div></div>`).join("");
+  host.querySelectorAll(".tlSnap").forEach(b=>b.onclick=()=>loadSnapshot(b.dataset.mode,b.dataset.age,b.dataset.file));
+  { const rp=$("#tlPresent"); if(rp)rp.onclick=returnToPresent; }
+}
+async function loadSnapshot(mode,age,file){
+  try{
+    flash("Loading "+file.replace(/\.json$/,"")+"…");
+    const data=await loadTimelineWorld(mode,age,file);
+    if(!_presentSnapshot) _presentSnapshot=JSON.stringify(world);   // remember the live world once
+    _timelineViewing={age,label:file.replace(/\.json$/,"")};
+    const cam={...state.cam}, mm=state.mapmode;                     // keep the player's view & map mode
+    world=normalize(data); afterLoad(); state.mapmode=mm; state.cam=cam; renderMap(); renderLegend();
+    updateTimelineBanner(); closeModal();
+    flash("Now viewing "+age+" · "+_timelineViewing.label+".");
+  }catch(e){ flash("Error loading snapshot: "+e.message); }
+}
+function returnToPresent(){
+  if(!_presentSnapshot){ _timelineViewing=null; updateTimelineBanner(); closeModal(); return; }
+  const cam={...state.cam}, mm=state.mapmode;
+  world=normalize(JSON.parse(_presentSnapshot)); _presentSnapshot=null; _timelineViewing=null;
+  afterLoad(); state.mapmode=mm; state.cam=cam; renderMap(); renderLegend();
+  updateTimelineBanner(); closeModal(); flash("Back to the present.");
+}
+function updateTimelineBanner(){
+  let b=document.getElementById("tlBanner");
+  if(!_timelineViewing){ if(b)b.remove(); return; }
+  if(!b){ b=document.createElement("div"); b.id="tlBanner"; ($("#stage")||document.body).appendChild(b); }
+  b.innerHTML=`🕑 Viewing <b>${esc(_timelineViewing.age)} · ${esc(_timelineViewing.label)}</b><button class="btn tiny" id="tlBannerBack">⟲ Present</button><button class="btn tiny" id="tlBannerOpen">Timeline…</button>`;
+  $("#tlBannerBack").onclick=returnToPresent;
+  $("#tlBannerOpen").onclick=openTimeline;
 }
 
 /* ============================================================
@@ -4932,6 +5019,7 @@ function wireTopbar(){
     });
   }
   const bv=$("#btnView"); if(bv)bv.onclick=togglePreviewViewer;
+  { const bt=$("#btnTimeline"); if(bt)bt.onclick=openTimeline; }
   $("#worldView").onclick=()=>{worldView();};
   $("#btnNames").onclick=()=>{state.showNames=!state.showNames;$("#btnNames").classList.toggle("on",state.showNames);renderMap();flash(state.showNames?"Landmass names shown — drag a name to reposition it.":"Landmass names hidden.");};
   $("#btnNames").classList.toggle("on",state.showNames);

@@ -194,7 +194,7 @@ details.histBox .histBody, details.histBox .hist{margin-top:4px}
 /* wonder display panel (viewer) — attached to bottom-left of the province info panel */
 /* wonder info box — one framed box (echoing the province view) that scrolls when it holds
    several wonders; capped to about a single wonder's height. */
-#wonderPanel{position:absolute; z-index:7; width:226px; --wc:#a98fd0;
+#wonderPanel{position:absolute; z-index:7; width:226px; --wc:#d9a521;
   background:var(--panel); border:1px solid var(--line); border-radius:11px; overflow:hidden;
   box-shadow:0 6px 22px #0000002a}
 /* gold accent as an inner bar (rounded cleanly by the clip) instead of a border that mismatched the grey sides */
@@ -204,16 +204,16 @@ details.histBox .histBody, details.histBox .hist{margin-top:4px}
 /* left-side numbered jump buttons for provinces with several wonders */
 #wonderNav{position:absolute; z-index:7; display:flex; flex-direction:column; gap:5px}
 .wnDot{width:24px; height:24px; padding:0; border-radius:50%; cursor:pointer;
-  border:1.5px solid color-mix(in srgb, #a98fd0 55%, var(--line)); background:var(--panel); color:var(--ink);
+  border:1.5px solid color-mix(in srgb, #d9a521 55%, var(--line)); background:var(--panel); color:var(--ink);
   font-family:"Georgia","Palatino Linotype",serif; font-weight:700; font-size:12px;
   display:flex; align-items:center; justify-content:center; box-shadow:0 2px 8px #00000022; transition:transform .06s}
-.wnDot:hover{border-color:#a98fd0; background:rgba(169,143,208,.18); transform:translateX(-1px)}
-.wnDot.active{background:#a98fd0; border-color:#a98fd0; color:#fff}
+.wnDot:hover{border-color:#d9a521; background:rgba(217,165,33,.18); transform:translateX(-1px)}
+.wnDot.active{background:#d9a521; border-color:#d9a521; color:#fff}
 .wpCard{background:transparent; overflow:hidden}
 .wpCard + .wpCard{border-top:2px solid var(--line)}   /* clear divider between stacked wonders */
 .wpHead{display:flex; align-items:center; gap:7px; padding:8px 11px 5px; color:var(--ink);
   font-family:"Georgia","Palatino Linotype",serif; font-weight:700; font-size:14px; letter-spacing:.3px;
-  background:linear-gradient(rgba(169,143,208,.18), transparent)}
+  background:linear-gradient(rgba(217,165,33,.20), transparent)}
 .wpName{flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
 .wpHoly{flex:0 0 auto; width:26px; height:26px; border:1.5px solid color-mix(in srgb, var(--wc) 60%, var(--line));
   border-radius:7px; background:#fff; cursor:pointer; display:flex; align-items:center; justify-content:center;
@@ -376,6 +376,9 @@ body.viewer #btnSave, body.viewer #btnQuit, body.viewer #btnMenu, body.viewer #b
 body.viewer #manageEras{ display:none !important; }
 /* the View-Mode toggle itself: shown in the editor (incl. preview) but not the real published viewer */
 body.realviewer .editorchrome{ display:none !important; }
+/* viewer-only chrome (Timeline): hidden in the editor, shown in the viewer + View-Mode preview */
+.viewerchrome{ display:none !important; }
+body.viewer .viewerchrome{ display:inline-flex !important; }
 #btnView.on{ background:var(--accent); color:#fff; border-color:var(--accent); }
 
 /* ---------- inspector ---------- */
@@ -446,6 +449,18 @@ body.realviewer .editorchrome{ display:none !important; }
   width:min(720px,96vw); max-height:88vh; overflow:auto; padding:18px 20px;
   box-shadow:0 20px 60px #00000033}
 .modal.gmWide{width:min(1240px,97vw)}
+/* timeline browser */
+.tlNow{display:flex; align-items:center; gap:10px; background:rgba(217,165,33,.14); border:1px solid #d9a52155;
+  border-radius:9px; padding:7px 10px; margin:4px 0 10px; font-size:13.5px}
+.tlNow button{margin-left:auto}
+.tlAge{margin:10px 0}
+.tlAgeH{font-family:"Georgia","Palatino Linotype",serif; font-weight:700; font-size:15px; margin-bottom:5px;
+  padding-bottom:3px; border-bottom:2px solid color-mix(in srgb, var(--accent) 40%, var(--line))}
+.tlSnaps{display:flex; flex-wrap:wrap; gap:6px}
+.tlSnap{font-size:12.5px}
+#tlBanner{position:absolute; top:10px; left:50%; transform:translateX(-50%); z-index:8; display:flex; align-items:center;
+  gap:8px; background:#ffffffee; border:1px solid #d9a52188; border-left:4px solid #d9a521; border-radius:10px;
+  padding:6px 10px 6px 12px; font-size:13px; box-shadow:0 4px 16px #00000026; max-width:92vw}
 .gmGrid{display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:14px; align-items:start; margin-top:6px}
 .gmBlock{background:var(--panel2); border:1px solid var(--line); border-radius:10px; padding:10px 12px}
 .gmBlock.gmSpanAll{grid-column:1 / -1}
