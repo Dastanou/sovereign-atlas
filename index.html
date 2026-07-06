@@ -9,36 +9,25 @@
 <body>
 
 <header id="topbar">
-  <div class="brand">⟁ Sovereign Atlas</div>
-
+  <!-- world name → age → population → measure → ping → find -->
+  <div class="topgroup"><input id="worldName" class="txt worldname" type="text" title="World name" /></div>
   <div class="topgroup">
-    <label class="mini">World</label>
-    <input id="worldName" class="txt" type="text" title="World name" />
+    <select id="eraSelect" class="sel eraname" title="Current age"></select>
+    <button id="manageEras" class="btn ghost editonly" title="Manage ages">⚙</button>
   </div>
-
+  <div class="topgroup"><span id="worldPop" class="chip" title="Total population across the whole world">👥 0</span></div>
   <div class="topgroup">
-    <label class="mini">Age</label>
-    <select id="eraSelect" class="sel" title="Current age"></select>
-    <button id="manageEras" class="btn ghost" title="Manage ages">⚙</button>
+    <button id="btnRuler" class="btn ghost" title="Measure distance — click points on the map">📏 Measure</button>
+    <button id="btnPing" class="btn ghost" title="Ping / annotate the map — draw and drop pins to mark places">📍 Ping</button>
   </div>
-
   <div class="topgroup" style="position:relative">
     <input id="provFind" class="txt" type="text" placeholder="🔍 Find province…" autocomplete="off" spellcheck="false" />
     <div id="provFindResults" class="hidden"></div>
   </div>
 
-  <!-- key tools kept near the left so they're reachable without scrolling -->
-  <div class="topgroup">
-    <span id="worldPop" class="chip" title="Total population across the whole world">👥 0</span>
-    <button id="btnRuler" class="btn ghost" title="Measure distance — click points on the map">📏 Measure</button>
-    <button id="btnPing" class="btn ghost" title="Ping / annotate the map — draw and drop pins to mark places">📍 Ping</button>
-  </div>
-
-  <!-- Map-mode switching lives in the bottom-right button bar (#mapmodeBar);
-       this select is kept hidden only so existing code can read/sync it. -->
-  <div class="topgroup viewonly" id="mapmodeGroup" style="display:none">
-    <label class="mini">Map mode</label>
-    <select id="mapmode" class="sel" title="Map mode">
+  <!-- hidden map-mode select kept only so existing code can read/sync it -->
+  <div class="topgroup" id="mapmodeGroup" style="display:none">
+    <select id="mapmode" title="Map mode">
       <option value="political">Political (realms)</option>
       <optgroup label="Land &amp; economy">
         <option value="terrain">Terrain</option>
@@ -51,25 +40,14 @@
         <option value="race">Race (dominant)</option>
         <option value="language">Language (dominant)</option>
       </optgroup>
-      <optgroup label="Society">
-        <option value="population">Population</option>
-      </optgroup>
-      <optgroup label="Other">
-        <option value="imported">Imported colors</option>
-      </optgroup>
+      <optgroup label="Society"><option value="population">Population</option></optgroup>
+      <optgroup label="Other"><option value="imported">Imported colors</option></optgroup>
     </select>
   </div>
 
-  <!-- VIEW-mode tools -->
-  <div class="topgroup tools viewonly">
-    <label class="mini">Tool</label>
-    <button class="btn tool active" data-tool="select" title="Select / pan">▣ Select</button>
-    <button class="btn tool" data-tool="paint" title="Paint the current map mode's value onto provinces">🖌 Paint</button>
-  </div>
-
+  <!-- Select/Paint moved to the bottom-left Paint panel (editor). -->
   <!-- EDIT-mode (map drawing) tools -->
   <div class="topgroup tools editonly">
-    <label class="mini">Draw</label>
     <button class="btn tool" data-tool="select" title="Select / pan">▣ Select</button>
     <button class="btn tool" data-tool="move" title="Move a whole province (snaps to neighbors)">✥ Move</button>
     <button class="btn tool" data-tool="draw" title="Draw a new province (corners snap to neighbors)">✎ Province</button>
@@ -81,10 +59,12 @@
   </div>
 
   <div class="topgroup right">
+    <button id="btnView" class="btn ghost editorchrome" title="Preview exactly what the site viewer sees (toggle)">👁 View Mode</button>
     <button id="worldView" class="btn ghost" title="Recenter and fit the whole world in view">◎ Recenter</button>
     <button id="btnNames" class="btn ghost" title="Show/hide landmass names (drag a name to move it)">🏷 Names</button>
     <button id="btnPanels" class="btn ghost" title="Hide/show the side info panels for a clean map view">⇔ Panels</button>
     <button id="btnGM" class="btn ghost" title="GM Screen — tune world simulation values, populate and grow">🎲 GM Screen</button>
+    <button id="btnGM2" class="btn ghost" title="GM Screen (new) — pop growth &amp; category tuning">🧭 GM v2</button>
     <button id="btnEdit" class="btn ghost" title="Switch between viewing and map-drawing tools">🛠 Edit Map</button>
     <button class="btn ghost" id="btnUndo" title="Undo (Ctrl+Z)">↶</button>
     <button class="btn ghost" id="btnRedo" title="Redo (Ctrl+Y)">↷</button>
@@ -95,54 +75,45 @@
   </div>
 </header>
 
+<!-- thin toggle bar under the top bar (wiring comes later) -->
+<div id="toggleBar">
+  <button class="tgl on" data-toggle="continents">Continents</button>
+  <button class="tgl on" data-toggle="realms">Realms</button>
+  <button class="tgl" data-toggle="terrain">Terrain</button>
+</div>
+
 <div id="layout">
-  <!-- LEFT: continents + realms -->
-  <aside id="left">
+  <!-- LEFT panel is retired; kept hidden only so existing code can populate it -->
+  <aside id="left" hidden>
     <section class="pane" id="paneContinents">
-      <div class="paneHead">
-        <span>Continents</span>
-        <button id="addContinent" class="btn tiny" title="Add a floating continent">＋</button>
-      </div>
+      <div class="paneHead"><span>Continents</span><button id="addContinent" class="btn tiny">＋</button></div>
       <div id="continentList" class="list"></div>
     </section>
-
     <section class="pane grow">
-      <div class="paneHead">
-        <span>Realms</span>
-        <button id="addRealm" class="btn tiny" title="Create a realm and start painting">＋ New</button>
-      </div>
+      <div class="paneHead"><span>Realms</span><button id="addRealm" class="btn tiny">＋ New</button></div>
       <input id="realmSearch" class="searchbox" type="text" placeholder="Search realms…" />
       <div id="realmList" class="list"></div>
     </section>
-
-    <section class="pane">
-      <div class="paneHead"><span>Legend</span></div>
-      <div id="legend" class="legend"></div>
-    </section>
+    <section class="pane"><div class="paneHead"><span>Legend</span></div><div id="legend" class="legend"></div></section>
   </aside>
 
   <!-- CENTER: map -->
   <main id="stage">
-    <div id="mapWrap">
-      <canvas id="map"></canvas>
-    </div>
+    <div id="mapWrap"><canvas id="map"></canvas></div>
     <div id="hint" class="hint"></div>
-    <div id="zoomctl">
-      <button id="zin" class="btn tiny">＋</button>
-      <button id="zout" class="btn tiny">－</button>
-    </div>
-    <div id="mapmodeBar" title="Map modes"></div>
+    <div id="zoomctl"><button id="zin" class="btn tiny">＋</button><button id="zout" class="btn tiny">－</button></div>
+    <div id="mapLegend" class="floatLegend hidden"></div>
     <div id="pingBar" class="hidden"></div>
-    <div id="mapLegend" class="hidden"></div>
-  </main>
+    <div id="mapmodeBar" title="Map modes"></div>
 
-  <!-- RIGHT: inspector -->
-  <aside id="right">
-    <button id="insClose" title="Close">✕</button>
-    <div id="inspector">
-      <div class="empty">Select a province or realm to edit, or use the <b>Draw</b> tool to create a province.</div>
-    </div>
-  </aside>
+    <!-- RIGHT: inspector now floats over the map, above the map-mode box -->
+    <aside id="right">
+      <button id="insClose" title="Close">✕</button>
+      <div id="inspector">
+        <div class="empty">Select a province or realm to edit, or use the <b>Draw</b> tool to create a province.</div>
+      </div>
+    </aside>
+  </main>
 </div>
 
 <!-- modal host -->

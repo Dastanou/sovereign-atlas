@@ -54,15 +54,35 @@ body.editing #topbar{background:linear-gradient(180deg,#eef4ec,#e3ece0)}
 }
 .txt{width:150px}
 
+/* world name & age shown as titles in the top bar */
+#topbar .worldname{width:auto; min-width:110px; max-width:220px; font-weight:700; font-size:16px;
+  font-family:"Georgia","Palatino Linotype",serif; border:1px solid transparent; background:transparent}
+#topbar .worldname:hover,#topbar .worldname:focus{border-color:var(--line); background:#fff}
+#topbar .eraname{border:1px solid transparent; background:transparent; font-weight:600; color:var(--muted); padding-right:22px}
+#topbar .eraname:hover,#topbar .eraname:focus{border-color:var(--line); background:#fff}
+
+/* thin toggle bar under the top bar */
+#toggleBar{display:flex; align-items:center; gap:8px; padding:4px 12px; flex:0 0 auto;
+  background:var(--panel2); border-bottom:1px solid var(--line)}
+.tgl{background:#fff; border:1px solid var(--line); color:var(--muted); padding:3px 13px;
+  border-radius:20px; font-size:12.5px; font-weight:600}
+.tgl:hover{border-color:var(--accent)}
+.tgl.on{background:#3f5480; color:#fff; border-color:#3f5480}
+
 /* ---------- layout ---------- */
-#layout{display:flex; flex:1 1 auto; min-height:0}
-#left,#right{width:280px; background:var(--panel); border-right:1px solid var(--line);
-  display:flex; flex-direction:column; overflow:hidden}
-#right{border-right:none; border-left:1px solid var(--line); width:340px}
-/* right inspector only appears once something is selected */
-body:not(.has-sel) #right{display:none}
-#stage{flex:1; position:relative; overflow:hidden;
+#layout{flex:1 1 auto; min-height:0; position:relative}
+#left{display:none !important}   /* retired: legend now floats top-left */
+#stage{position:absolute; inset:0; overflow:hidden;
   background:radial-gradient(1200px 800px at 50% 35%, #eaf3fa 0%, var(--sea1) 55%, var(--sea2) 100%);}
+/* right inspector floats over the map (above the map-mode box) — never pushes the map */
+#right{position:absolute; top:12px; right:12px; width:360px; max-width:44vw;
+  max-height:calc(100% - 132px); background:var(--panel); border:1px solid var(--line);
+  border-radius:12px; box-shadow:0 6px 22px #0000002a; display:flex; flex-direction:column;
+  overflow:hidden; z-index:7}
+body:not(.has-sel) #right{display:none}
+#inspector{flex:1 1 auto; overflow:auto; padding:12px 12px 14px}
+#insClose{position:absolute; top:6px; right:8px; z-index:2; background:transparent; border:none;
+  font-size:16px; color:var(--muted); line-height:1; padding:2px 4px}
 
 .pane{border-bottom:1px solid var(--line); display:flex; flex-direction:column; min-height:0}
 /* share the sidebar height so each list scrolls inside its own pane */
@@ -101,17 +121,41 @@ body:not(.has-sel) #right{display:none}
 .hint.show{opacity:1}
 #zoomctl{position:absolute; left:12px; bottom:12px; display:flex; flex-direction:column; gap:6px}
 
-/* map-mode button bar, bottom-right of the map — a single horizontal row */
-#mapmodeBar{position:absolute; right:12px; bottom:12px; display:flex;
-  flex-direction:row; gap:6px}
-.mmbtn{position:relative; width:40px; height:40px; font-size:18px; background:#ffffffee;
-  border:1px solid var(--line); border-radius:10px; display:flex; align-items:center;
-  justify-content:center; box-shadow:0 2px 7px #0000001c; transition:transform .06s}
+/* editor paint panel (bottom-left, above the zoom controls) */
+#paintPanel,#popPanel{position:absolute; left:12px; bottom:78px; z-index:8; width:230px; max-height:calc(100vh - 210px); overflow:auto;
+  background:#ffffffee; border:1px solid var(--line); border-radius:12px; padding:9px 10px;
+  box-shadow:0 4px 16px #00000022}
+#paintPanel .ppHead,#popPanel .ppHead{display:flex; align-items:center; gap:2px; margin-bottom:7px; font-size:13px}
+#paintPanel .ppCaret,#popPanel .ppCaret{background:none; border:none; cursor:pointer; font-size:12px; color:var(--muted); padding:0 3px 0 0; line-height:1}
+#paintPanel.collapsed,#popPanel.collapsed{width:auto}
+#paintPanel.collapsed .ppHead,#popPanel.collapsed .ppHead{margin-bottom:0}
+#paintPanel.collapsed .ppBody,#popPanel.collapsed .ppBody{display:none}
+#paintPanel .ppRow,#popPanel .ppRow{display:flex; gap:6px; align-items:center; margin:6px 0}
+#paintPanel .ppRow select,#popPanel .ppRow select{flex:1}
+#paintPanel .ppModes,#popPanel .ppModes{display:flex; gap:4px; margin:4px 0; flex-wrap:wrap}
+#paintPanel .ppModes .btn,#popPanel .ppModes .btn{flex:1}
+#paintPanel .ppChips{display:flex; flex-wrap:wrap; gap:4px; max-height:34vh; overflow:auto}
+.ppChip{display:inline-flex; align-items:center; gap:5px; background:#fff; border:1px solid var(--line);
+  border-radius:16px; padding:3px 9px; font-size:12.5px; color:var(--ink)}
+.ppChip:hover{border-color:var(--accent)}
+.ppChip.sel{background:var(--accent); color:#fff; border-color:var(--accent); font-weight:600}
+.ppChip .sw{width:11px; height:11px; border-radius:3px; border:1px solid #00000022; flex:none}
+.ppChip.sel .sw{border-color:#ffffff88}
+.btn.danger{border-color:#e6b3ad; color:var(--bad)}
+
+/* map-mode buttons: a boxed rectangle in the bottom-right of the map */
+#mapmodeBar{position:absolute; right:12px; bottom:12px; display:flex; flex-direction:row;
+  flex-wrap:wrap; justify-content:flex-end; gap:5px; max-width:min(58vw,520px);
+  background:rgba(255,255,255,.85); border:1px solid var(--line); border-radius:12px;
+  padding:6px; box-shadow:0 3px 14px #00000022}
+.mmbtn{position:relative; width:34px; height:34px; font-size:16px; background:#ffffffee;
+  border:1px solid var(--line); border-radius:9px; display:flex; align-items:center;
+  justify-content:center; box-shadow:0 1px 4px #0000000f; transition:transform .06s}
 .mmbtn:hover{border-color:var(--accent); transform:translateY(-1px)}
 .mmbtn.active{background:var(--accent); color:#fff; border-color:var(--accent)}
-.mmbtn svg.mmi{width:23px; height:23px; display:block; pointer-events:none}
+.mmbtn svg.mmi{width:20px; height:20px; display:block; pointer-events:none}
 /* EU4 button-art map modes: the sprite IS the button (normal + pressed frames) */
-.mmbtn.hasimg{width:44px; height:44px; background-color:transparent; border:none; box-shadow:none;
+.mmbtn.hasimg{width:38px; height:38px; background-color:transparent; border:none; box-shadow:none;
   background-image:var(--mm); background-repeat:no-repeat; background-position:center;
   background-size:contain; image-rendering:auto; transition:transform .06s, filter .1s}
 .mmbtn.hasimg:hover{filter:brightness(1.12); transform:translateY(-1px)}
@@ -222,7 +266,32 @@ details.rvProvinces[open]>summary::before{content:"▾"}
 .monImgBtn{width:40px; height:40px; padding:3px; border:1px solid var(--line); border-radius:8px;
   background:var(--panel2); cursor:pointer; display:flex; align-items:center; justify-content:center}
 .monImgBtn:hover{border-color:var(--accent)}
+.monImgBtn.sel{outline:2px solid var(--accent); outline-offset:1px}
 .monImgBtn img{max-width:100%; max-height:100%}
+/* monster viewer card (coloured by creature type via --ct) */
+.monCard{--ct:#7a3b3b; border:2px solid var(--ct); border-radius:14px; padding:12px;
+  background:linear-gradient(180deg, color-mix(in srgb, var(--ct) 12%, var(--panel)), var(--panel) 60%);
+  box-shadow:0 3px 14px color-mix(in srgb, var(--ct) 22%, transparent)}
+.monCardHead{display:flex; align-items:center; gap:11px}
+.monFrame{flex:0 0 auto; width:56px; height:56px; border-radius:50%; border:3px solid var(--ct);
+  background:#fff; display:flex; align-items:center; justify-content:center; overflow:hidden}
+.monFrame .monBigIcon{width:82%; height:82%; object-fit:contain}
+.monFrame .monEmoji{font-size:28px; line-height:1}
+.monName{font-family:"Georgia","Palatino Linotype",serif; font-weight:700; font-size:19px; color:var(--ink)}
+.monType{font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; margin-top:1px}
+.monDesc{margin-top:10px; font-size:13.5px; line-height:1.5; white-space:pre-wrap;
+  border-top:1px solid color-mix(in srgb, var(--ct) 30%, var(--line)); padding-top:8px}
+/* legend monster groups */
+.monGroup{border:1px solid var(--line); border-radius:8px; margin:4px 0; overflow:hidden}
+.monGroupHead{display:flex; align-items:center; gap:6px; padding:5px 8px; cursor:pointer; background:var(--panel2); font-weight:700; font-size:12.5px}
+.monGroupHead .caret{width:12px; color:var(--muted)}
+.monGroup.collapsed .monGroupBody{display:none}
+.monRowIcon{width:16px; height:16px; object-fit:contain; vertical-align:middle}
+.monReorder{display:inline-flex; gap:2px; margin-left:auto}
+.monReorder .btn{padding:0 5px; line-height:18px}
+.ctRow{display:flex; align-items:center; gap:6px; margin:5px 0}
+.ctRow input[type=color]{width:32px; height:28px; padding:1px; border:1px solid var(--line); border-radius:6px; background:#fff; flex:0 0 auto}
+.ctRow .ctName{flex:1}
 /* editor multi-race picker */
 .raceMulti{display:flex; flex-wrap:wrap; gap:4px; min-height:22px; margin-bottom:2px}
 .raceMulti .tag .swatch{width:10px; height:10px; border-radius:3px; display:inline-block; margin-right:4px; vertical-align:middle}
@@ -249,6 +318,14 @@ body.panels-hidden #left, body.panels-hidden #right{display:none}
 .psw.active{box-shadow:0 0 0 2px var(--ink)}
 #pingBar #pcolor{width:30px; height:30px; padding:1px; border:1px solid var(--line); border-radius:8px; background:#fff}
 #pingBar #pwidth{width:90px}
+
+/* ---------- viewer / View-Mode preview: hide editor-only chrome ---------- */
+body.viewer #btnEdit, body.viewer #btnGM, body.viewer #btnGM2, body.viewer #btnUndo, body.viewer #btnRedo,
+body.viewer #btnSave, body.viewer #btnQuit, body.viewer #btnMenu, body.viewer #btnLists,
+body.viewer #manageEras{ display:none !important; }
+/* the View-Mode toggle itself: shown in the editor (incl. preview) but not the real published viewer */
+body.realviewer .editorchrome{ display:none !important; }
+#btnView.on{ background:var(--accent); color:#fff; border-color:var(--accent); }
 
 /* ---------- inspector ---------- */
 #inspector{overflow:auto; height:100%; padding:12px}
@@ -317,6 +394,19 @@ body.panels-hidden #left, body.panels-hidden #right{display:none}
 .modal{background:var(--panel); border:1px solid var(--line); border-radius:14px;
   width:min(720px,96vw); max-height:88vh; overflow:auto; padding:18px 20px;
   box-shadow:0 20px 60px #00000033}
+.modal.gmWide{width:min(1240px,97vw)}
+.gmGrid{display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:14px; align-items:start; margin-top:6px}
+.gmBlock{background:var(--panel2); border:1px solid var(--line); border-radius:10px; padding:10px 12px}
+.gmBlock.gmSpanAll{grid-column:1 / -1}
+.gmBlockH{font-weight:600; font-size:13px; margin-bottom:8px}
+.gmBlock .note{margin:2px 0 8px}
+.gmFields{display:flex; flex-wrap:wrap; gap:8px}
+.gm2tbl{width:100%; border-collapse:collapse; margin:4px 0 2px}
+.gm2tbl th{font-size:11px; text-transform:uppercase; letter-spacing:.4px; color:var(--muted); text-align:left; padding:2px 6px; font-weight:600}
+.gm2tbl td{padding:2px 6px; border-top:1px solid var(--line); font-size:13px; vertical-align:middle}
+.gm2tbl input[type=number]{width:96px; background:#fff; border:1px solid var(--line); color:var(--ink); padding:4px 6px; border-radius:6px}
+.gm2tbl input[type=text],.gm2tbl .gmTName{width:130px; background:#fff; border:1px solid var(--line); color:var(--ink); padding:4px 6px; border-radius:6px}
+.gm2tbl input[type=color]{width:30px; height:26px; padding:1px}
 .modal h2{margin:0 0 12px; font-size:18px}
 .modal .close{position:sticky; top:0; float:right}
 .gridlists{display:grid; grid-template-columns:1fr 1fr; gap:14px}

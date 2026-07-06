@@ -6,8 +6,11 @@
 const SVGNS = "http://www.w3.org/2000/svg";
 // Read-only "player viewer" mode: set window.SOVEREIGN_VIEWER=true (published
 // build) or add ?viewer to the URL. In this mode nothing can be edited or saved.
-const VIEWER = (typeof window !== "undefined") &&
+// Read-only "player viewer" mode. BOOT_VIEWER = the published/URL flag (never changes).
+// VIEWER is the *effective* flag — in the editor a "View Mode" button can preview the viewer.
+const BOOT_VIEWER = (typeof window !== "undefined") &&
   (window.SOVEREIGN_VIEWER === true || /[?&]view(er)?\b/i.test(location.search));
+let VIEWER = BOOT_VIEWER;
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const uid = () =>
@@ -57,7 +60,7 @@ const DEFAULT_LISTS = {
   cultures: ["No Culture", "Veshkan", "Aurelian", "Highland Clans", "Skyborn", "Marsh-folk"],
   races: ["Human", "Elf", "Dwarf", "Orc", "Halfling", "Goblin", "Dragonborn", "Tiefling", "Aarakocra"],
   languages: ["No Language", "Common", "Old Veshkan", "High Aurelian", "Cant", "Draconic"],
-  terrains: ["Plains", "Farmlands", "Steppe", "Savannah", "Forest", "Taiga", "Jungle", "Hills", "Mountains", "Desert", "Marsh", "Tundra", "Glacial", "Coast", "Wasteland", "Floating Reef"],
+  terrains: ["Plains", "Farmlands", "Steppe", "Savannah", "Forest", "Taiga", "Jungle", "Hills", "Mountains", "Caverns", "Desert", "Marsh", "Tundra", "Glacial", "Coast", "Wasteland", "Floating Reef"],
   settlements: ["Uninhabited", "Nomadic", "Village", "Town", "City", "Megalopolis"],
   resources: RESOURCE_LIST.slice(),
   hiddenResources: HIDDEN_RESOURCES.slice(),
@@ -72,10 +75,87 @@ function hashColor(str){let h=0;for(let i=0;i<(str||"").length;i++)h=(h*31+str.c
 function listColor(list, name){const i=list.indexOf(name);return i>=0?PALETTE[i%PALETTE.length]:hashColor(name);}
 function ramp(t){t=Math.max(0,Math.min(1,t));const a=[239,122,95],b=[95,208,160];return `rgb(${a.map((v,i)=>Math.round(v+(b[i]-v)*t)).join(",")})`;}
 
-const TERRAIN_COLORS={Plains:"#a7c957",Farmlands:"#c9d76a",Steppe:"#cabf76",Savannah:"#d3a24a",Forest:"#386641",Taiga:"#566f4d",Jungle:"#2d6a4f",Hills:"#9c8246",Mountains:"#8d99ae",Desert:"#e9c46a",Marsh:"#52796f",Tundra:"#cad2c5",Glacial:"#cfe3ec",Coast:"#76c7c0",Wasteland:"#6d597a","Floating Reef":"#48bfe3"};
+const TERRAIN_COLORS={Plains:"#a7c957",Farmlands:"#c9d76a",Steppe:"#cabf76",Savannah:"#d3a24a",Forest:"#386641",Taiga:"#566f4d",Jungle:"#2d6a4f",Hills:"#9c8246",Mountains:"#8d99ae",Caverns:"#5e5a6e",Desert:"#e9c46a",Marsh:"#52796f",Tundra:"#cad2c5",Glacial:"#cfe3ec",Coast:"#76c7c0",Wasteland:"#6d597a","Floating Reef":"#48bfe3"};
 const SETTLE_COLORS={Uninhabited:"#26304a",Nomadic:"#b79b6a",Village:"#9bb25f",Town:"#e9c46a",City:"#f4a261",Megalopolis:"#e76f51"};
 // terrain hospitability (population multiplier): grassland/coast thrive, mountains/desert/tundra are harsh
-const TERRAIN_HAB={Plains:1.0,Farmlands:1.25,Steppe:0.55,Savannah:0.6,Coast:1.0,Forest:0.65,Taiga:0.3,Jungle:0.6,Hills:0.5,Marsh:0.4,Desert:0.22,Mountains:0.2,Tundra:0.2,Glacial:0.08,Wasteland:0.1,"Floating Reef":0.5};
+const TERRAIN_HAB={Plains:1.0,Farmlands:1.25,Steppe:0.55,Savannah:0.6,Coast:1.0,Forest:0.65,Taiga:0.3,Jungle:0.6,Hills:0.5,Marsh:0.4,Desert:0.22,Mountains:0.2,Caverns:0.28,Tundra:0.2,Glacial:0.08,Wasteland:0.1,"Floating Reef":0.5};
+// ---- pop growth/decline model (GM-tunable via world.tune.pop) ----
+const POP_TUNE_DEFAULTS={base:5000, jitter:0.25, declinePct:0.15, ceilSteep:5,
+  capitalGrow:1.8, adminGrow:1.3, capitalCeil:1.6, adminCeil:1.3};
+const TERRAIN_GROW_DEFAULT={Plains:1.0,Farmlands:1.4,Steppe:0.6,Savannah:0.65,Forest:0.7,Taiga:0.4,Jungle:0.65,Hills:0.6,Mountains:0.35,Caverns:0.4,Desert:0.3,Marsh:0.45,Tundra:0.3,Glacial:0.12,Coast:1.1,Wasteland:0.15,"Floating Reef":0.6};
+const TERRAIN_CEIL_DEFAULT={Plains:1.0,Farmlands:2.2,Steppe:0.5,Savannah:0.6,Forest:0.7,Taiga:0.35,Jungle:0.6,Hills:0.6,Mountains:0.3,Caverns:0.45,Desert:0.25,Marsh:0.4,Tundra:0.25,Glacial:0.1,Coast:1.3,Wasteland:0.12,"Floating Reef":0.7};
+const SETTLE_CEIL_DEFAULT={Uninhabited:0,Nomadic:9000,Village:35000,Town:130000,City:650000,Megalopolis:2500000};
+const SETTLE_GROW_DEFAULT={Uninhabited:0,Nomadic:0.55,Village:1.0,Town:1.15,City:1.3,Megalopolis:1.1};
+function popTune(){ return (world.tune&&world.tune.pop)||POP_TUNE_DEFAULTS; }
+function terrainGrow(t){ const o=popTune().terrainGrow||{}; return o[t]!=null?o[t]:(TERRAIN_GROW_DEFAULT[t]!=null?TERRAIN_GROW_DEFAULT[t]:1); }
+function terrainCeilMod(t){ const o=popTune().terrainCeil||{}; return o[t]!=null?o[t]:(TERRAIN_CEIL_DEFAULT[t]!=null?TERRAIN_CEIL_DEFAULT[t]:1); }
+function settleGrow(tier){ const o=popTune().settleGrow||{}; if(o[tier]!=null)return o[tier]; if(SETTLE_GROW_DEFAULT[tier]!=null)return SETTLE_GROW_DEFAULT[tier]; const i=(world.lists.settlements||[]).indexOf(tier); return i<=0?0:1; }
+function settleCeilBase(tier){ const o=popTune().settleCeil||{}; if(o[tier]!=null)return o[tier]; if(SETTLE_CEIL_DEFAULT[tier]!=null)return SETTLE_CEIL_DEFAULT[tier]; const i=(world.lists.settlements||[]).indexOf(tier); return i<=0?0:Math.round(20000*Math.pow(4,i-1)); }
+// A province's soft population ceiling: settlement tier × terrain × capital/admin.
+function growthCeiling(p){
+  const base=settleCeilBase(p.settlement); if(base<=0)return 0;
+  let c=base*terrainCeilMod(p.terrain);
+  const r=p.realmId?world.realms.find(x=>x.id===p.realmId):null;
+  if(r){ if(p.id===r.capitalId)c*=popTune().capitalCeil; else if((r.adminCenters||[]).includes(p.id))c*=popTune().adminCeil; }
+  return Math.round(c);
+}
+// Logistic soft cap: growth halves at the ceiling and levels off beyond it.
+function ceilDamp(pop,ceil){ if(ceil<=0)return 0; const r=pop/ceil; return 1/(1+Math.exp((r-1)*(popTune().ceilSteep||5))); }
+function hubGrow(p){ const r=p.realmId?world.realms.find(x=>x.id===p.realmId):null; if(!r)return 1; if(p.id===r.capitalId)return popTune().capitalGrow; if((r.adminCenters||[]).includes(p.id))return popTune().adminGrow; return 1; }
+// One growth (dir>0) or decline (dir<0) step for a single province. Returns true if it changed.
+function popStep(p,dir){
+  const t=popTune(), cur=p.population||0;
+  const jit=1+(Math.random()*2-1)*(t.jitter||0);
+  if(dir>0){
+    const sg=settleGrow(p.settlement); if(sg<=0)return false;            // no growth on uninhabited land
+    const ceil=growthCeiling(p); const damp=ceilDamp(cur,ceil);
+    const inc=Math.round((t.base||5000)*sg*terrainGrow(p.terrain)*hubGrow(p)*damp*jit);
+    if(inc<=0)return false;
+    setProvincePopulation(p, cur+inc); return true;
+  } else {
+    if(cur<=0)return false;
+    const pct=Math.max(0,Math.min(0.95,(t.declinePct||0.15)*jit));
+    setProvincePopulation(p, Math.max(0, Math.round(cur*(1-pct)))); return true;
+  }
+}
+// Resolve the provinces the population tool currently targets.
+function popTargets(){
+  const sc=state.popScope||"world";
+  if(sc==="continent"){ const cid=state.popCont; return cid?world.provinces.filter(p=>p.continentId===cid):[]; }
+  if(sc==="realm"){ const rid=state.popRealm; return rid?world.provinces.filter(p=>p.realmId===rid):[]; }
+  if(sc==="selected"){ return world.provinces.filter(p=>state.popSel.has(p.id)); }
+  return world.provinces.slice();   // world
+}
+// Apply one grow/decline step to every targeted province (single undo step).
+function applyPopStep(){
+  const dir=state.popDir||1, targets=popTargets();
+  if(!targets.length){ flash("Pick a scope with provinces in it first."); return; }
+  beginEdit();
+  let n=0; for(const p of targets){ if(popStep(p,dir))n++; }
+  if(!n){ _undo.pop(); }   // nothing changed — drop the empty snapshot
+  markDirty(); _labelsDirty=true; renderMap(); renderLeft(); updateWorldPop(); renderPopPanel();
+  flash((dir>0?"🌱 Grew ":"📉 Reduced ")+n+" province"+(n===1?"":"s")+".");
+}
+// Seed/prune the per-terrain & per-settlement growth tunables so the model always
+// has an entry for every current category (incl. ones added manually later).
+function seedPopTune(w){
+  w.tune=w.tune||{};
+  const t=w.tune.pop=Object.assign({}, POP_TUNE_DEFAULTS, w.tune.pop||{});
+  t.terrainGrow=t.terrainGrow||{}; t.terrainCeil=t.terrainCeil||{}; t.settleGrow=t.settleGrow||{}; t.settleCeil=t.settleCeil||{};
+  (w.lists.terrains||[]).forEach(tr=>{
+    if(t.terrainGrow[tr]==null) t.terrainGrow[tr]=(TERRAIN_GROW_DEFAULT[tr]!=null?TERRAIN_GROW_DEFAULT[tr]:1);
+    if(t.terrainCeil[tr]==null) t.terrainCeil[tr]=(TERRAIN_CEIL_DEFAULT[tr]!=null?TERRAIN_CEIL_DEFAULT[tr]:1);
+  });
+  (w.lists.settlements||[]).forEach((s,i)=>{
+    if(t.settleGrow[s]==null) t.settleGrow[s]=(SETTLE_GROW_DEFAULT[s]!=null?SETTLE_GROW_DEFAULT[s]:(i<=0?0:1));
+    if(t.settleCeil[s]==null) t.settleCeil[s]=(SETTLE_CEIL_DEFAULT[s]!=null?SETTLE_CEIL_DEFAULT[s]:(i<=0?0:Math.round(20000*Math.pow(4,i-1))));
+  });
+  const T=new Set(w.lists.terrains||[]), S=new Set(w.lists.settlements||[]);
+  Object.keys(t.terrainGrow).forEach(k=>{if(!T.has(k))delete t.terrainGrow[k];});
+  Object.keys(t.terrainCeil).forEach(k=>{if(!T.has(k))delete t.terrainCeil[k];});
+  Object.keys(t.settleGrow).forEach(k=>{if(!S.has(k))delete t.settleGrow[k];});
+  Object.keys(t.settleCeil).forEach(k=>{if(!S.has(k))delete t.settleCeil[k];});
+}
 function terrainHab(t){ const o=(world&&world.tune&&world.tune.terrainHab)||{}; if(o[t]!=null)return o[t]; const v=TERRAIN_HAB[t]; return v!=null?v:0.6; }
 function raceGrowthMod(race){ const o=(world&&world.tune&&world.tune.raceGrowth)||{}; return o[race]!=null?o[race]:1; }
 // province feature categories: Wonders (structures), Resource features, and Misc
@@ -134,9 +214,21 @@ function newForce(x,y,realmId){ return {id:uid(), name:"New Force", domain:"land
   commander:{name:"", strategy:12, leadership:12},
   intel:{name:"", skill:12},
   quartermaster:{name:"", skill:12} }; }
-function newMonster(x,y){ return {id:uid(), name:"New Creature", icon:"🐉", x:Math.round(x), y:Math.round(y), scale:1.4}; }
-// Built-in custom monster images (transparent PNGs in static/img/monsters/).
-const MONSTER_IMAGES=[ {name:"Cyclone", src:"img/monsters/cyclone.png"} ];
+const MONSTER_DEFAULT_ICON="img/monsters/cyclone.png";
+function newMonster(x,y){ return {id:uid(), name:"New Creature", icon:MONSTER_DEFAULT_ICON, description:"", creatureType:"", groupId:null, x:Math.round(x), y:Math.round(y), scale:0.6}; }
+// Custom monster images available in static/img/monsters/ — auto-populated from the server at boot.
+let MONSTER_IMAGES=[ {name:"Cyclone", src:"img/monsters/cyclone.png"} ];
+const DEFAULT_CREATURE_TYPES=[
+  {name:"Beast",      color:"#7a8a5a"},
+  {name:"Dragon",     color:"#b5472e"},
+  {name:"Undead",     color:"#6d7f8a"},
+  {name:"Aberration", color:"#7d5aa8"},
+  {name:"Elemental",  color:"#3f9fc0"},
+  {name:"Fiend",      color:"#8a3d55"},
+];
+function creatureType(id){ return (world.creatureTypes||[]).find(t=>t.id===id) || null; }
+function creatureTypeColorOf(m){ const t=m&&creatureType(m.creatureType); return t?t.color:"#7a3b3b"; }
+function creatureTypeName(m){ const t=m&&creatureType(m.creatureType); return t?t.name:""; }
 function roll3d6(){ return (1+Math.floor(Math.random()*6))+(1+Math.floor(Math.random()*6))+(1+Math.floor(Math.random()*6)); }
 // ---- element field builders (shared by the GM template editor and the force editor) ----
 function elClsSelect(v,ro){ return `<select class="elCls" ${ro?"disabled":""}>${ELEMENT_CLASSES.map(c=>`<option ${c===v?"selected":""}>${esc(c)}</option>`).join("")}</select>`; }
@@ -271,6 +363,11 @@ let state = {
   draftType: "province",    // what the current draft becomes: province | lake | river
   moveDrag: null,           // {p, start:[...points], grab:[wx,wy]} while moving a province
   selWater: null,           // {type:"river"|"lake", id} selected water feature
+  popDir: 1,                // population tool: +1 grow / -1 decline
+  popScope: "world",        // population tool scope: world | continent | realm | selected
+  popCont: null,            // chosen continent id for continent scope
+  popRealm: null,           // chosen realm id for realm scope
+  popSel: new Set(),        // province ids picked for "selected" scope
 };
 const WORLD_W = 4000, WORLD_H = 2600;
 let saveTimer = null;
@@ -355,7 +452,7 @@ function normalize(w){
   if(!w.lists.economies.includes("Uninhabited")) w.lists.economies.unshift("Uninhabited");
   w.realms.forEach(r=>{ if(r.economy==="Primitive Communism")r.economy="Primitive"; });
   // ensure newer terrain types exist in older worlds
-  ["Farmlands","Steppe","Savannah","Taiga","Glacial"].forEach(t=>{ if(!w.lists.terrains.includes(t)) w.lists.terrains.push(t); });
+  ["Farmlands","Steppe","Savannah","Taiga","Glacial","Caverns"].forEach(t=>{ if(!w.lists.terrains.includes(t)) w.lists.terrains.push(t); });
   // "unsettled" defaults for lands with no organised society
   if(!w.lists.religions.includes("No Religion")) w.lists.religions.unshift("No Religion");
   if(!w.lists.cultures.includes("No Culture")) w.lists.cultures.unshift("No Culture");
@@ -394,10 +491,20 @@ function normalize(w){
   w.elementTypes = (Array.isArray(w.elementTypes)&&w.elementTypes.length) ? w.elementTypes : DEFAULT_ELEMENT_TYPES.map(t=>({id:uid(),...t}));
   w.elementTypes.forEach(t=>{ if(!t.id)t.id=uid(); migrateElement(t); });
   w.monsters=w.monsters||[];   // free-floating legendary creatures
+  w.creatureTypes = (Array.isArray(w.creatureTypes)&&w.creatureTypes.length) ? w.creatureTypes : DEFAULT_CREATURE_TYPES.map(t=>({id:uid(),...t}));
+  w.creatureTypes.forEach(t=>{ if(!t.id)t.id=uid(); });
+  w.monsterPresets = Array.isArray(w.monsterPresets) ? w.monsterPresets : [];
+  w.monsterPresets.forEach(pr=>{ if(!pr.id)pr.id=uid(); pr.name=pr.name||""; pr.icon=pr.icon||MONSTER_DEFAULT_ICON; pr.description=pr.description||""; pr.creatureType=pr.creatureType||""; });
+  w.monsterGroups = Array.isArray(w.monsterGroups) ? w.monsterGroups : [];   // legend groupings (ordered)
+  w.monsterGroups.forEach(g=>{ if(!g.id)g.id=uid(); g.name=g.name||"Group"; });
+  w.monsters.forEach(m=>{ if(!m.id)m.id=uid();
+    m.icon=m.icon||MONSTER_DEFAULT_ICON; m.description=typeof m.description==="string"?m.description:"";
+    m.creatureType=m.creatureType||""; if(m.groupId===undefined)m.groupId=null; if(m.scale==null)m.scale=0.6; });
   w.tune=w.tune||{};           // GM-editable simulation values
   w.tune.terrainHab=w.tune.terrainHab||{};
   w.tune.raceGrowth=w.tune.raceGrowth||{};
   w.tune.settleFactors=w.tune.settleFactors||null;
+  seedPopTune(w);              // pop growth/decline tunables (per-terrain & per-settlement)
   // migrate any old per-province monster pins into free map objects
   w.provinces.forEach(p=>{ if(p.monster && (p.monster.name||p.monster.icon)){
     let cx=0,cy=0; (p.points||[]).forEach(([x,y])=>{cx+=x;cy+=y;});
@@ -705,7 +812,7 @@ function computeLabelGroups(mode){
     if(angle>Math.PI/2)angle-=Math.PI; if(angle<-Math.PI/2)angle+=Math.PI;
     const tr=(Sxx+Syy)/2, dd=Math.sqrt(Math.max(0,((Sxx-Syy)/2)**2+Sxy*Sxy));
     const axisLen=Math.sqrt(Math.max(tr+dd,1))*4.2;
-    out.push({text,x:mx,y:my,a:g.a,angle,axisLen});
+    out.push({text,val:g.val,x:mx,y:my,a:g.a,angle,axisLen});
   }
   return out;
 }
@@ -901,18 +1008,21 @@ function isImgIcon(s){ return typeof s==="string" && (/^(img\/|data:|https?:)/i.
 function drawMonsters(ctx,cam,s,cw,ch){
   ctx.save(); ctx.textAlign="center"; ctx.textBaseline="middle";
   for(const m of world.monsters){
-    const sc=m.scale||1.4, R=13*sc*s;             // world-anchored: size scales with zoom (constant vs. the map)
+    const sc=m.scale||0.6, R=13*sc*s;             // world-anchored: size scales with zoom (constant vs. the map)
     const X=(m.x-cam.x)*s, Y=(m.y-cam.y)*s; if(X<-R*3-40||Y<-R*3-40||X>cw+R*3+40||Y>ch+R*3+40)continue;
-    const selm=state.selMonster===m.id, icon=m.icon||"🐉";
-    if(isImgIcon(icon)){                          // custom image — no frame, just the picture
-      const im=ensureImg(icon), D=R*2.6;
+    const selm=state.selMonster===m.id, icon=m.icon||MONSTER_DEFAULT_ICON, ctcol=creatureTypeColorOf(m);
+    // circular frame coloured by creature type (white disc behind so icons/emoji read on any terrain)
+    ctx.beginPath(); ctx.arc(X,Y,R,0,7); ctx.fillStyle="rgba(255,255,255,.92)"; ctx.fill();
+    ctx.lineWidth=Math.max(1.5,R*0.14); ctx.strokeStyle=selm?(state.moveMode==="monster"?"#e0b24e":"#2b3038"):ctcol; ctx.stroke();
+    ctx.save(); ctx.beginPath(); ctx.arc(X,Y,R-ctx.lineWidth*0.5,0,7); ctx.clip();   // keep art inside the frame
+    if(isImgIcon(icon)){
+      const im=ensureImg(icon), D=R*2.0;
       if(im && im.complete && im.naturalWidth){ ctx.drawImage(im, X-D/2, Y-D/2, D, D); }
-      else { ctx.font=`${Math.max(6,Math.round(20*sc*s))}px "Segoe UI Emoji",system-ui,sans-serif`; ctx.fillStyle="#2b3038"; ctx.fillText("🐉",X,Y); }
-    } else {                                      // emoji — soft halo so it stays legible without a frame
-      ctx.save(); ctx.shadowColor="rgba(255,255,255,.95)"; ctx.shadowBlur=Math.min(6,R*0.35);
-      ctx.font=`${Math.max(6,Math.round(20*sc*s))}px "Segoe UI Emoji",system-ui,sans-serif`; ctx.fillStyle="#2b3038"; ctx.fillText(icon,X,Y); ctx.restore();
+      else { ctx.font=`${Math.max(6,Math.round(16*sc*s))}px "Segoe UI Emoji",system-ui,sans-serif`; ctx.fillStyle="#2b3038"; ctx.fillText("🐉",X,Y); }
+    } else {
+      ctx.font=`${Math.max(6,Math.round(17*sc*s))}px "Segoe UI Emoji",system-ui,sans-serif`; ctx.fillStyle="#2b3038"; ctx.fillText(icon,X,Y);
     }
-    if(selm){ ctx.beginPath(); ctx.arc(X,Y,R*1.35,0,7); ctx.lineWidth=2.5; ctx.strokeStyle=(state.moveMode==="monster")?"#e0b24e":"#6f8fc9"; ctx.stroke(); }
+    ctx.restore();
     if(m.name){ ctx.font="600 11px system-ui,sans-serif"; ctx.lineWidth=3.2; ctx.strokeStyle="rgba(255,255,255,.92)"; ctx.strokeText(m.name,X,Y+R+11); ctx.fillStyle="#5a2330"; ctx.fillText(m.name,X,Y+R+11); }
   }
   ctx.restore();
@@ -1275,6 +1385,12 @@ function drawFrame(){
 
   // selected province highlight
   if(state.selProvince){const gs=_provGeo.find(g=>g.p.id===state.selProvince);if(gs){const pts=gs.pts;ctx.beginPath();ctx.moveTo(pts[0][0],pts[0][1]);for(let i=1;i<pts.length;i++)ctx.lineTo(pts[i][0],pts[i][1]);ctx.closePath();ctx.lineWidth=2.5/s;ctx.strokeStyle="#24364f";ctx.stroke();}}
+  // population tool multi-selection (Select scope)
+  if(!VIEWER && state.mapmode==="population" && state.popScope==="selected" && state.popSel && state.popSel.size){
+    ctx.lineWidth=2.5/s; ctx.strokeStyle="#2bd4a0"; ctx.fillStyle="rgba(43,212,160,.20)";
+    for(const gs of _provGeo){ if(!state.popSel.has(gs.p.id))continue; const pts=gs.pts;
+      ctx.beginPath();ctx.moveTo(pts[0][0],pts[0][1]);for(let i=1;i<pts.length;i++)ctx.lineTo(pts[i][0],pts[i][1]);ctx.closePath();ctx.fill();ctx.stroke(); }
+  }
 
   // draft polygon being drawn (+ rubber-band preview to the snapped cursor)
   if(state.draft&&state.focusedContinent){const c=world.continents.find(x=>x.id===state.focusedContinent);if(c){
@@ -1303,10 +1419,13 @@ function drawFrame(){
 
   if(_labelsDirty || _labelMode!==state.mapmode){ _labelGroups=computeLabelGroups(state.mapmode); _labelMode=state.mapmode; _labelsDirty=false; }
 
-  // realm / region names — fade out as we zoom in
+  // realm / region names — fade out as we zoom in.
+  // When a legend item is highlighted, only that value's region label is shown.
+  const _lf = (state.legendFilter && state.legendFilter.mode===state.mapmode) ? state.legendFilter : null;
   if(regionAlpha>0.02){
     ctx.globalAlpha=regionAlpha;
     for(const lg of _labelGroups){
+      if(_lf && lg.val!==_lf.value) continue;
       let fontPx=Math.sqrt(lg.a)*0.20*s; if(fontPx<9) continue; fontPx=Math.min(fontPx,180);
       const X=(lg.x-cam.x)*s, Y=(lg.y-cam.y)*s;
       if(X<-260||Y<-100||X>cw+260||Y>ch+100) continue;
@@ -1603,13 +1722,95 @@ function setPaintTarget(value,label){
 }
 function paintReady(){
   const m=state.mapmode;
+  if(state.paintErase) return m==="political"||PAINTABLE_MODES.includes(m);
   if(m==="political")return !!state.selRealm || state.paintUnclaim;
   return PAINTABLE_MODES.includes(m) && state.paintValue!=null && state.paintValue!=="";
 }
 function paintHint(){
-  if(state.mapmode==="political")return "Pick a realm (left list) or a legend entry to paint with.";
-  if(PAINTABLE_MODES.includes(state.mapmode))return "Click a legend entry (bottom-left) to choose what to paint.";
+  if(PAINTABLE_MODES.includes(state.mapmode))return "Pick what to paint in the Paint panel (bottom-left), then click or drag on the map.";
   return "Painting isn't available in this map mode.";
+}
+// Editor-only floating Paint panel (bottom-left): choose what/how to paint per map mode.
+let _paintCollapsed=true, _popCollapsed=true;   // collapse state for the map tool panels (collapsed by default, like the legend)
+function renderPaintPanel(){
+  let box=document.getElementById("paintPanel");
+  const show = !VIEWER && !document.body.classList.contains("editing") && PAINTABLE_MODES.includes(state.mapmode);
+  if(!show){ if(box)box.remove(); return; }
+  if(!box){ box=document.createElement("div"); box.id="paintPanel"; ($("#stage")||document.body).appendChild(box); }
+  const painting = state.tool==="paint";
+  const head=`<div class="ppHead"><button class="ppCaret" id="ppCaret" title="Collapse / expand">${_paintCollapsed?"▸":"▾"}</button><b>🖌 Paint</b><span class="note" style="margin-left:6px">${esc(MODE_TITLES[state.mapmode]||state.mapmode)}</span>
+    <button class="btn tiny${!painting?" primary":""}" id="ppSelect" style="margin-left:auto" title="Stop painting (select / pan)">🖐</button></div>`;
+  let html="";
+  if(state.mapmode==="political"){
+    const realmOpts=world.realms.map(r=>`<option value="${r.id}" ${(!state.paintUnclaim&&state.selRealm===r.id)?"selected":""}>${esc(r.name)}</option>`).join("");
+    html+=`<div class="ppRow"><select id="ppRealm"><option value="">— pick a realm —</option>${realmOpts}</select></div>
+      <div class="ppModes">
+        <button class="btn tiny ppMode${state.expandMode==="conquer"?" primary":""}" data-exm="conquer">Conquer</button>
+        <button class="btn tiny ppMode${state.expandMode==="settle"?" primary":""}" data-exm="settle">Settle</button>
+        <button class="btn tiny ppMode${state.expandMode==="override"?" primary":""}" data-exm="override">Override</button>
+      </div>
+      <div class="note">Conquer keeps people · Override replaces them with the realm's identity · Settle is being rebuilt (acts like Conquer for now).</div>
+      <div class="ppRow"><button class="btn tiny${(painting&&state.paintUnclaim)?" danger":""}" id="ppErase">🧹 Erase (unclaim)</button><button class="btn tiny" id="ppUndo">↶ Undo</button></div>`;
+  } else {
+    const entries=legendEntries(state.mapmode).filter(e=>e[2]!==undefined);
+    const chips=entries.map(([c,l,v])=>{ const sel=(painting && !state.paintErase && state.paintValue===v);
+      return `<button class="ppChip${sel?" sel":""}" data-v="${esc(String(v))}"><span class="sw" style="background:${c}"></span>${esc(l)}</button>`; }).join("");
+    html+=`<div class="ppChips">${chips||'<span class="note">Nothing to paint here.</span>'}</div>
+      <div class="ppRow"><button class="btn tiny${(painting&&state.paintErase)?" danger":""}" id="ppErase">🧹 Erase</button><button class="btn tiny" id="ppUndo">↶ Undo</button></div>`;
+  }
+  box.innerHTML=head+`<div class="ppBody">${html}</div>`;
+  box.classList.toggle("collapsed",_paintCollapsed);
+  { const cc=$("#ppCaret"); if(cc)cc.onclick=()=>{ _paintCollapsed=!_paintCollapsed; renderPaintPanel(); }; }
+  $("#ppSelect").onclick=()=>{ state.paintErase=false; setTool("select"); };
+  { const u=$("#ppUndo"); if(u)u.onclick=()=>doUndo(); }
+  { const e=$("#ppErase"); if(e)e.onclick=()=>{ state.paintErase=true; state.paintValue=null; state.paintUnclaim=(state.mapmode==="political"); setTool("paint"); renderPaintPanel(); flash("Erase mode — click/drag over provinces."); }; }
+  if(state.mapmode==="political"){
+    const rs=$("#ppRealm"); if(rs)rs.onchange=ev=>{ const v=ev.target.value; if(!v)return; state.selRealm=v; state.paintUnclaim=false; state.paintErase=false; setTool("paint"); renderPaintPanel(); const rr=world.realms.find(x=>x.id===v); flash("Painting with "+(rr?rr.name:"realm")+" ("+state.expandMode+")."); };
+    box.querySelectorAll(".ppMode").forEach(b=>b.onclick=()=>{ state.expandMode=b.dataset.exm; renderPaintPanel(); });
+  } else {
+    box.querySelectorAll(".ppChip").forEach(b=>b.onclick=()=>{ state.paintValue=b.dataset.v; state.paintErase=false; setTool("paint"); renderPaintPanel(); flash("Painting: "+b.dataset.v); });
+  }
+}
+// Editor-only population growth/decline tool — bottom-left of the Population map.
+function renderPopPanel(){
+  let box=document.getElementById("popPanel");
+  const show = !VIEWER && !document.body.classList.contains("editing") && state.mapmode==="population";
+  if(!show){ if(box)box.remove(); return; }
+  if(!box){ box=document.createElement("div"); box.id="popPanel"; ($("#stage")||document.body).appendChild(box); }
+  const dir=state.popDir||1, sc=state.popScope||"world";
+  const scopeBtn=(v,l)=>`<button class="btn tiny ppMode${sc===v?" primary":""}" data-sc="${v}">${l}</button>`;
+  let extra="";
+  if(sc==="continent"){
+    const opts=world.continents.map(c=>`<option value="${c.id}" ${state.popCont===c.id?"selected":""}>${esc(c.name)}</option>`).join("");
+    extra=`<div class="ppRow"><select id="popCont"><option value="">— pick a continent —</option>${opts}</select></div>`;
+  } else if(sc==="realm"){
+    const opts=world.realms.map(r=>`<option value="${r.id}" ${state.popRealm===r.id?"selected":""}>${esc(r.name)}</option>`).join("");
+    extra=`<div class="ppRow"><select id="popRealm"><option value="">— pick a realm —</option>${opts}</select></div>`;
+  } else if(sc==="selected"){
+    extra=`<div class="note" style="margin:4px 0">Click provinces on the map to add/remove them. Selected: <b>${state.popSel.size}</b></div>
+      <div class="ppRow"><button class="btn tiny" id="popClearSel">Clear selection</button></div>`;
+  }
+  const n=popTargets().length;
+  const head=`<div class="ppHead"><button class="ppCaret" id="popCaret" title="Collapse / expand">${_popCollapsed?"▸":"▾"}</button><b>👥 Population</b><span class="note" style="margin-left:6px">${dir>0?"Growth":"Decline"}</span></div>`;
+  box.innerHTML=head+`<div class="ppBody">
+    <div class="ppModes">
+      <button class="btn tiny ppMode${dir>0?" primary":""}" data-dir="1">🌱 Grow</button>
+      <button class="btn tiny ppMode${dir<0?" danger":""}" data-dir="-1">📉 Reduce</button>
+    </div>
+    <div class="note" style="margin:6px 0 2px">Apply to</div>
+    <div class="ppModes">${scopeBtn("world","World")}${scopeBtn("continent","Continent")}${scopeBtn("realm","Realm")}${scopeBtn("selected","Select")}</div>
+    ${extra}
+    <div class="ppRow"><button class="btn ${dir>0?"primary":"danger"}" id="popApply" style="flex:1">${dir>0?"🌱 Grow":"📉 Reduce"} · ${n} prov${n===1?"":"s"}</button><button class="btn tiny" id="popUndo" title="Undo">↶</button></div>
+    <div class="note">Baseline ${(popTune().base||5000).toLocaleString()} ±${Math.round((popTune().jitter||0)*100)}%, shaped by terrain, settlement tier, capital/admin &amp; each province's growth ceiling. Tune it in the GM Screen.</div></div>`;
+  box.classList.toggle("collapsed",_popCollapsed);
+  { const cc=$("#popCaret"); if(cc)cc.onclick=()=>{ _popCollapsed=!_popCollapsed; renderPopPanel(); }; }
+  box.querySelectorAll("[data-dir]").forEach(b=>b.onclick=()=>{ state.popDir=+b.dataset.dir; renderPopPanel(); });
+  box.querySelectorAll("[data-sc]").forEach(b=>b.onclick=()=>{ state.popScope=b.dataset.sc; renderPopPanel(); renderMap(); });
+  { const s=$("#popCont"); if(s)s.onchange=e=>{ state.popCont=e.target.value||null; renderPopPanel(); }; }
+  { const s=$("#popRealm"); if(s)s.onchange=e=>{ state.popRealm=e.target.value||null; renderPopPanel(); }; }
+  { const c=$("#popClearSel"); if(c)c.onclick=()=>{ state.popSel.clear(); renderPopPanel(); renderMap(); }; }
+  $("#popApply").onclick=applyPopStep;
+  $("#popUndo").onclick=()=>{ doUndo(); renderPopPanel(); };
 }
 function joinRealmDefaults(p, realmId){
   // When an uninhabited province joins a realm, seed it as a Village and adopt
@@ -1640,7 +1841,8 @@ function expandPaint(p, r){
     deriveProvince(p);
     return;
   }
-  if(mode==="settle"){                              // migrate % of realm pops into this province
+  if(mode==="settle") return;   // gutted — behaves like Conquer for now (shared pop-migration mechanic comes later)
+  if(mode==="settle_DISABLED"){                              // migrate % of realm pops into this province
     const sp=state.settleParams||{}; const pct=Math.max(0,Math.min(100,sp.pct??8))/100; if(pct<=0)return;
     const match=q=>{
       if(sp.byReligion && q.religion!==r.stateReligion) return false;
@@ -1699,18 +1901,24 @@ function paintProvince(p){   // returns true if it changed something (and auto-l
   const m=state.mapmode;
   const fieldMap={political:"realm",terrain:"terrain",settlement:"settlement",resource:"resource",religion:"religion",culture:"culture",race:"race",language:"language",economy:"economy"};
   const field=fieldMap[m]; if(!field)return false;
+  const erasing=!!state.paintErase;
   const old=provTrackedValue(p,field); let changed=false;
-  if(m==="political"){const v=state.paintUnclaim?null:state.selRealm; if(p.realmId!==v){p.realmId=v;changed=true; if(v){const rr=world.realms.find(x=>x.id===v); if(rr)expandPaint(p,rr);}}}
-  else{ const v=state.paintValue; if(v==null||v==="")return false;
-    if(m==="terrain"){if(p.terrain!==v){p.terrain=v;changed=true;}}
-    else if(m==="settlement"){if(p.settlement!==v){p.settlement=v;changed=true;}}
+  if(m==="political"){
+    const v=(erasing||state.paintUnclaim)?null:state.selRealm;
+    if(!erasing && !state.paintUnclaim && !v) return false;
+    if(p.realmId!==v){ p.realmId=v; changed=true; if(v){const rr=world.realms.find(x=>x.id===v); if(rr)expandPaint(p,rr);} }
+  } else {
+    if(!erasing && (state.paintValue==null||state.paintValue==="")) return false;
+    if(m==="terrain"){ const v=erasing?"":state.paintValue; if(p.terrain!==v){p.terrain=v;changed=true;} }
+    else if(m==="settlement"){ const v=erasing?"Uninhabited":state.paintValue; if(p.settlement!==v){p.settlement=v;changed=true;} }
     else if(m==="resource"){
-      if(state.hiddenResMode){ const nv=(v==="__none__"?"":v); if(p.hidden!==nv){p.hidden=nv;changed=true;} }
-      else if(p.resource!==v){p.resource=v;changed=true;}
+      if(state.hiddenResMode){ const nv=erasing?"":(state.paintValue==="__none__"?"":state.paintValue); if(p.hidden!==nv){p.hidden=nv;changed=true;} }
+      else { const v=erasing?"":state.paintValue; if(p.resource!==v){p.resource=v;changed=true;} }
     }
-    else{ // religion/culture/race/language/economy — convert every pop group in the province
-      if(!(p.pops&&p.pops.length))return false;   // no people here to convert
-      let any=false; p.pops.forEach(q=>{if(q[m]!==v){q[m]=v;any=true;}});
+    else{ // religion/culture/race/language/economy — convert EVERY pop group in the province
+      if(!(p.pops&&p.pops.length))return false;   // no people here to convert/erase
+      const v=erasing?"":state.paintValue; let any=false;
+      p.pops.forEach(q=>{if(q[m]!==v){q[m]=v;any=true;}});
       if(any){deriveProvince(p);changed=true;}
     }
   }
@@ -1718,6 +1926,11 @@ function paintProvince(p){   // returns true if it changed something (and auto-l
   return changed;
 }
 function onProvinceClick(p){
+  // Population tool, "Select" scope: clicking toggles the province in the multi-selection.
+  if(!VIEWER && state.mapmode==="population" && state.popScope==="selected"){
+    if(state.popSel.has(p.id)) state.popSel.delete(p.id); else state.popSel.add(p.id);
+    renderMap(); renderPopPanel(); return;
+  }
   if(state.tool==="paint"){
     if(!paintReady()){flash(paintHint());return;}
     if(paintProvince(p)){ _labelsDirty=true; renderMap(); renderLeft(); markDirty(); }
@@ -1735,6 +1948,7 @@ function toggleResourceHighlight(p){
 }
 // Click a legend entry (view/select mode) to spotlight only matching provinces.
 function legendClickValue(v){
+  if(state.mapmode==="population")return;              // population legend is a reference key only — not clickable
   if(state.mapmode==="resource"){                     // resources reuse the family spotlight + banner
     state.selResource = (state.selResource===v) ? null : v;
     updateResSpot(); renderMap(); return;
@@ -1999,24 +2213,46 @@ function splitForce(f){
   };
 }
 // Pre-rolled GURPS Mass Combat battle summary (framework — no logistics).
+function monsterIconHTML(m,cls){ return isImgIcon(m.icon)?`<img class="${cls||''}" src="${esc(m.icon)}"/>`:`<span class="${cls||''} monEmoji">${esc(m.icon||"🐉")}</span>`; }
 function renderMonsterEditor(){
   const ins=$("#inspector"); const m=world.monsters.find(x=>x.id===state.selMonster);
   if(!m){ins.innerHTML='<div class="empty">No creature selected.</div>';return;}
-  const ro=VIEWER;
+  const ct=creatureType(m.creatureType), ctcol=ct?ct.color:"#7a3b3b", ctname=ct?ct.name:"";
+  if(VIEWER){        // viewer: name, icon, creature type, description only — panel coloured by creature type
+    ins.innerHTML=`
+      <div class="monCard" style="--ct:${ctcol}">
+        <div class="monCardHead">
+          <span class="monFrame" style="border-color:${ctcol}">${monsterIconHTML(m,"monBigIcon")}</span>
+          <div class="monHeadText"><div class="monName">${esc(m.name||"(unnamed)")}</div>${ctname?`<div class="monType" style="color:${ctcol}">${esc(ctname)}</div>`:""}</div>
+        </div>
+        ${m.description?`<div class="monDesc">${esc(m.description)}</div>`:'<div class="note">No description.</div>'}
+      </div>`;
+    return;
+  }
+  const presetOpts=`<option value="">— pick a preset —</option>`+world.monsterPresets.map(pr=>`<option value="${pr.id}">${esc(pr.name||"(unnamed)")}</option>`).join("");
+  const typeOpts=`<option value="">— none —</option>`+world.creatureTypes.map(t=>`<option value="${t.id}" ${m.creatureType===t.id?"selected":""}>${esc(t.name)}</option>`).join("");
   ins.innerHTML=`
-    <div class="insTitle"><input id="mname" value="${esc(m.name||"")}" placeholder="Creature name" ${ro?"disabled":""}/></div>
-    <div class="note">A free-floating map token — drag it anywhere on the <b>Monsters</b> map.</div>
+    <div class="insTitle" style="border-bottom:3px solid ${ctcol};padding-bottom:4px"><input id="mname" value="${esc(m.name||"")}" placeholder="Creature name"/></div>
     <div class="field2">
-      <div class="field"><label>Icon <span class="note">(emoji or image path)</span></label><input id="mico" value="${esc(m.icon||"🐉")}" placeholder="🐉 or img/monsters/cyclone.png" ${ro?"disabled":""}/></div>
-      <div class="field"><label>Size — <b id="mscv">${(m.scale||1.4).toFixed(1)}×</b></label><input id="mscale" type="range" min="0.6" max="4" step="0.1" value="${m.scale||1.4}" ${ro?"disabled":""}/></div>
+      <div class="field"><label>Load from preset</label><select id="mpreset">${presetOpts}</select></div>
+      <div class="field"><label>Creature type</label><select id="mtype">${typeOpts}</select></div>
     </div>
-    ${ro?"":`<div class="field"><label>Custom images</label><div class="monImgRow">${MONSTER_IMAGES.map(mi=>`<button class="monImgBtn" data-src="${mi.src}" title="${esc(mi.name)}"><img src="${mi.src}"/></button>`).join("")}</div></div>`}
-    ${ro?"":`<div class="btnrow"><button class="btn${state.moveMode==="monster"?" primary":""}" id="mmove">✥ ${state.moveMode==="monster"?"Moving… (click to stop)":"Move"}</button><button class="btn danger" id="mdel">Delete</button></div>`}`;
-  if(ro)return;
+    <div class="field2">
+      <div class="field"><label>Icon <span class="note">(emoji or image)</span></label><input id="mico" value="${esc(m.icon||"")}" placeholder="🐉 or img/monsters/…"/></div>
+      <div class="field"><label>Size — <b id="mscv">${(m.scale||0.6).toFixed(1)}×</b></label><input id="mscale" type="range" min="0.3" max="4" step="0.1" value="${m.scale||0.6}"/></div>
+    </div>
+    <div class="field"><label>Images <span class="note">(from img/monsters/)</span></label><div class="monImgRow">${MONSTER_IMAGES.map(mi=>`<button class="monImgBtn${m.icon===mi.src?' sel':''}" data-src="${esc(mi.src)}" title="${esc(mi.name)}"><img src="${esc(mi.src)}"/></button>`).join("")}</div></div>
+    <div class="field"><label>Description</label><textarea id="mdesc" rows="4" placeholder="What is this creature?">${esc(m.description||"")}</textarea></div>
+    <div class="btnrow"><button class="btn${state.moveMode==="monster"?" primary":""}" id="mmove">✥ ${state.moveMode==="monster"?"Moving… (click to stop)":"Move"}</button><button class="btn danger" id="mdel">Delete</button></div>`;
   $("#mname").addEventListener("input",e=>{m.name=e.target.value;renderMap();renderLegend();markDirty();});
+  $("#mtype").addEventListener("change",e=>{m.creatureType=e.target.value;renderMap();renderLegend();renderMonsterEditor();markDirty();});
   $("#mico").addEventListener("input",e=>{m.icon=e.target.value;renderMap();renderLegend();markDirty();});
-  ins.querySelectorAll(".monImgBtn").forEach(b=>b.addEventListener("click",()=>{ m.icon=b.dataset.src; const mi=$("#mico"); if(mi)mi.value=m.icon; renderMap(); renderLegend(); markDirty(); }));
+  $("#mdesc").addEventListener("input",e=>{m.description=e.target.value;renderLegend();markDirty();});
+  ins.querySelectorAll(".monImgBtn").forEach(b=>b.addEventListener("click",()=>{ m.icon=b.dataset.src; renderMap();renderLegend();renderMonsterEditor();markDirty(); }));
   $("#mscale").addEventListener("input",e=>{m.scale=+e.target.value;$("#mscv").textContent=(+e.target.value).toFixed(1)+"×";renderMap();markDirty();});
+  $("#mpreset").addEventListener("change",e=>{ const pr=world.monsterPresets.find(x=>x.id===e.target.value); if(!pr)return;
+    beginEdit(); m.name=pr.name||m.name; m.icon=pr.icon||m.icon; m.description=pr.description||""; m.creatureType=pr.creatureType||"";
+    renderMap();renderLegend();renderMonsterEditor();markDirty(); flash("Loaded preset “"+(pr.name||"")+"” — edit freely for this creature."); });
   $("#mmove").addEventListener("click",()=>{ if(state.moveMode==="monster"){ state.moveMode=null; } else { state.moveMode="monster"; flash("Move mode on — click the map to relocate “"+(m.name||"creature")+"”. Click Move again (or Esc) to stop."); } renderMap(); renderMonsterEditor(); });
   $("#mdel").addEventListener("click",()=>{ if(!confirm("Delete this creature?"))return; beginEdit(); world.monsters=world.monsters.filter(x=>x.id!==m.id); state.selMonster=null; state.moveMode=null; clearSelection(); ins.innerHTML='<div class="empty">Creature deleted.</div>'; markDirty(); });
 }
@@ -2128,7 +2364,15 @@ const PAINTABLE_MODES=["political","terrain","settlement","religion","culture","
 // compact floating legend shown directly on the map (mobile)
 function buildMapLegend(){
   const box=$("#mapLegend"); if(!box)return;
-  if(typeof world==="undefined" || !world || !document.body.classList.contains("mobile") || state.mapmode==="imported"){ box.classList.add("hidden"); return; }
+  if(typeof world==="undefined" || !world || state.mapmode==="imported"){ box.classList.add("hidden"); return; }
+  if(state.mapmode==="monster" || state.mapmode==="military"){   // custom legends rendered right on the map
+    box.classList.remove("hidden");
+    box.innerHTML=`<button class="mlHead">${esc(MODE_TITLES[state.mapmode]||"Legend")}</button><div class="mlList" id="mlCustomBody"></div>`;
+    box.querySelector(".mlHead").onclick=()=>box.classList.toggle("open");
+    const body=box.querySelector("#mlCustomBody");
+    if(state.mapmode==="monster") renderMonsterLegend(body); else renderForceLegend(body);
+    return;
+  }
   const entries=legendEntries(state.mapmode);
   if(!entries.length){ box.classList.add("hidden"); return; }
   box.classList.remove("hidden");
@@ -2162,19 +2406,64 @@ function renderForceLegend(box){
     box.appendChild(row);
   });
 }
+const _monGroupCollapsed=new Set();
+function moveMonsterInLegend(m,dir){
+  const a=world.monsters, i=a.indexOf(m); let j=i+dir;
+  while(j>=0&&j<a.length&&a[j].groupId!==m.groupId) j+=dir;   // swap with nearest neighbour in the same group/list
+  if(j<0||j>=a.length)return; [a[i],a[j]]=[a[j],a[i]]; renderLegend(); markDirty();
+}
+function monsterLegendRow(m, ed){
+  const row=div("li"+(state.selMonster===m.id?" sel":""));
+  const ic=m.icon||MONSTER_DEFAULT_ICON;
+  const icHTML=isImgIcon(ic)?`<img class="monRowIcon" src="${esc(ic)}"/>`:`<span style="width:16px;display:inline-block;text-align:center">${esc(ic)}</span>`;
+  const grp = ed ? `<select class="mRowGrp" title="Group" style="max-width:82px;margin-left:4px"><option value="">(none)</option>${world.monsterGroups.map(g=>`<option value="${g.id}" ${m.groupId===g.id?"selected":""}>${esc(g.name)}</option>`).join("")}</select>` : "";
+  row.style.display="flex"; row.style.alignItems="center"; row.style.gap="5px"; row.style.cursor="pointer";
+  row.innerHTML=`${icHTML}<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m.name||"(unnamed)")}</span>${grp}${ed?`<span class="monReorder"><button class="btn tiny mUp">↑</button><button class="btn tiny mDn">↓</button></span>`:""}`;
+  if(state.selMonster===m.id){row.style.outline="2px solid var(--accent)";row.style.borderRadius="6px";}
+  row.addEventListener("click",ev=>{ if(ev.target.closest("select,button"))return; selectMonster(m.id); centerOn(m.x,m.y); });
+  if(ed){
+    row.querySelector(".mRowGrp").addEventListener("change",e=>{ m.groupId=e.target.value||null; renderLegend(); markDirty(); });
+    row.querySelector(".mUp").addEventListener("click",()=>moveMonsterInLegend(m,-1));
+    row.querySelector(".mDn").addEventListener("click",()=>moveMonsterInLegend(m,1));
+  }
+  return row;
+}
 function renderMonsterLegend(box){
-  if(!VIEWER){ const b=document.createElement("button"); b.className="btn tiny primary"; b.style.marginBottom="6px"; b.textContent="＋ Add creature";
-    b.onclick=addMonsterAtCenter; box.appendChild(b); }
-  if(!world.monsters.length){ const n=div("note"); n.textContent=VIEWER?"No legendary creatures.":"No creatures yet. Click ＋ Add creature, then use ✥ Move to place it."; box.appendChild(n); return; }
-  world.monsters.forEach(m=>{
-    const row=div("li"+(state.selMonster===m.id?" sel":""));
-    const ic=m.icon||"🐉";
-    const icHTML=isImgIcon(ic)?`<img src="${esc(ic)}" style="width:16px;height:16px;object-fit:contain;vertical-align:middle"/>`:`<span style="width:16px;display:inline-block;text-align:center">${esc(ic)}</span>`;
-    row.innerHTML=`${icHTML} ${esc(m.name||"(unnamed)")}`;
-    if(state.selMonster===m.id){row.style.outline="2px solid var(--accent)";row.style.borderRadius="6px";}
-    row.style.cursor="pointer"; row.onclick=()=>{selectMonster(m.id);centerOn(m.x,m.y);};
-    box.appendChild(row);
+  const ed=!VIEWER;
+  if(ed){
+    const bar=div(""); bar.style.cssText="display:flex;gap:6px;margin-bottom:6px";
+    const b=document.createElement("button"); b.className="btn tiny primary"; b.textContent="＋ Creature"; b.onclick=addMonsterAtCenter; bar.appendChild(b);
+    const g=document.createElement("button"); g.className="btn tiny"; g.textContent="＋ Group"; g.onclick=()=>{ world.monsterGroups.push({id:uid(),name:"New Group"}); renderLegend(); markDirty(); }; bar.appendChild(g);
+    box.appendChild(bar);
+  }
+  if(!world.monsters.length && !world.monsterGroups.length){ const n=div("note"); n.textContent=VIEWER?"No legendary creatures.":"No creatures yet. Click ＋ Creature, then ✥ Move to place it."; box.appendChild(n); return; }
+  const groups=world.monsterGroups||[];
+  groups.forEach((grp,gi)=>{
+    const members=world.monsters.filter(m=>m.groupId===grp.id);
+    const collapsed=_monGroupCollapsed.has(grp.id);
+    const gEl=div("monGroup"+(collapsed?" collapsed":""));
+    const head=div("monGroupHead");
+    head.innerHTML=`<span class="caret">${collapsed?"▸":"▾"}</span>`
+      +(ed?`<input class="mgName" value="${esc(grp.name)}" style="flex:1;min-width:0"/>`:`<span style="flex:1">${esc(grp.name)}</span>`)
+      +`<span class="note">${members.length}</span>`
+      +(ed?`<span class="monReorder"><button class="btn tiny mgUp">↑</button><button class="btn tiny mgDn">↓</button><button class="btn tiny mgDel" style="color:var(--bad)">✕</button></span>`:"");
+    head.addEventListener("click",ev=>{ if(ev.target.closest("input,button"))return; if(collapsed)_monGroupCollapsed.delete(grp.id); else _monGroupCollapsed.add(grp.id); renderLegend(); });
+    if(ed){
+      head.querySelector(".mgName").addEventListener("input",e=>{grp.name=e.target.value;markDirty();});
+      head.querySelector(".mgUp").addEventListener("click",()=>{ if(gi>0){const a=world.monsterGroups;[a[gi-1],a[gi]]=[a[gi],a[gi-1]];renderLegend();markDirty();} });
+      head.querySelector(".mgDn").addEventListener("click",()=>{ const a=world.monsterGroups; if(gi<a.length-1){[a[gi+1],a[gi]]=[a[gi],a[gi+1]];renderLegend();markDirty();} });
+      head.querySelector(".mgDel").addEventListener("click",()=>{ if(!confirm(`Delete group "${grp.name}"? Its creatures become ungrouped (not deleted).`))return; world.monsters.forEach(m=>{if(m.groupId===grp.id)m.groupId=null;}); world.monsterGroups.splice(gi,1); renderLegend(); markDirty(); });
+    }
+    gEl.appendChild(head);
+    const body=div("monGroupBody");
+    if(!members.length){ const n=div("note"); n.style.padding="4px 8px"; n.textContent="(empty — assign creatures to this group)"; body.appendChild(n); }
+    members.forEach(m=>body.appendChild(monsterLegendRow(m,ed)));
+    gEl.appendChild(body);
+    box.appendChild(gEl);
   });
+  // ungrouped creatures
+  const ungrouped=world.monsters.filter(m=>!m.groupId || !groups.some(g=>g.id===m.groupId));
+  ungrouped.forEach(m=>box.appendChild(monsterLegendRow(m,ed)));
 }
 function centerOn(wx,wy){
   const cv=$("#map"); const cw=cv.clientWidth||800, ch=cv.clientHeight||600;
@@ -2183,6 +2472,8 @@ function centerOn(wx,wy){
 function renderLegend(){
   refreshMapmodeBar();
   buildMapLegend();
+  renderPaintPanel();
+  renderPopPanel();
   const box=$("#legend");box.innerHTML="";
   if(state.mapmode==="imported"){box.innerHTML='<div class="note">Original imported province colors.</div>';return;}
   if(state.mapmode==="military"){ renderForceLegend(box); return; }
@@ -2190,19 +2481,12 @@ function renderLegend(){
   const paintable=PAINTABLE_MODES.includes(state.mapmode) && !VIEWER;
   legendEntries(state.mapmode).forEach(([c,l,v])=>{
     const d=div("li");d.innerHTML=`<span class="swatch" style="background:${c}"></span>${esc(l)}`;
-    if(v!==undefined){
-      if(paintable && state.tool==="paint"){                    // paint mode: click to paint
-        const sel=(state.mapmode==="political"? (state.paintUnclaim? v==="__none__": state.selRealm===v) : state.paintValue===v);
-        if(sel){d.style.outline="2px solid var(--accent)";d.style.borderRadius="6px";}
-        d.style.cursor="pointer"; d.title="Click to paint provinces with this";
-        d.onclick=()=>setPaintTarget(v,l);
-      } else {                                                   // view/select mode: click to spotlight
-        const active=(state.mapmode==="resource") ? (state.selResource===v)
-                    : (state.legendFilter && state.legendFilter.mode===state.mapmode && state.legendFilter.value===v);
-        if(active){d.style.outline="2px solid var(--accent)";d.style.borderRadius="6px";}
-        d.style.cursor="pointer"; d.title="Click to show only these provinces (click again or the map to clear)";
-        d.onclick=()=>legendClickValue(v);
-      }
+    if(v!==undefined){                                          // legend clicks ONLY spotlight — never paint
+      const active=(state.mapmode==="resource") ? (state.selResource===v)
+                  : (state.legendFilter && state.legendFilter.mode===state.mapmode && state.legendFilter.value===v);
+      if(active){d.style.outline="2px solid var(--accent)";d.style.borderRadius="6px";}
+      d.style.cursor="pointer"; d.title="Click to show only these provinces (click again or the map to clear)";
+      d.onclick=()=>legendClickValue(v);
     }
     box.appendChild(d);
   });
@@ -2876,6 +3160,7 @@ function setTool(t){
   if(t==="move"){flash("Move: drag a province to reposition it — it snaps to neighboring provinces.");}
   if(t==="nodes"){flash(state.selProvince?"Reshape: drag a corner to move it; double-click a corner to remove, or an edge to add one.":"Select a province first, then use Nodes to reshape it.");}
   if(t==="paint"&&!paintReady()){flash(paintHint());}
+  renderPaintPanel();
   requestRender();
 }
 function finishDraft(){
@@ -3215,6 +3500,10 @@ function handleTapWorld(wx,wy){
   }
   const mobile=document.body.classList.contains("mobile");
   const p=provinceAt(wx,wy);
+  if(p && !VIEWER && state.mapmode==="population" && state.popScope==="selected"){
+    if(state.popSel.has(p.id))state.popSel.delete(p.id); else state.popSel.add(p.id);
+    renderMap(); renderPopPanel(); return;
+  }
   if(p && state.tool==="paint" && paintReady()){ beginEdit(); beginExpandStroke(); if(paintProvince(p)){_labelsDirty=true;renderMap();renderLeft();markDirty();} return; }
   if(p && state.mapmode==="resource"){ toggleResourceHighlight(p); if(!mobile){selectProvince(p.id);}else{renderMap();} return; }
   if(p && !mobile){ selectProvince(p.id); return; }   // mobile: no province view — just pan the map
@@ -3534,6 +3823,11 @@ function applyListRename(k,ov,nv){
   if(world.tune){
     if(k==="terrains"&&world.tune.terrainHab&&world.tune.terrainHab[ov]!==undefined){world.tune.terrainHab[nv]=world.tune.terrainHab[ov];delete world.tune.terrainHab[ov];}
     if(k==="races"&&world.tune.raceGrowth&&world.tune.raceGrowth[ov]!==undefined){world.tune.raceGrowth[nv]=world.tune.raceGrowth[ov];delete world.tune.raceGrowth[ov];}
+    const carry=(o)=>{ if(o&&o[ov]!==undefined){o[nv]=o[ov];delete o[ov];} };
+    if(world.tune.pop){
+      if(k==="terrains"){ carry(world.tune.pop.terrainGrow); carry(world.tune.pop.terrainCeil); }
+      if(k==="settlements"){ carry(world.tune.pop.settleGrow); carry(world.tune.pop.settleCeil); }
+    }
   }
 }
 function listUsageCount(k,v){
@@ -3569,6 +3863,10 @@ function applyListDelete(k,v){
   if(world.tune){
     if(k==="terrains"&&world.tune.terrainHab)delete world.tune.terrainHab[v];
     if(k==="races"&&world.tune.raceGrowth)delete world.tune.raceGrowth[v];
+    if(world.tune.pop){
+      if(k==="terrains"){ delete world.tune.pop.terrainGrow[v]; delete world.tune.pop.terrainCeil[v]; }
+      if(k==="settlements"){ delete world.tune.pop.settleGrow[v]; delete world.tune.pop.settleCeil[v]; }
+    }
   }
 }
 const LIST_KEYS=[["religions","Religions"],["cultures","Cultures"],["races","Races"],["languages","Languages"],["terrains","Terrains"],["settlements","Settlement tiers"],["resources","Resources"],["hiddenResources","Strategic resources"],["features","Features"],["governments","Government types"],["economies","Modes of Production"]];
@@ -3645,6 +3943,7 @@ function syncTuneKeys(){
   const T=new Set(terrains), R=new Set(races);
   Object.keys(world.tune.terrainHab).forEach(t=>{ if(!T.has(t)) delete world.tune.terrainHab[t]; });
   Object.keys(world.tune.raceGrowth).forEach(r=>{ if(!R.has(r)) delete world.tune.raceGrowth[r]; });
+  seedPopTune(world);   // keep pop growth/ceiling tunables in step with current terrains & settlement tiers
 }
 function tuneValuesHTML(){
   const SETTLE_LABELS=["Uninhabited","Nomadic","Village","Town","City","Megalopolis"];
@@ -3683,6 +3982,52 @@ function wireTuneValues(){
   const adm=$("#tuneAdm"); if(adm)adm.addEventListener("input",e=>{world.adminBoost=Math.max(1,+e.target.value||1);markDirty();});
   const rst=$("#tuneReset"); if(rst)rst.addEventListener("click",()=>{ if(!confirm("Reset terrain habitability, race growth, settlement factors and key-location boosts to their defaults?"))return; world.tune.terrainHab={}; world.tune.raceGrowth={}; world.tune.settleFactors=null; delete world.capitalBoost; delete world.adminBoost; markDirty(); openGMScreen(); });
 }
+function renderCreatureTypes(){
+  const box=$("#creatureTypes"); if(!box)return; box.innerHTML="";
+  world.creatureTypes=world.creatureTypes||[];
+  world.creatureTypes.forEach((t,i)=>{
+    const row=div("ctRow");
+    row.innerHTML=`<input type="color" class="ctCol" value="${toHex(t.color||'#7a3b3b')}"/>
+      <input class="ctName" value="${esc(t.name||"")}" placeholder="Type name"/>
+      <span class="monReorder"><button class="btn tiny ctUp">↑</button><button class="btn tiny ctDown">↓</button><button class="btn tiny ctDel" style="color:var(--bad)">✕</button></span>`;
+    row.querySelector(".ctCol").addEventListener("input",e=>{t.color=e.target.value;renderMap();markDirty();});
+    row.querySelector(".ctName").addEventListener("input",e=>{t.name=e.target.value;renderLegend();markDirty();});
+    row.querySelector(".ctUp").addEventListener("click",()=>{ if(i>0){const a=world.creatureTypes;[a[i-1],a[i]]=[a[i],a[i-1]];renderCreatureTypes();markDirty();} });
+    row.querySelector(".ctDown").addEventListener("click",()=>{ const a=world.creatureTypes; if(i<a.length-1){[a[i+1],a[i]]=[a[i],a[i+1]];renderCreatureTypes();markDirty();} });
+    row.querySelector(".ctDel").addEventListener("click",()=>{ if(!confirm(`Delete creature type "${t.name}"? Creatures using it lose their colour.`))return; world.creatureTypes.splice(i,1); renderCreatureTypes(); renderMap(); markDirty(); });
+    box.appendChild(row);
+  });
+}
+function renderMonsterPresets(){
+  const box=$("#monsterPresets"); if(!box)return; box.innerHTML="";
+  world.monsterPresets=world.monsterPresets||[];
+  const typeOpts=v=>`<option value="">— type —</option>`+world.creatureTypes.map(t=>`<option value="${t.id}" ${v===t.id?"selected":""}>${esc(t.name)}</option>`).join("");
+  const imgOpts=v=>MONSTER_IMAGES.map(mi=>`<option value="${esc(mi.src)}" ${v===mi.src?"selected":""}>${esc(mi.name)}</option>`).join("");
+  world.monsterPresets.forEach((pr,i)=>{
+    const row=div("elRow");
+    row.innerHTML=`
+      <div class="elRowHead"><span class="monReorder"><button class="btn tiny mpUp">↑</button><button class="btn tiny mpDown">↓</button><button class="btn tiny mpDel" style="color:var(--bad)">✕</button></span></div>
+      <div class="field2">
+        <div class="field"><label>Name</label><input class="mpName" value="${esc(pr.name||"")}" placeholder="e.g. Dire Animal"/></div>
+        <div class="field"><label>Creature type</label><select class="mpType">${typeOpts(pr.creatureType)}</select></div>
+      </div>
+      <div class="field2">
+        <div class="field"><label>Icon (emoji or image)</label><input class="mpIcon" value="${esc(pr.icon||"")}" placeholder="🐺 or img/monsters/…"/></div>
+        <div class="field"><label>Pick image</label><select class="mpImg"><option value="">—</option>${imgOpts(pr.icon)}</select></div>
+      </div>
+      <div class="field"><label>Description</label><textarea class="mpDesc" rows="3">${esc(pr.description||"")}</textarea></div>`;
+    row.querySelector(".mpName").addEventListener("input",e=>{pr.name=e.target.value;markDirty();});
+    row.querySelector(".mpType").addEventListener("change",e=>{pr.creatureType=e.target.value;markDirty();});
+    row.querySelector(".mpIcon").addEventListener("input",e=>{pr.icon=e.target.value;markDirty();});
+    row.querySelector(".mpImg").addEventListener("change",e=>{ if(e.target.value){pr.icon=e.target.value; const ic=row.querySelector(".mpIcon"); if(ic)ic.value=pr.icon; markDirty();} });
+    row.querySelector(".mpDesc").addEventListener("input",e=>{pr.description=e.target.value;markDirty();});
+    row.querySelector(".mpUp").addEventListener("click",()=>{ if(i>0){const a=world.monsterPresets;[a[i-1],a[i]]=[a[i],a[i-1]];renderMonsterPresets();markDirty();} });
+    row.querySelector(".mpDown").addEventListener("click",()=>{ const a=world.monsterPresets; if(i<a.length-1){[a[i+1],a[i]]=[a[i],a[i+1]];renderMonsterPresets();markDirty();} });
+    row.querySelector(".mpDel").addEventListener("click",()=>{ if(!confirm(`Delete preset "${pr.name}"?`))return; world.monsterPresets.splice(i,1); renderMonsterPresets(); markDirty(); });
+    box.appendChild(row);
+  });
+  if(!world.monsterPresets.length){ const n=div("note"); n.textContent="No presets yet."; box.appendChild(n); }
+}
 function renderElementTypes(){
   const box=$("#elemTypes"); if(!box)return; box.innerHTML="";
   world.elementTypes=world.elementTypes||[];
@@ -3705,6 +4050,106 @@ function renderElementTypes(){
     box.appendChild(row);
   });
 }
+/* ===== New GM Screen (v2) — pop growth + category tuning. Blank canvas we build up. ===== */
+function openGM2(){
+  seedPopTune(world);   // ensure an entry exists for every current terrain & settlement tier
+  openModal(`<button class="btn close" onclick="closeModal()">✕ Close</button>
+    <h2>🧭 GM Screen</h2>
+    <div id="gm2Body"></div>`);
+  const m=document.querySelector("#modalHost .modal"); if(m)m.classList.add("gmWide");
+  renderGM2();
+}
+function renderGM2(){
+  const host=$("#gm2Body"); if(!host)return;
+  const t=world.tune.pop;
+  const num=(id,label,val,step,extra)=>`<div class="field" style="flex:1 1 140px"><label>${label}</label><input id="${id}" type="number" step="${step}" ${extra||""} value="${val}"/></div>`;
+  const settleRows=(world.lists.settlements||[]).map((s,i)=>`<tr>
+      <td>${esc(s)}</td>
+      <td><input class="gmSGrow" data-s="${esc(s)}" type="number" step="0.05" min="0" value="${settleGrow(s)}" ${i<=0?"disabled":""}/></td>
+      <td><input class="gmSCeil" data-s="${esc(s)}" type="number" step="1000" min="0" value="${settleCeilBase(s)}" ${i<=0?"disabled":""}/></td>
+    </tr>`).join("");
+  const terrRows=(world.lists.terrains||[]).map(tr=>`<tr>
+      <td><input type="color" class="gmTCol" data-t="${esc(tr)}" value="${toHex(catColor("terrains",tr))}"/></td>
+      <td><input class="gmTName" data-t="${esc(tr)}" value="${esc(tr)}"/></td>
+      <td><input class="gmTGrow" data-t="${esc(tr)}" type="number" step="0.05" min="0" value="${terrainGrow(tr)}"/></td>
+      <td><input class="gmTCeil" data-t="${esc(tr)}" type="number" step="0.05" min="0" value="${terrainCeilMod(tr)}"/></td>
+      <td><button class="btn tiny gmTDel" data-t="${esc(tr)}" style="color:var(--bad)">✕</button></td>
+    </tr>`).join("");
+  host.innerHTML=`
+    <p class="note" style="margin-top:0">🌱 Grow adds a baseline number of people to each province, then bends it by terrain, settlement tier, capital/admin status, and how close the province sits to its <b>growth ceiling</b> — a soft cap that gently levels off (growth halves at the ceiling and tapers beyond it; it's never a hard wall). 📉 Reduce removes a percentage. Every action is a single undo.</p>
+    <div class="gmGrid">
+      <section class="gmBlock">
+        <div class="gmBlockH">👥 Growth basics</div>
+        <div class="gmFields">
+          ${num("gmBase","Baseline growth (people)",t.base,"100",'min="0"')}
+          ${num("gmJitter","Random variation ± (%)",Math.round((t.jitter||0)*100),"1",'min="0"')}
+          ${num("gmDecline","Decline per step (%)",Math.round((t.declinePct||0)*100),"1",'min="0" max="95"')}
+          ${num("gmSteep","Ceiling softness",t.ceilSteep,"0.5",'min="0.5" title="Higher = growth chokes off more sharply near the ceiling"')}
+        </div>
+      </section>
+      <section class="gmBlock">
+        <div class="gmBlockH">⭐ Capital &amp; admin centres</div>
+        <div class="gmFields">
+          ${num("gmCapGrow","Capital growth ×",t.capitalGrow,"0.1",'min="0"')}
+          ${num("gmAdmGrow","Admin growth ×",t.adminGrow,"0.1",'min="0"')}
+          ${num("gmCapCeil","Capital ceiling ×",t.capitalCeil,"0.1",'min="0"')}
+          ${num("gmAdmCeil","Admin ceiling ×",t.adminCeil,"0.1",'min="0"')}
+        </div>
+      </section>
+      <section class="gmBlock">
+        <div class="gmBlockH">🏙 Settlement tiers</div>
+        <p class="note">Each tier's <b>growth ×</b> and <b>base ceiling</b> (soft cap before terrain & capital/admin). Uninhabited never grows.</p>
+        <table class="gm2tbl"><thead><tr><th>Tier</th><th>Growth ×</th><th>Base ceiling</th></tr></thead><tbody>${settleRows}</tbody></table>
+      </section>
+      <section class="gmBlock gmSpanAll">
+        <div class="gmBlockH">⛰ Terrain types &amp; modifiers</div>
+        <p class="note">The terrain map-mode categories: colour, name, pop <b>growth ×</b> and <b>ceiling ×</b> (e.g. Farmlands lift the ceiling a lot, Mountains &amp; Caverns keep it low). Renaming or deleting updates every province; new terrains work everywhere immediately.</p>
+        <table class="gm2tbl"><thead><tr><th>Colour</th><th>Name</th><th>Growth ×</th><th>Ceiling ×</th><th></th></tr></thead><tbody>${terrRows}</tbody></table>
+        <div class="btnrow" style="margin-top:8px">
+          <button class="btn tiny" id="gmAddTerr">＋ Add terrain</button>
+          <button class="btn tiny" id="gmEditLists">✎ Edit other categories…</button>
+        </div>
+      </section>
+    </div>
+    <div class="btnrow" style="margin-top:12px"><button class="btn" id="gmResetPop">↺ Reset growth tunables</button></div>`;
+  // ---- global pop tunables ----
+  const bind=(id,fn)=>{ const el=$("#"+id); if(el)el.addEventListener("input",e=>{ fn(e.target.value); markDirty(); }); };
+  bind("gmBase",v=>t.base=Math.max(0,+v||0));
+  bind("gmJitter",v=>t.jitter=Math.max(0,(+v||0)/100));
+  bind("gmDecline",v=>t.declinePct=Math.max(0,Math.min(0.95,(+v||0)/100)));
+  bind("gmSteep",v=>t.ceilSteep=Math.max(0.1,+v||0.1));
+  bind("gmCapGrow",v=>t.capitalGrow=Math.max(0,+v||0));
+  bind("gmAdmGrow",v=>t.adminGrow=Math.max(0,+v||0));
+  bind("gmCapCeil",v=>t.capitalCeil=Math.max(0,+v||0));
+  bind("gmAdmCeil",v=>t.adminCeil=Math.max(0,+v||0));
+  // ---- settlement tiers ----
+  host.querySelectorAll(".gmSGrow").forEach(el=>el.addEventListener("input",e=>{ t.settleGrow[el.dataset.s]=Math.max(0,+e.target.value||0); markDirty(); }));
+  host.querySelectorAll(".gmSCeil").forEach(el=>el.addEventListener("input",e=>{ t.settleCeil[el.dataset.s]=Math.max(0,Math.round(+e.target.value||0)); markDirty(); }));
+  // ---- terrain rows ----
+  host.querySelectorAll(".gmTCol").forEach(el=>el.addEventListener("input",e=>{ world.colors.terrains=world.colors.terrains||{}; world.colors.terrains[el.dataset.t]=e.target.value; renderMap(); renderLegend(); markDirty(); }));
+  host.querySelectorAll(".gmTGrow").forEach(el=>el.addEventListener("input",e=>{ t.terrainGrow[el.dataset.t]=Math.max(0,+e.target.value||0); markDirty(); }));
+  host.querySelectorAll(".gmTCeil").forEach(el=>el.addEventListener("input",e=>{ t.terrainCeil[el.dataset.t]=Math.max(0,+e.target.value||0); markDirty(); }));
+  host.querySelectorAll(".gmTName").forEach(el=>el.addEventListener("change",e=>{
+    const ov=el.dataset.t, nv=e.target.value.trim();
+    if(!nv||nv===ov){ e.target.value=ov; return; }
+    if(world.lists.terrains.includes(nv)){ flash("A terrain called “"+nv+"” already exists."); e.target.value=ov; return; }
+    const i=world.lists.terrains.indexOf(ov); if(i<0)return;
+    world.lists.terrains[i]=nv; applyListRename("terrains",ov,nv);
+    renderMap(); renderLegend(); markDirty(); renderGM2();
+  }));
+  host.querySelectorAll(".gmTDel").forEach(el=>el.addEventListener("click",()=>{
+    const tr=el.dataset.t;
+    if((world.lists.terrains||[]).length<=1){ flash("Keep at least one terrain type."); return; }
+    const used=listUsageCount("terrains",tr);
+    if(used>0 && !confirm(`“${tr}” is used by ${used} province${used===1?"":"s"}. Delete it and move them to another terrain?`))return;
+    applyListDelete("terrains",tr); if(world.colors.terrains)delete world.colors.terrains[tr];
+    const i=world.lists.terrains.indexOf(tr); if(i>=0)world.lists.terrains.splice(i,1);
+    renderMap(); renderLegend(); markDirty(); renderGM2();
+  }));
+  { const a=$("#gmAddTerr"); if(a)a.onclick=()=>{ let base="New Terrain",name=base,k=2; while(world.lists.terrains.includes(name))name=base+" "+(k++); world.lists.terrains.push(name); seedPopTune(world); markDirty(); renderMap(); renderLegend(); renderGM2(); }; }
+  { const e=$("#gmEditLists"); if(e)e.onclick=()=>openLists("terrains"); }
+  { const r=$("#gmResetPop"); if(r)r.onclick=()=>{ if(!confirm("Reset all population growth tunables (baseline, ceilings, terrain & settlement modifiers) to defaults?"))return; delete world.tune.pop; seedPopTune(world); markDirty(); renderGM2(); }; }
+}
 function openGMScreen(){
   syncTuneKeys();   // add mods for new terrains/races, prune deleted ones
   const contOpts=world.continents.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join("");
@@ -3716,6 +4161,17 @@ function openGMScreen(){
     <p class="note">Templates you drop into armies on the Military map. TL 0 is the Stone Age Warriors. Add your own, edit their stats, and reorder them with ↑/↓. (Values are editable — set them to match your book.)</p>
     <div id="elemTypes"></div>
     <button class="btn tiny" id="elemAdd" style="margin-top:6px">＋ Add element type</button>
+
+    <div class="sectionH">🐉 Creature types</div>
+    <p class="note">Colour-codes each creature's panel and its ring on the Monsters map. Rename, recolour, reorder or add your own.</p>
+    <div id="creatureTypes"></div>
+    <button class="btn tiny" id="ctAdd" style="margin-top:6px">＋ Add creature type</button>
+
+    <div class="sectionH">📖 Monster presets</div>
+    <p class="note">Reusable creatures (name, icon, type, description). On the Monsters map, "Load from preset" fills a new creature from one of these — then edit it freely for that specific spot.</p>
+    <div id="monsterPresets"></div>
+    <button class="btn tiny" id="mpAdd" style="margin-top:6px">＋ Add monster preset</button>
+
     <div class="sectionH">👥 Populate &amp; grow</div>
     <p class="note">Generates realistic populations from a baseline, scaled by <b>terrain hospitability</b>, <b>settlement tier</b>, and <b>capital / admin</b> bonuses (all editable above) — with random variation so no two runs are identical. Newly-populated provinces inherit their realm's identity (or list defaults if unclaimed).</p>
     <div class="field2">
@@ -3818,6 +4274,10 @@ function openGMScreen(){
   wireTuneValues();
   renderElementTypes();
   { const ea=$("#elemAdd"); if(ea)ea.addEventListener("click",()=>{ world.elementTypes.push(migrateElement({id:uid(),name:"New Element",cls:"Fire (F)",ts:5,pts:0,wt:0,mob:"Foot",tl:1,features:[],equip:"Basic",troop:"Average"})); renderElementTypes(); markDirty(); }); }
+  renderCreatureTypes();
+  { const b=$("#ctAdd"); if(b)b.addEventListener("click",()=>{ world.creatureTypes.push({id:uid(),name:"New Type",color:"#7a3b3b"}); renderCreatureTypes(); markDirty(); }); }
+  renderMonsterPresets();
+  { const b=$("#mpAdd"); if(b)b.addEventListener("click",()=>{ world.monsterPresets.push({id:uid(),name:"New Creature",icon:MONSTER_DEFAULT_ICON,description:"",creatureType:(world.creatureTypes[0]&&world.creatureTypes[0].id)||""}); renderMonsterPresets(); markDirty(); }); }
 }
 async function openMenu(){
   const worlds=await listWorlds();
@@ -4019,7 +4479,7 @@ function refreshMapmodeBar(){
   });
 }
 function setMapmode(m){
-  state.mapmode=m; state.paintValue=null; state.paintUnclaim=false;
+  state.mapmode=m; state.paintValue=null; state.paintUnclaim=false; state.paintErase=false;
   if(m!=="resource") state.selResource=null;   // clear the resource spotlight when leaving that map
   state.legendFilter=null;                      // clear any legend spotlight on mode change
   updateResSpot();
@@ -4087,6 +4547,8 @@ function updateMobile(){ document.body.classList.toggle("mobile", window.innerWi
 function wireTopbar(){
   $("#worldName").addEventListener("input",e=>{world.name=e.target.value;markDirty();});
   $("#eraSelect").addEventListener("change",e=>{world.currentEraId=e.target.value;markDirty();});
+  // toggle bar (visual only for now — wiring comes with the next pass)
+  $$("#toggleBar .tgl").forEach(b=>b.addEventListener("click",()=>b.classList.toggle("on")));
   const ms=$("#mapmode"); if(ms)ms.addEventListener("change",e=>setMapmode(e.target.value));
   buildMapmodeBar();
   const wp=$("#worldPop"); if(wp)wp.onclick=toggleWorldPopPanel;
@@ -4103,6 +4565,7 @@ function wireTopbar(){
       else if(e.key==="Escape"){ hideProvFind(); pf.blur(); }
     });
   }
+  const bv=$("#btnView"); if(bv)bv.onclick=togglePreviewViewer;
   $("#worldView").onclick=()=>{worldView();};
   $("#btnNames").onclick=()=>{state.showNames=!state.showNames;$("#btnNames").classList.toggle("on",state.showNames);renderMap();flash(state.showNames?"Landmass names shown — drag a name to reposition it.":"Landmass names hidden.");};
   $("#btnNames").classList.toggle("on",state.showNames);
@@ -4143,6 +4606,7 @@ function wireTopbar(){
     setTimeout(()=>{document.body.innerHTML='<div style="padding:40px;font:16px system-ui;color:#444">Project Sovereign has closed. You can close this window (Alt+F4).</div>';},600);
   };
   { const g=$("#btnGM"); if(g)g.onclick=()=>openGMScreen(); }
+  { const g2=$("#btnGM2"); if(g2)g2.onclick=()=>openGM2(); }
   $("#btnEdit").onclick=()=>{
     state.editMode=!state.editMode;
     document.body.classList.toggle("editing",state.editMode);
@@ -4153,20 +4617,45 @@ function wireTopbar(){
 }
 
 function applyViewerUI(){
+  // chrome hiding is handled by CSS on body.viewer (so it can be toggled by the editor's View Mode)
   document.body.classList.add("viewer");
+  document.body.classList.add("realviewer");   // real published viewer — hide the View Mode toggle
   document.title="Project Sovereign — Atlas";
-  const hide=id=>{const e=document.getElementById(id);if(e)e.style.display="none";};
-  ["btnEdit","btnGM","btnUndo","btnRedo","btnSave","btnQuit","btnMenu","btnLists","manageEras","addContinent","addRealm","paneContinents"].forEach(hide);
-  // paint tool + the whole edit-map tool group
-  const pb=document.querySelector('.btn.tool[data-tool="paint"]'); if(pb)pb.style.display="none";
-  const eg=document.querySelector('.topgroup.tools.editonly'); if(eg)eg.style.display="none";
   const wn=$("#worldName"); if(wn)wn.readOnly=true;
-  const es=$("#eraSelect"); // era switch just changes which era's history reads as "current"; harmless to keep
   flash("Read-only atlas — click provinces and realms to view their details.");
+}
+// Editor-only: preview exactly what the site viewer sees, and toggle back.
+function togglePreviewViewer(){
+  if(BOOT_VIEWER)return;   // real published viewer can't leave viewer mode
+  VIEWER=!VIEWER;
+  document.body.classList.toggle("viewer", VIEWER);
+  const wn=$("#worldName"); if(wn)wn.readOnly=VIEWER;
+  const vb=$("#btnView"); if(vb)vb.classList.toggle("on",VIEWER);
+  if(VIEWER){
+    if(document.body.classList.contains("editing")){ state.editMode=false; document.body.classList.remove("editing"); const be=$("#btnEdit"); if(be)be.classList.remove("on"); }
+    setTool("select"); state.paintErase=false; state.moveMode=null;
+    closeModal();
+  }
+  // rebuild everything through the effective VIEWER flag
+  renderPaintPanel(); renderMap(); renderLeft(); renderLegend();
+  // refresh the open inspector for whichever thing is selected
+  if(state.selForce) renderForceEditor();
+  else if(state.selMonster) renderMonsterEditor();
+  else if(state.selBattle) renderBattleView();
+  else if(state.selProvince) renderProvinceEditor();
+  else if(state.selRealm) renderRealmEditor();
+  else { const ins=$("#inspector"); if(ins)ins.innerHTML=`<div class="empty">${VIEWER?"Welcome to the atlas. Switch map mode and click any province, realm, or creature.":"Select a province, realm, or continent to edit."}</div>`; }
+  flash(VIEWER?"👁 View Mode — seeing exactly what players see. Click again to return to editing.":"Back to the editor.");
+}
+async function loadMonsterImages(){
+  try{ const r=await fetch("/api/monimages"); const j=await r.json();
+    if(j&&Array.isArray(j.images)&&j.images.length) MONSTER_IMAGES=j.images;
+  }catch(e){}
 }
 async function boot(){
   wireTopbar();
   setupMapInteraction();
+  await loadMonsterImages();
   const worlds=await listWorlds();
   if(worlds.length){ await loadWorld(worlds[0]); }
   else { world=normalize(sampleWorld()); afterLoad(); saveWorld(true); }
