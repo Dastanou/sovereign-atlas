@@ -586,8 +586,8 @@ body.viewer #inspector .insTitle input:disabled{font-weight:700; font-size:17px}
   body.m-drawer #left{transform:none}
   body.panels-hidden #left{display:flex}
 
-  #right{position:absolute; z-index:30; left:0; right:0; bottom:0; top:auto; width:auto;
-    border-left:none; border-top:1px solid var(--line); border-radius:16px 16px 0 0; max-height:86vh;
+  #right{position:absolute; z-index:30; left:0; right:0; bottom:0; top:auto; width:auto; max-width:none;
+    border-left:none; border-top:1px solid var(--line); border-radius:16px 16px 0 0; max-height:70vh;
     transform:translateY(105%); transition:transform .25s ease; box-shadow:0 -8px 30px #00000033; display:flex}
   body.has-sel #right{transform:none}
   body.panels-hidden #right{display:flex}
