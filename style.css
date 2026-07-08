@@ -135,6 +135,18 @@ body:not(.has-sel) #right{display:none}
 #paintPanel .ppModes,#popPanel .ppModes{display:flex; gap:4px; margin:4px 0; flex-wrap:wrap}
 #paintPanel .ppModes .btn,#popPanel .ppModes .btn{flex:1}
 #paintPanel .ppChips{display:flex; flex-wrap:wrap; gap:4px; max-height:34vh; overflow:auto}
+/* conversion tool panel — sits beside the paint panel (both show on identity maps) */
+#convPanel{position:absolute; left:250px; bottom:78px; z-index:8; width:230px; max-height:calc(100vh - 210px); overflow:auto;
+  background:#ffffffee; border:1px solid var(--line); border-radius:12px; padding:9px 10px; box-shadow:0 4px 16px #00000022}
+#convPanel .ppHead{display:flex; align-items:center; gap:2px; margin-bottom:7px; font-size:13px}
+#convPanel .ppCaret{background:none; border:none; cursor:pointer; font-size:12px; color:var(--muted); padding:0 3px 0 0; line-height:1}
+#convPanel.collapsed{width:auto}
+#convPanel.collapsed .ppHead{margin-bottom:0}
+#convPanel.collapsed .ppBody{display:none}
+#convPanel .ppRow{display:flex; gap:6px; align-items:center; margin:6px 0}
+#convPanel .ppRow select{flex:1}
+#convPanel .ppModes{display:flex; gap:4px; margin:4px 0; flex-wrap:wrap}
+#convPanel .ppModes .btn{flex:1}
 .ppChip{display:inline-flex; align-items:center; gap:5px; background:#fff; border:1px solid var(--line);
   border-radius:16px; padding:3px 9px; font-size:12.5px; color:var(--ink)}
 .ppChip:hover{border-color:var(--accent)}

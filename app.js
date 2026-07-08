@@ -513,6 +513,13 @@ let state = {
   popCont: null,            // chosen continent id for continent scope
   popRealm: null,           // chosen realm id for realm scope
   popSel: new Set(),        // province ids picked for "selected" scope
+  convertTarget: null,      // conversion tool: target religion/culture/language value
+  convertPct: 30,           // conversion tool: baseline % of pops converted
+  convertFast: false,       // conversion tool: fast-spreading religion (→50%)
+  convertSel: new Set(),    // conversion tool: selected province ids
+  convertCenter: null,      // conversion tool: origin province id (distance falloff)
+  convertSelecting: false,  // conversion tool: clicking/dragging selects provinces
+  convertPickCenter: false, // conversion tool: next click sets the conversion center
   popFavRel: false,         // pop growth: favor the realm's state religion
   popFavRace: false,        // pop growth: favor the realm's admin races
   popFavCul: false,         // pop growth: favor the realm's dominant culture
@@ -1614,6 +1621,16 @@ function drawFrame(){
     for(const gs of _provGeo){ if(!state.popSel.has(gs.p.id))continue; const pts=gs.pts;
       ctx.beginPath();ctx.moveTo(pts[0][0],pts[0][1]);for(let i=1;i<pts.length;i++)ctx.lineTo(pts[i][0],pts[i][1]);ctx.closePath();ctx.fill();ctx.stroke(); }
   }
+  // conversion tool selection (Religion / Culture / Language maps) + origin center
+  if(!VIEWER && CONVERT_AXES[state.mapmode] && state.convertSel && state.convertSel.size){
+    ctx.lineWidth=2.5/s; ctx.strokeStyle="#c98b2b"; ctx.fillStyle="rgba(201,139,43,.22)";
+    for(const gs of _provGeo){ if(!state.convertSel.has(gs.p.id))continue; const pts=gs.pts;
+      ctx.beginPath();ctx.moveTo(pts[0][0],pts[0][1]);for(let i=1;i<pts.length;i++)ctx.lineTo(pts[i][0],pts[i][1]);ctx.closePath();ctx.fill();ctx.stroke(); }
+    if(state.convertCenter){ const gc=_provGeo.find(g=>g.p.id===state.convertCenter);
+      if(gc){ const pts=gc.pts; ctx.lineWidth=4/s; ctx.strokeStyle="#e0b24e";
+        ctx.beginPath();ctx.moveTo(pts[0][0],pts[0][1]);for(let i=1;i<pts.length;i++)ctx.lineTo(pts[i][0],pts[i][1]);ctx.closePath();ctx.stroke();
+        ctx.fillStyle="#e0b24e"; ctx.beginPath(); ctx.arc(gc.cx,gc.cy,5/s,0,7); ctx.fill(); } }
+  }
 
   // draft polygon being drawn (+ rubber-band preview to the snapped cursor)
   if(state.draft&&state.focusedContinent){const c=world.continents.find(x=>x.id===state.focusedContinent);if(c){
@@ -1787,7 +1804,7 @@ function axisPattern(p,key){
   const arr=p[key]; if(!arr||!arr.length)return null;
   const tot=arr.reduce((a,e)=>a+(e.pct||0),0)||100;
   const groups=arr.map(e=>({name:e.name,frac:(e.pct||0)/tot})).filter(g=>g.frac>0.04).sort((a,b)=>b.frac-a.frac);
-  if(groups.length<2 || groups[0].frac>=0.94) return null;          // homogeneous → solid
+  if(groups.length<2 || groups[0].frac>=0.75) return null;          // ≥75% one group → solid fill
   const cat=AXIS_CAT[key]||key;
   const dom=catColor(cat,groups[0].name);
   const minors=groups.slice(1,4).map(g=>catColor(cat,g.name));      // up to 3 distinct minorities
@@ -2010,7 +2027,7 @@ function paintHint(){
   return "Painting isn't available in this map mode.";
 }
 // Editor-only floating Paint panel (bottom-left): choose what/how to paint per map mode.
-let _paintCollapsed=true, _popCollapsed=true;   // collapse state for the map tool panels (collapsed by default, like the legend)
+let _paintCollapsed=true, _popCollapsed=true, _convCollapsed=true;   // collapse state for the map tool panels (collapsed by default, like the legend)
 function renderPaintPanel(){
   let box=document.getElementById("paintPanel");
   const show = !VIEWER && !document.body.classList.contains("editing") && PAINTABLE_MODES.includes(state.mapmode);
@@ -2104,6 +2121,100 @@ function renderPopPanel(){
   { const c=$("#popClearSel"); if(c)c.onclick=()=>{ state.popSel.clear(); renderPopPanel(); renderMap(); }; }
   $("#popApply").onclick=applyPopStep;
   $("#popUndo").onclick=()=>{ doUndo(); renderPopPanel(); };
+}
+/* ============================================================
+   POP CONVERSION TOOL — editor-only, on the Religion / Culture /
+   Language maps. Convert a % of a province's pops toward a chosen
+   faith/culture/language, boosted for "fast-spreading" religions and
+   for pops that have none yet, optionally radiating from a center.
+   ============================================================ */
+const CONVERT_AXES={religion:["religions","Religion","☩"],culture:["cultures","Culture","🎭"],language:["languages","Language","🗣"]};
+const CONVERT_SENTINEL={religion:"No Religion",culture:"No Culture",language:"No Language"};
+function convertAxis(){ return CONVERT_AXES[state.mapmode] ? state.mapmode : null; }
+function convertSelectActive(){ return !VIEWER && state.convertSelecting && convertAxis() && !document.body.classList.contains("editing"); }
+function convertHandleClick(p){
+  if(state.convertPickCenter){ state.convertCenter=p.id; state.convertSel.add(p.id); state.convertPickCenter=false; }
+  else { if(state.convertSel.has(p.id)){ state.convertSel.delete(p.id); if(state.convertCenter===p.id)state.convertCenter=null; } else state.convertSel.add(p.id); }
+  renderMap(); renderConvertPanel();
+}
+// Apply the conversion to every selected province.
+function applyConversion(){
+  const m=convertAxis(); if(!m) return;
+  const T=state.convertTarget; if(!T){ flash("Pick a target "+m+" to convert toward."); return; }
+  const provs=world.provinces.filter(p=>state.convertSel.has(p.id));
+  if(!provs.length){ flash("Select one or more provinces first."); return; }
+  const base=Math.max(0,Math.min(100,+state.convertPct||0))/100;
+  const rate=(m==="religion"&&state.convertFast)?Math.max(0.50,base):base;
+  const sentinel=CONVERT_SENTINEL[m];
+  // province centroids for distance falloff
+  const cen={}; for(const g of _provGeo) cen[g.p.id]=[g.cx,g.cy];
+  let center=null, maxD=1;
+  if(state.convertCenter && cen[state.convertCenter]){
+    center=cen[state.convertCenter];
+    for(const p of provs){ const c=cen[p.id]; if(c){ const d=Math.hypot(c[0]-center[0],c[1]-center[1]); if(d>maxD)maxD=d; } }
+  }
+  beginEdit();
+  let converted=0, touched=0;
+  for(const p of provs){
+    if(!(p.pops&&p.pops.length)) continue;
+    let factor=1;
+    if(center){ const c=cen[p.id]; const d=c?Math.hypot(c[0]-center[0],c[1]-center[1]):maxD; factor=Math.max(0.30, 1-(d/maxD)*0.70); }
+    const old=provTrackedValue(p,m); let any=false;
+    for(const q of p.pops.slice()){
+      if(!(q.size>0) || q[m]===T) continue;
+      const unfaithed = !q[m] || q[m]===sentinel;
+      let eff=rate*factor; if(unfaithed) eff=Math.min(0.98, eff*1.7);
+      const moved=Math.round(q.size*eff); if(moved<=0) continue;
+      q.size-=moved; converted+=moved; any=true;
+      p.pops.push(newPop(moved, m==="religion"?T:q.religion, m==="culture"?T:q.culture, q.race, m==="language"?T:q.language, q.economy));
+    }
+    if(any){ p.pops=p.pops.filter(q=>(q.size||0)>0); deriveProvince(p); autoLog(p,m,old); touched++; }
+  }
+  renderMap(); renderLegend(); renderLeft(); markDirty();
+  flash(converted>0 ? `Converted ~${converted.toLocaleString()} people to ${T} across ${touched} province${touched===1?"":"s"}.` : "No pops were eligible to convert.");
+  renderConvertPanel();
+}
+function renderConvertPanel(){
+  let box=document.getElementById("convPanel");
+  const m=convertAxis();
+  const show = !VIEWER && !document.body.classList.contains("editing") && !!m;
+  if(!show){ if(box)box.remove(); state.convertSelecting=false; state.convertPickCenter=false; return; }
+  if(!box){ box=document.createElement("div"); box.id="convPanel"; ($("#stage")||document.body).appendChild(box); }
+  const [listKey,label,icon]=CONVERT_AXES[m];
+  const list=world.lists[listKey]||[];
+  if(state.convertTarget && !list.includes(state.convertTarget)) state.convertTarget=null;   // reset when switching axis
+  const opts=list.map(v=>`<option value="${esc(v)}" ${state.convertTarget===v?"selected":""}>${esc(v)}</option>`).join("");
+  const n=state.convertSel.size;
+  const centerName=state.convertCenter ? (world.provinces.find(p=>p.id===state.convertCenter)||{}).name : null;
+  const head=`<div class="ppHead"><button class="ppCaret" id="convCaret" title="Collapse / expand">${_convCollapsed?"▸":"▾"}</button><b>🔀 Convert</b><span class="note" style="margin-left:6px">${icon} ${label}</span></div>`;
+  box.innerHTML=head+`<div class="ppBody">
+    <div class="ppRow"><select id="convTarget"><option value="">— convert toward… —</option>${opts}</select></div>
+    <div class="ppRow"><label class="note" style="flex:1">Baseline %<input id="convPct" type="number" min="0" max="100" value="${state.convertPct}" style="width:62px;margin-left:6px"/></label></div>
+    ${m==="religion"?`<div class="ppModes"><button class="btn tiny ppMode${state.convertFast?" primary":""}" id="convFast" title="Fast-spreading faith — raises the conversion rate to at least 50%">⚡ Fast-spreading (→50%)</button></div>`:""}
+    <div class="note" style="margin:6px 0 2px">Provinces</div>
+    <div class="ppModes">
+      <button class="btn tiny ppMode${state.convertSelecting?" primary":""}" id="convSelect" title="Click or drag provinces on the map to add/remove them">${state.convertSelecting?"✓ ":""}🖌 Select</button>
+      <button class="btn tiny" id="convClear" title="Clear the selection">Clear</button>
+    </div>
+    <div class="note" style="margin:2px 0">Selected: <b>${n}</b></div>
+    <div class="ppModes">
+      <button class="btn tiny ppMode${state.convertPickCenter?" primary":""}" id="convCenter" title="Pick one province the conversion radiates from — farther provinces convert less">${state.convertPickCenter?"◎ Click a province…":"🎯 Set center"}</button>
+      ${state.convertCenter?`<button class="btn tiny" id="convCenterClear" title="Clear the conversion center">✕</button>`:""}
+    </div>
+    ${centerName?`<div class="note" style="margin:2px 0">Center: <b>${esc(centerName)}</b></div>`:`<div class="note" style="margin:2px 0">No center — every province converts evenly.</div>`}
+    <div class="ppRow"><button class="btn primary" id="convApply" style="flex:1" ${(!state.convertTarget||!n)?"disabled":""}>🔀 Convert · ${n} prov${n===1?"":"s"}</button><button class="btn tiny" id="convUndo" title="Undo">↶</button></div>
+    <div class="note">Pops with no ${label.toLowerCase()} yet convert more readily. Every conversion is a single undo.</div></div>`;
+  box.classList.toggle("collapsed",_convCollapsed);
+  { const cc=$("#convCaret"); if(cc)cc.onclick=()=>{ _convCollapsed=!_convCollapsed; renderConvertPanel(); }; }
+  { const s=$("#convTarget"); if(s)s.onchange=e=>{ state.convertTarget=e.target.value||null; renderConvertPanel(); }; }
+  { const s=$("#convPct"); if(s)s.oninput=e=>{ state.convertPct=Math.max(0,Math.min(100,+e.target.value||0)); }; }
+  { const f=$("#convFast"); if(f)f.onclick=()=>{ state.convertFast=!state.convertFast; renderConvertPanel(); }; }
+  { const b=$("#convSelect"); if(b)b.onclick=()=>{ state.convertSelecting=!state.convertSelecting; if(state.convertSelecting)state.convertPickCenter=false; renderConvertPanel(); flash(state.convertSelecting?"Click or drag provinces to select them.":"Selection paused."); }; }
+  { const b=$("#convClear"); if(b)b.onclick=()=>{ state.convertSel.clear(); state.convertCenter=null; renderConvertPanel(); renderMap(); }; }
+  { const b=$("#convCenter"); if(b)b.onclick=()=>{ state.convertPickCenter=!state.convertPickCenter; if(state.convertPickCenter)state.convertSelecting=false; renderConvertPanel(); flash(state.convertPickCenter?"Click the province the conversion radiates from.":""); }; }
+  { const b=$("#convCenterClear"); if(b)b.onclick=()=>{ state.convertCenter=null; renderConvertPanel(); renderMap(); }; }
+  { const b=$("#convApply"); if(b)b.onclick=applyConversion; }
+  { const b=$("#convUndo"); if(b)b.onclick=()=>{ doUndo(); renderConvertPanel(); }; }
 }
 function joinRealmDefaults(p, realmId){
   // When an uninhabited province joins a realm, seed it as a Village and adopt
@@ -2282,6 +2393,8 @@ function onProvinceClick(p){
     if(state.popSel.has(p.id)) state.popSel.delete(p.id); else state.popSel.add(p.id);
     renderMap(); renderPopPanel(); return;
   }
+  // Conversion tool: selecting provinces / picking a center
+  if(convertSelectActive()||state.convertPickCenter){ if(convertAxis()){ convertHandleClick(p); return; } }
   if(state.tool==="paint"){
     if(!paintReady()){flash(paintHint());return;}
     if(paintProvince(p)){ _labelsDirty=true; renderMap(); renderLeft(); markDirty(); }
@@ -3029,6 +3142,7 @@ function renderLegend(){
   buildMapLegend();
   renderPaintPanel();
   renderPopPanel();
+  renderConvertPanel();
   const box=$("#legend");box.innerHTML="";
   if(state.mapmode==="imported"){box.innerHTML='<div class="note">Original imported province colors.</div>';return;}
   if(state.mapmode==="military"){ renderForceLegend(box); return; }
@@ -3953,6 +4067,11 @@ function setupMapInteraction(){
     const dx=ev.clientX-sx0, dy=ev.clientY-sy0;
     if(!dragged && Math.hypot(dx,dy)>3) dragged=true;
     if(!dragged) return;
+    if(convertSelectActive() && !state.convertPickCenter){
+      const [wx,wy]=screenToWorld(ev); const p=provinceAt(wx,wy);
+      if(p && !state.convertSel.has(p.id)){ state.convertSel.add(p.id); renderConvertPanel(); requestRender(); }
+      return;
+    }
     if(state.tool==="paint" && paintReady()){
       // drag-to-paint: apply the current map mode's value to every province under the cursor
       const [wx,wy]=screenToWorld(ev); const p=provinceAt(wx,wy);
@@ -4144,6 +4263,7 @@ function handleTapWorld(wx,wy){
     if(state.popSel.has(p.id))state.popSel.delete(p.id); else state.popSel.add(p.id);
     renderMap(); renderPopPanel(); return;
   }
+  if(p && (convertSelectActive()||state.convertPickCenter) && convertAxis()){ convertHandleClick(p); return; }
   if(p && state.tool==="paint" && paintReady()){ beginEdit(); beginExpandStroke(); if(paintProvince(p)){_labelsDirty=true;renderMap();renderLeft();markDirty();} return; }
   if(p && state.mapmode==="resource"){ toggleResourceHighlight(p); selectProvince(p.id); return; }
   if(p && state.mapmode==="race"){ const d=dominant(p.race); if(d)toggleRaceGroup(subraceGroup(d)); selectProvince(p.id); return; }
@@ -5291,6 +5411,7 @@ function setMapmode(m){
   if(m!=="resource") state.selResource=null;   // clear the resource spotlight when leaving that map
   if(m!=="race") state.selRaceGroup=null;       // clear the race-group spotlight when leaving that map
   state.legendFilter=null;                      // clear any legend spotlight on mode change
+  state.convertSelecting=false; state.convertPickCenter=false;   // pause conversion picking when switching maps
   updateResSpot();
   if(m!=="military" && (state.selForce||state.selBattle)){ state.selForce=null; state.selBattle=null; state.moveMode=null; }
   if(m!=="monster" && state.selMonster){ state.selMonster=null; state.moveMode=null; }
