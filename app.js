@@ -1598,10 +1598,10 @@ function drawFrame(){
   // lakes & rivers on top of land
   drawWater(ctx,s);
 
-  // realm-border overlay on non-political modes (optional, on by default; always on for Military)
-  if(state.mapmode!=="political" && (state.realmOverlay||state.mapmode==="military")) drawRealmBorders(ctx);
-  // terrain-region outline overlay (optional, any non-political mode)
-  if(state.mapmode!=="political" && state.terrainOverlay) drawTerrainBorders(ctx);
+  // realm-border overlay — Realms toggle, on any mapmode except political
+  if(state.mapmode!=="political" && state.realmOverlay) drawRealmBorders(ctx);
+  // terrain-region outline overlay — Terrain toggle, on any mapmode except terrain
+  if(state.mapmode!=="terrain" && state.terrainOverlay) drawTerrainBorders(ctx);
 
   // player ping/annotation strokes (world space, over the map)
   drawPingsWorld(ctx);
@@ -2845,7 +2845,7 @@ function renderLeft(){
   else if(!shown){rl.innerHTML='<div class="note" style="padding:8px 10px">No realms match your search.</div>';}
   renderLegend();
 }
-const MODE_TITLES={political:"Realms",provincemap:"Province Map",terrain:"Terrain",settlement:"Settlements",religion:"Religion",culture:"Culture",race:"Race",language:"Language",population:"Population",resource:"Resource",economy:"Mode of Production",monster:"Monsters",military:"Military",imported:"Imported colors"};
+const MODE_TITLES={political:"Political",provincemap:"Province Map",terrain:"Terrain",settlement:"Settlements",religion:"Religions",culture:"Cultures",race:"Races",language:"Languages",population:"Population",resource:"Resources",economy:"Modes of Production",monster:"Monsters",military:"Military",imported:"Imported colors"};
 function legendEntries(mode){           // [color, label, paintValue]
   const L=world.lists, e=[];
   if(mode==="political"){e.push(["#39415e","Unclaimed","__none__"]);world.realms.forEach(r=>e.push([r.color,r.name,r.id]));}
@@ -5248,18 +5248,18 @@ const MM_ICON={
 // 5th field = EU4 button-art basename in /img (uses mm_<name>.png / mm_<name>_a.png
 // for the normal + active/pressed states). null → fall back to the custom SVG glyph.
 const MAPMODE_BAR=[
-  ["political",MM_ICON.political,"Political — realms","1","political"],
+  ["political",MM_ICON.political,"Political","1","political"],
   ["terrain",MM_ICON.terrain,"Terrain","2","terrain"],
   ["resource",MM_ICON.resource,"Resources","3","resource"],
-  ["religion",MM_ICON.religion,"Religion (dominant)","4","religion"],
-  ["culture",MM_ICON.culture,"Culture (dominant)","5","culture"],
-  ["race",MM_ICON.race,"Race (dominant)","6","race"],
-  ["language",MM_ICON.language,"Language (dominant)","7","language"],
+  ["religion",MM_ICON.religion,"Religions","4","religion"],
+  ["culture",MM_ICON.culture,"Cultures","5","culture"],
+  ["race",MM_ICON.race,"Races","6","race"],
+  ["language",MM_ICON.language,"Languages","7","language"],
   ["population",MM_ICON.population,"Population","8","population"],
   ["settlement",MM_ICON.settlement,"Settlements","9","settlement"],
-  ["economy",MM_ICON.economy,"Mode of Production (dominant pop)","0","economy"],
-  ["monster",MM_ICON.monster,"Monsters & legendary creatures","O","monster"],
-  ["military",MM_ICON.military,"Military — armies, fleets & air units","P","military"],
+  ["economy",MM_ICON.economy,"Modes of Production","0","economy"],
+  ["monster",MM_ICON.monster,"Monsters","O","monster"],
+  ["military",MM_ICON.military,"Military","P","military"],
 ];
 let _mmOpen=false;   // mobile: is the map-mode picker expanded?
 function buildMapmodeBar(){
@@ -5356,8 +5356,20 @@ function updateMobile(){ document.body.classList.toggle("mobile", window.innerWi
 function wireTopbar(){
   $("#worldName").addEventListener("input",e=>{world.name=e.target.value;markDirty();});
   $("#eraSelect").addEventListener("change",e=>{world.currentEraId=e.target.value;markDirty();});
-  // toggle bar (visual only for now — wiring comes with the next pass)
-  $$("#toggleBar .tgl").forEach(b=>b.addEventListener("click",()=>b.classList.toggle("on")));
+  // toggle bar — Continents = continent names (any mode), Realms = realm outlines
+  // (any mode but political), Terrain = terrain outlines (any mode but terrain).
+  const syncToggleBtns=()=>{
+    const set=(t,on)=>{ const b=document.querySelector(`#toggleBar .tgl[data-toggle="${t}"]`); if(b)b.classList.toggle("on",!!on); };
+    set("continents",state.showNames); set("realms",state.realmOverlay); set("terrain",state.terrainOverlay);
+  };
+  $$("#toggleBar .tgl").forEach(b=>b.addEventListener("click",()=>{
+    const t=b.dataset.toggle;
+    if(t==="continents") state.showNames=!state.showNames;
+    else if(t==="realms") state.realmOverlay=!state.realmOverlay;
+    else if(t==="terrain") state.terrainOverlay=!state.terrainOverlay;
+    syncToggleBtns(); renderMap(); renderLegend();
+  }));
+  syncToggleBtns();
   const ms=$("#mapmode"); if(ms)ms.addEventListener("change",e=>setMapmode(e.target.value));
   buildMapmodeBar();
   const wp=$("#worldPop"); if(wp)wp.onclick=toggleWorldPopPanel;
@@ -5377,8 +5389,6 @@ function wireTopbar(){
   const bv=$("#btnView"); if(bv)bv.onclick=togglePreviewViewer;
   { const bt=$("#btnTimeline"); if(bt)bt.onclick=openTimeline; }
   $("#worldView").onclick=()=>{worldView();};
-  $("#btnNames").onclick=()=>{state.showNames=!state.showNames;$("#btnNames").classList.toggle("on",state.showNames);renderMap();flash(state.showNames?"Landmass names shown — drag a name to reposition it.":"Landmass names hidden.");};
-  $("#btnNames").classList.toggle("on",state.showNames);
   $("#btnPanels").onclick=()=>{
     if(document.body.classList.contains("mobile")){ const open=document.body.classList.toggle("m-drawer"); $("#btnPanels").classList.toggle("on",open); return; }
     const hidden=document.body.classList.toggle("panels-hidden");$("#btnPanels").classList.toggle("on",hidden);renderMap();flash(hidden?"Side panels hidden — click Panels again to bring them back.":"Side panels shown.");};

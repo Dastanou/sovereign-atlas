@@ -619,7 +619,7 @@ body.viewer #inspector .insTitle input:disabled{font-weight:700; font-size:17px}
   .pvPie svg{width:84px; height:84px}
 
   /* map-mode buttons wrap into a centred cluster along the bottom */
-  #mapmodeBar{left:8px; right:8px; bottom:8px; display:flex; flex-direction:row; justify-content:center; flex-wrap:wrap-reverse; gap:7px}
+  #mapmodeBar{left:8px; right:8px; bottom:8px; display:flex; flex-direction:row; justify-content:center; flex-wrap:wrap; gap:7px}
   .mmbtn{width:46px; height:46px; font-size:19px}
   .mmkey{font-size:10px}
   #zoomctl{left:8px; bottom:8px}
