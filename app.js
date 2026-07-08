@@ -4883,10 +4883,7 @@ function openGMScreen(){
   openModal(`<button class="btn close" onclick="closeModal()">✕ Close</button><h2>🎲 GM Screen</h2>
     <p class="note">Behind-the-screen controls: tune the world's simulation values, then seed and grow populations. These settings are saved with the world and never shown in the player viewer.</p>
     ${tuneValuesHTML()}
-    <div class="sectionH">⚔ Army element types (GURPS Mass Combat)</div>
-    <p class="note">Templates you drop into armies on the Military map. TL 0 is the Stone Age Warriors. Add your own, edit their stats, and reorder them with ↑/↓. (Values are editable — set them to match your book.)</p>
-    <div id="elemTypes"></div>
-    <button class="btn tiny" id="elemAdd" style="margin-top:6px">＋ Add element type</button>
+    <p class="note">⚔ Army element types now live in the 🧭 GM v2 screen.</p>
 
     <div class="sectionH">🐉 Creature types</div>
     <p class="note">Colour-codes each creature's panel and its ring on the Monsters map. Rename, recolour, reorder or add your own.</p>
@@ -4998,8 +4995,6 @@ function openGMScreen(){
     beginEdit(); world.provinces.forEach(p=>{p.pops=[];deriveProvince(p);}); renderMap();renderLeft();markDirty(); status("All population deleted.");
   };
   wireTuneValues();
-  renderElementTypes();
-  { const ea=$("#elemAdd"); if(ea)ea.addEventListener("click",()=>{ world.elementTypes.push(migrateElement({id:uid(),name:"New Element",cls:"Fire (F)",ts:5,pts:0,wt:0,mob:"Foot",tl:1,features:[],equip:"Basic",troop:"Average"})); renderElementTypes(); markDirty(); }); }
   renderCreatureTypes();
   { const b=$("#ctAdd"); if(b)b.addEventListener("click",()=>{ world.creatureTypes.push({id:uid(),name:"New Type",color:"#7a3b3b"}); renderCreatureTypes(); markDirty(); }); }
   renderMonsterPresets();

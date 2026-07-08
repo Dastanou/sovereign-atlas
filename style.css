@@ -407,6 +407,15 @@ body.viewer .viewerchrome{ display:inline-flex !important; }
 .elRow{border:1px solid var(--line); border-radius:8px; padding:8px; margin:6px 0; background:var(--panel2)}
 .elRow{position:relative}
 .elRowHead{display:flex; justify-content:flex-end; align-items:center; margin-bottom:2px; font-size:13px}
+.elTypeDet{border:1px solid var(--line); border-radius:8px; margin:5px 0; background:var(--panel2); overflow:hidden}
+.elTypeDet>summary{display:flex; align-items:center; gap:8px; cursor:pointer; padding:7px 10px; list-style:none; font-size:13px}
+.elTypeDet>summary::-webkit-details-marker{display:none}
+.elTypeDet>summary::before{content:"▸"; color:var(--muted); font-size:11px; transition:transform .12s}
+.elTypeDet[open]>summary::before{transform:rotate(90deg)}
+.elTypeDet[open]>summary{border-bottom:1px solid var(--line)}
+.elTypeDet .etSw{width:11px; height:11px; border-radius:3px; flex:0 0 auto; box-shadow:0 0 0 1px rgba(0,0,0,.25) inset}
+.elTypeDet .etBtns{margin-left:auto; display:inline-flex; gap:4px}
+.elTypeDet>.elRow{border:none; margin:0; border-radius:0}
 .elFeats{display:flex; flex-wrap:wrap; gap:4px; min-height:20px; margin-bottom:2px}
 .field3{display:flex; gap:6px}
 .field3>.field{flex:1}
