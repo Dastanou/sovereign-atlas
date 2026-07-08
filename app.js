@@ -739,11 +739,17 @@ function axisFromPops(pops,key){
 }
 // combine pop groups identical in every category (sizes summed) — for optimisation
 function mergePops(p){
+  // Merge identical pop groups IN PLACE — reuse the existing objects rather than
+  // cloning them, so any input elements bound to a pop stay bound to the live object.
   const by=new Map(), out=[];
   for(const q of (p.pops||[])){
-    const key=JSON.stringify([q.religion||"",q.culture||"",q.race||"",q.language||"",q.economy||""]);
-    if(by.has(key)) by.get(key).size+=(q.size||0);
-    else { const c={id:q.id||uid(),size:Math.max(0,Math.round(q.size||0)),religion:q.religion||"",culture:q.culture||"",race:q.race||"",language:q.language||"",economy:q.economy||""}; by.set(key,c); out.push(c); }
+    q.religion=q.religion||""; q.culture=q.culture||""; q.race=q.race||"";
+    q.language=q.language||""; q.economy=q.economy||"";
+    q.size=Math.max(0,Math.round(q.size||0));
+    if(!q.id)q.id=uid();
+    const key=JSON.stringify([q.religion,q.culture,q.race,q.language,q.economy]);
+    if(by.has(key)) by.get(key).size+=q.size;   // fold duplicate into the kept object
+    else { by.set(key,q); out.push(q); }
   }
   p.pops=out;
 }
@@ -1406,12 +1412,20 @@ function drawPingsWorld(ctx){
   }
   ctx.globalAlpha=1;
 }
+// next number for a numbered pin: 1 + the highest number currently on the map (so it resets to 1 when cleared)
+function nextPinNum(){ let m=0; for(const pn of pingLayer.pins){ if(typeof pn.n==="number" && pn.n>m)m=pn.n; } return m+1; }
 function drawPingsDevice(ctx,cam,s,cw,ch){
   for(const pn of pingLayer.pins){
     const X=(pn.x-cam.x)*s, Y=(pn.y-cam.y)*s; if(X<-20||Y<-20||X>cw+20||Y>ch+20)continue;
+    const numbered=typeof pn.n==="number", r=numbered?9.5:7;
     ctx.save(); ctx.fillStyle=pn.color||"#e23b3b"; ctx.strokeStyle="#fff"; ctx.lineWidth=2; ctx.lineJoin="round";
-    ctx.beginPath(); ctx.arc(X,Y-12,7,0,Math.PI*2); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.arc(X,Y-12,r,0,Math.PI*2); ctx.fill(); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(X-5,Y-8); ctx.lineTo(X,Y); ctx.lineTo(X+5,Y-8); ctx.closePath(); ctx.fill(); ctx.stroke();
+    if(numbered){
+      ctx.font=`bold ${Math.round(r*1.25)}px system-ui,sans-serif`; ctx.textAlign="center"; ctx.textBaseline="middle";
+      ctx.lineWidth=2.6; ctx.strokeStyle="rgba(0,0,0,.55)"; ctx.strokeText(String(pn.n),X,Y-12);
+      ctx.fillStyle="#fff"; ctx.fillText(String(pn.n),X,Y-12);
+    }
     ctx.restore();
   }
 }
@@ -1436,6 +1450,7 @@ function buildPingBar(){
     <div class="pgrp">
       <button class="pbtn ptool" data-pt="brush" title="Brush — draw shapes">🖌</button>
       <button class="pbtn ptool" data-pt="pin" title="Drop a pin">📍</button>
+      <button class="pbtn ptool" data-pt="numpin" title="Drop a numbered pin (auto-increments; resets on Clear)">#️⃣</button>
       <button class="pbtn ptool" data-pt="erase" title="Erase pings">🧽</button>
       <button class="pbtn ptool" data-pt="pan" title="Pan the map (stop drawing)">✋</button>
     </div>
@@ -1634,6 +1649,7 @@ function drawFrame(){
     ctx.globalAlpha=regionAlpha;
     for(const lg of _labelGroups){
       if(_lf && lg.val!==_lf.value) continue;
+      if(state.mapmode==="race" && state.selRaceGroup && subraceGroup(lg.val)!==state.selRaceGroup) continue;   // race group spotlight hides other labels
       let fontPx=Math.sqrt(lg.a)*0.20*s; if(fontPx<9) continue; fontPx=Math.min(fontPx,180);
       const X=(lg.x-cam.x)*s, Y=(lg.y-cam.y)*s;
       if(X<-260||Y<-100||X>cw+260||Y>ch+100) continue;
@@ -1740,7 +1756,7 @@ function provinceFill(p){
     case "religion":return colorByAxis(p.religion,"religions");
     case "culture":return colorByAxis(p.culture,"cultures");
     case "race":{
-      if(state.selRaceGroup){ const dom=dominant(p.race); if(!dom || subraceGroup(dom)!==state.selRaceGroup) return "#333a46"; }
+      if(state.selRaceGroup && !(p.race||[]).some(e=>subraceGroup(e.name)===state.selRaceGroup)) return "#333a46";
       return colorByAxis(p.race,"subraces");
     }
     case "language":return colorByAxis(p.language,"languages");
@@ -1763,14 +1779,21 @@ function colorByAxis(arr,key){const d=dominant(arr);return d?catColor(key,d):"#3
 // when the majority is 1/2–2/3 AND another group is ≥ 1/4. Diagonal hatch (dominant + black)
 // when no group reaches 1/2. Otherwise solid.
 const AXIS_CAT={religion:"religions",culture:"cultures",race:"subraces",language:"languages"};
-function axisStripe(p,key){                // overlay hatch colour, or null for a solid fill
+// Diagonal band colour sequence: the dominant group takes every other band, and the minorities
+// cycle evenly through the bands in between (a lone minority just alternates two colours). Returns
+// the repeat sequence, or null for a solid fill.
+function axisPattern(p,key){
   const arr=p[key]; if(!arr||!arr.length)return null;
-  const f1=arr[0].pct/100;
-  if(f1>2/3) return null;                                   // overwhelming majority → solid
-  if(f1<0.5) return "#141518";                              // no majority → dominant + black hatch
-  const f2=arr[1]?arr[1].pct/100:0;                         // 1/2–2/3: hatch only vs a ≥1/4 minority
-  if(f2>=0.25) return catColor(AXIS_CAT[key]||key, arr[1].name);
-  return null;                                              // majority-ish with only small minorities → solid
+  const tot=arr.reduce((a,e)=>a+(e.pct||0),0)||100;
+  const groups=arr.map(e=>({name:e.name,frac:(e.pct||0)/tot})).filter(g=>g.frac>0.04).sort((a,b)=>b.frac-a.frac);
+  if(groups.length<2 || groups[0].frac>=0.94) return null;          // homogeneous → solid
+  const cat=AXIS_CAT[key]||key;
+  const dom=catColor(cat,groups[0].name);
+  const minors=groups.slice(1,4).map(g=>catColor(cat,g.name));      // up to 3 distinct minorities
+  const rest=1-groups[0].frac-groups.slice(1,4).reduce((a,g)=>a+g.frac,0);
+  if(rest>=0.08) minors.push("#141518");                            // remaining smaller minorities → black
+  const seq=[]; for(const m of minors){ seq.push(dom); seq.push(m); }   // D, m0, D, m1, D, m2, …
+  return seq;
 }
 function axisLabelName(p,key){             // name for the label map, or null if too fragmented (no ≥½ majority)
   const arr=p[key]; if(!arr||!arr.length)return null;
@@ -1780,20 +1803,22 @@ function axisLabelName(p,key){             // name for the label map, or null if
 function drawAxisStripes(ctx,key,s){
   if(!AXIS_CAT[key])return;
   const spot = (state.legendFilter && state.legendFilter.mode===state.mapmode) ? state.legendFilter : null;
-  const step=9/s, lw=3.4/s;
-  ctx.save(); ctx.lineWidth=lw; ctx.lineCap="butt";
+  const bw=Math.max(2.5, (_medProvW||30)*0.10);      // world-space band width → static on the map, scales with zoom
+  const step=bw*Math.SQRT2;                          // c=x+y spacing so bands tile edge-to-edge (no overlap/gap)
+  ctx.save(); ctx.lineCap="butt"; ctx.lineWidth=bw;
   for(const gp of _provGeo){
     const p=gp.p;
     if(spot && !provinceMatchesLegend(p,spot.value)) continue;       // don't hatch dimmed provinces
-    if(key==="race" && state.selRaceGroup){ const d=dominant(p.race); if(!d||subraceGroup(d)!==state.selRaceGroup)continue; }
+    if(key==="race" && state.selRaceGroup && !(p.race||[]).some(e=>subraceGroup(e.name)===state.selRaceGroup))continue;
     if((gp.maxx-gp.minx)*s<5 && (gp.maxy-gp.miny)*s<5) continue;     // too small on screen to bother
-    const col=axisStripe(p,key); if(!col)continue;
+    const seq=axisPattern(p,key); if(!seq)continue;
     const pts=gp.pts; if(pts.length<3)continue;
     ctx.save();
     ctx.beginPath(); ctx.moveTo(pts[0][0],pts[0][1]); for(let i=1;i<pts.length;i++)ctx.lineTo(pts[i][0],pts[i][1]); ctx.closePath(); ctx.clip();
-    ctx.strokeStyle=col;
-    const c0=gp.minx+gp.miny, c1=gp.maxx+gp.maxy;   // lines x+y=c run top-right → bottom-left
-    for(let c=c0;c<=c1;c+=step){ ctx.beginPath(); ctx.moveTo(c-gp.miny,gp.miny); ctx.lineTo(c-gp.maxy,gp.maxy); ctx.stroke(); }
+    // bands sit on a GLOBAL diagonal grid (lines x+y = k·step) so they line up across province borders
+    const c0=gp.minx+gp.miny, c1=gp.maxx+gp.maxy, start=Math.floor(c0/step)*step;
+    for(let c=start;c<=c1+step;c+=step){ const k=Math.round(c/step); ctx.strokeStyle=seq[((k%seq.length)+seq.length)%seq.length];
+      ctx.beginPath(); ctx.moveTo(c-gp.miny,gp.miny); ctx.lineTo(c-gp.maxy,gp.maxy); ctx.stroke(); }
     ctx.restore();
   }
   ctx.restore();
@@ -2262,8 +2287,21 @@ function onProvinceClick(p){
     return;
   }
   if(state.mapmode==="resource") toggleResourceHighlight(p);
-  if(state.mapmode==="race"){ const d=dominant(p.race); if(d) toggleRaceGroup(subraceGroup(d)); }
+  else if(state.mapmode==="race"){ const d=dominant(p.race); if(d) toggleRaceGroup(subraceGroup(d)); }
+  else spotlightProvinceItem(p);
   selectProvince(p.id);
+}
+// Clicking a province in political/religion/culture/language/terrain highlights that item's
+// provinces (minorities included) and hides the other items' labels — same as clicking its legend entry.
+function spotlightProvinceItem(p){
+  if(!["political","religion","culture","language","terrain"].includes(state.mapmode)) return;
+  const v = state.mapmode==="political" ? (p.realmId||"__none__")
+          : state.mapmode==="terrain"   ? p.terrain
+          : dominant(p[state.mapmode]);
+  if(v==null||v==="") return;
+  const cur=state.legendFilter;
+  state.legendFilter=(cur&&cur.mode===state.mapmode&&cur.value===v)?null:{mode:state.mapmode,value:v};
+  renderLegend();
 }
 // Resource map: click a province to spotlight its whole resource family (base + prestige
 // goods), greying the rest. Click the same family again (or the void) to clear.
@@ -2285,14 +2323,15 @@ function legendClickValue(v){
 }
 // Does a province match the active legend spotlight for the current map mode?
 function provinceMatchesLegend(p, value){
+  const has=(arr)=>(arr||[]).some(e=>e.name===value);   // minority-inclusive: any pop group of that value
   switch(state.mapmode){
     case "political":  return value==="__none__" ? !p.realmId : p.realmId===value;
     case "terrain":    return p.terrain===value;
     case "settlement": return p.settlement===value;
-    case "religion":   return dominant(p.religion)===value;
-    case "culture":    return dominant(p.culture)===value;
-    case "race":       return dominant(p.race)===value;
-    case "language":   return dominant(p.language)===value;
+    case "religion":   return has(p.religion);
+    case "culture":    return has(p.culture);
+    case "race":       return has(p.race);
+    case "language":   return has(p.language);
     case "economy":    return economyOf(p)===value;
     default:           return true;
   }
@@ -2858,8 +2897,8 @@ function buildMapLegend(){
     const idx=+row.dataset.vi, ent=entries[idx], v=ent&&ent[2];
     if(v===undefined)return;
     row.onclick=(ev)=>{ ev.stopPropagation();
-      if(state.mapmode==="political" && v!=="__none__"){ selectRealm(v); }
-      else if(state.mapmode==="religion"){ state.legendFilter={mode:"religion",value:v}; renderLegend(); selectReligion(v); }   // spotlight + open faith panel
+      if(state.mapmode==="political"){ legendClickValue(v); if(v!=="__none__")selectRealm(v); }     // spotlight realm + open its panel
+      else if(state.mapmode==="religion"){ legendClickValue(v); selectReligion(v); }                // spotlight + open faith panel
       else { legendClickValue(v); }
     };
   });
@@ -2869,17 +2908,12 @@ function buildMapLegend(){
 // Race legend: subraces grouped under their race group. Click a group or subrace to spotlight
 // the whole group on the map (like the resource-family spotlight).
 function renderRaceLegend(box){
-  const groups=[], seen=new Set();
-  (world.lists.races||[]).forEach(g=>{ if(!seen.has(g)){seen.add(g);groups.push(g);} });
-  (world.lists.subraces||[]).forEach(sr=>{ const g=subraceGroup(sr); if(!seen.has(g)){seen.add(g);groups.push(g);} });
-  const act=g=>state.selRaceGroup===g;
-  groups.forEach(g=>{
-    const subs=subracesInGroup(g);
-    const gCol=(world.lists.races||[]).includes(g)?catColor("races",g):(subs[0]?catColor("subraces",subs[0]):"#888");
-    const row=div("resLegRow");
-    const head=`<span class="resLegItem resLegBase${act(g)?' active':''}" data-grp="${esc(g)}" title="Show only ${esc(g)} subraces"><span class="sw" style="background:${gCol}"></span><b>${esc(g)}</b></span>`;
-    const subCells=subs.map(sr=>`<span class="resLegItem${act(g)?' active':''}" data-grp="${esc(g)}" title="${esc(sr)}"><span class="sw" style="background:${catColor('subraces',sr)}"></span>${esc(sr)}</span>`).join("")||'<span class="note">—</span>';
-    row.innerHTML=head+`<span class="resLegPres">${subCells}</span>`;
+  // flat list of subraces; clicking one highlights every subrace of its race group
+  (world.lists.subraces||[]).forEach(sr=>{
+    const g=subraceGroup(sr);
+    const row=div("mlRow"+(state.selRaceGroup===g?" active":""));
+    row.style.cursor="pointer"; row.dataset.grp=g; row.title=`Highlight all ${esc(g)} subraces`;
+    row.innerHTML=`<span class="sw" style="background:${catColor('subraces',sr)}"></span>${esc(sr)}`;
     box.appendChild(row);
   });
   box.querySelectorAll("[data-grp]").forEach(el=>{ el.onclick=ev=>{ ev.stopPropagation(); toggleRaceGroup(el.dataset.grp); }; });
@@ -3072,9 +3106,13 @@ function pieSVG(arr,listKey,size){
   }
   return `<svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}">${paths}</svg>`;
 }
-function pieCell(label,arr,listKey){
-  const data=(arr||[]).filter(e=>e.pct>0).sort((a,b)=>b.pct-a.pct);
-  const leg = data.length ? data.slice(0,4).map(e=>`<div class="pvLeg"><span class="sw" style="background:${catColor(listKey,e.name)}"></span><span class="nm">${esc(e.name)}</span><b>${Math.round(e.pct)}%</b></div>`).join("")
+function shortNum(n){ n=Math.round(n||0); if(n<1000)return String(n); if(n<1e6){const v=n/1000;return (v<10?v.toFixed(1):Math.round(v))+"k";} const v=n/1e6;return (v<10?v.toFixed(1):Math.round(v))+"M"; }
+// pie for one identity axis; shows each group's % and its actual head-count (full number on hover)
+function pieCell(label,p,key,listKey){
+  const m={}; let tot=0;
+  for(const q of (p.pops||[])){ const v=q[key]; if(!v||!(q.size>0))continue; m[v]=(m[v]||0)+q.size; tot+=q.size; }
+  const data=Object.entries(m).map(([name,size])=>({name,size,pct:tot?size/tot*100:0})).sort((a,b)=>b.size-a.size);
+  const leg = data.length ? data.slice(0,5).map(e=>`<div class="pvLeg" title="${esc(e.name)}: ${e.size.toLocaleString()} people (${Math.round(e.pct)}%)"><span class="sw" style="background:${catColor(listKey,e.name)}"></span><span class="nm">${esc(e.name)}</span><b class="pvLegPct">${Math.round(e.pct)}%</b><span class="pvLegN">${shortNum(e.size)}</span></div>`).join("")
                           : '<div class="note">—</div>';
   return `<div class="pvPie"><div class="pvPieH">${label}</div>${pieSVG(data,listKey,72)}<div class="pvLegs">${leg}</div></div>`;
 }
@@ -3124,10 +3162,10 @@ function renderProvinceView(){
       <div class="pvBlock pvPopBlock">
         <div class="pvBlockH">Population breakdown</div>
         <div class="pvPies">
-          ${pieCell("Religion",p.religion,"religions")}
-          ${pieCell("Culture",p.culture,"cultures")}
-          ${pieCell("Subrace",p.race,"subraces")}
-          ${pieCell("Language",p.language,"languages")}
+          ${pieCell("Religion",p,"religion","religions")}
+          ${pieCell("Culture",p,"culture","cultures")}
+          ${pieCell("Race",p,"race","subraces")}
+          ${pieCell("Language",p,"language","languages")}
         </div>
       </div>
 
@@ -3879,7 +3917,7 @@ function setupMapInteraction(){
     if(state.rulerOn){ down=true; dragged=false; sx0=ev.clientX; sy0=ev.clientY; camStart={x:state.cam.x,y:state.cam.y}; return; }
     if(state.pingOn && state.pingTool!=="pan"){
       if(state.pingTool==="brush"){ const w=screenToWorld(ev); _curStroke={color:state.pingColor,width:state.pingWidth/state.cam.scale,pts:[[w[0],w[1]]]}; pingLayer.strokes.push(_curStroke); down=true; dragged=true; requestRender(); return; }
-      if(state.pingTool==="pin"){ const w=screenToWorld(ev); pingLayer.pins.push({x:w[0],y:w[1],color:state.pingColor}); savePings(); requestRender(); return; }
+      if(state.pingTool==="pin"||state.pingTool==="numpin"){ const w=screenToWorld(ev); const pn={x:w[0],y:w[1],color:state.pingColor}; if(state.pingTool==="numpin")pn.n=nextPinNum(); pingLayer.pins.push(pn); savePings(); requestRender(); return; }
       if(state.pingTool==="erase"){ down=true; dragged=true; pingEraseAt(ev); return; }
     }
     if(state.tool==="select"){ const lid=customLabelAt(ev); if(lid){ beginEdit(); state.customDrag=lid; down=true; dragged=false; return; } }
@@ -4087,7 +4125,7 @@ function handleTapWorld(wx,wy){
   }
   if(_mmOpen){ _mmOpen=false; refreshMapmodeBar(); return; }   // a tap closes the map-mode picker
   if(state.rulerOn){ if(state.rulerDone){state.rulerPts=[];state.rulerDone=false;} state.rulerPts.push([wx,wy]); state.rulerCur=null; requestRender(); return; }
-  if(state.pingOn && state.pingTool==="pin"){ pingLayer.pins.push({x:wx,y:wy,color:state.pingColor}); savePings(); requestRender(); return; }
+  if(state.pingOn && (state.pingTool==="pin"||state.pingTool==="numpin")){ const pn={x:wx,y:wy,color:state.pingColor}; if(state.pingTool==="numpin")pn.n=nextPinNum(); pingLayer.pins.push(pn); savePings(); requestRender(); return; }
   if(state.mapmode==="military"){
     if(state.moveMode==="force" && state.selForce && !VIEWER){ const f=world.forces.find(x=>x.id===state.selForce); if(f){beginEdit();f.x=Math.round(wx);f.y=Math.round(wy);separateForce(f);markDirty();renderMap();} return; }
     const bt=battleAt(wx,wy); if(bt){ selectBattle(bt[0].id,bt[1].id); return; }
@@ -4108,7 +4146,7 @@ function handleTapWorld(wx,wy){
   if(p && state.tool==="paint" && paintReady()){ beginEdit(); beginExpandStroke(); if(paintProvince(p)){_labelsDirty=true;renderMap();renderLeft();markDirty();} return; }
   if(p && state.mapmode==="resource"){ toggleResourceHighlight(p); selectProvince(p.id); return; }
   if(p && state.mapmode==="race"){ const d=dominant(p.race); if(d)toggleRaceGroup(subraceGroup(d)); selectProvince(p.id); return; }
-  if(p){ selectProvince(p.id); return; }   // open the province sheet (desktop panel or mobile bottom-sheet)
+  if(p){ spotlightProvinceItem(p); selectProvince(p.id); return; }   // open the province sheet (desktop panel or mobile bottom-sheet)
   document.body.classList.remove("has-sel");
   const c=continentAt(wx,wy); if(c) state.focusedContinent=c.id;
   requestRender();

@@ -317,6 +317,8 @@ details.rvProvinces[open]>summary::before{content:"▾"}
 .pvLeg .sw{width:9px; height:9px; border-radius:2px; flex:none}
 .pvLeg .nm{flex:1; text-align:left; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
 .pvLeg b{flex:none}
+.pvLeg .pvLegPct{flex:none; min-width:30px; text-align:right; font-weight:700}
+.pvLeg .pvLegN{flex:none; min-width:34px; text-align:right; color:var(--muted); font-size:10px}
 /* monster image picker */
 .monImgRow{display:flex; flex-wrap:wrap; gap:6px}
 .monImgBtn{width:40px; height:40px; padding:3px; border:1px solid var(--line); border-radius:8px;
