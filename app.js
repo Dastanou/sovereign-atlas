@@ -1679,9 +1679,10 @@ function drawFrame(){
     ctx.globalAlpha=1;
   }
 
-  // feature icons: wonders on the Settlements map, resource features on the Resource map
-  // (wonder-feature icons retired — Wonders are their own objects now)
-  else if(state.mapmode==="resource"){ drawFeatureIcons(ctx,cam,s,cw,ch,"resource"); drawResourceIcons(ctx,cam,s,cw,ch); }
+  // mapmode overlays — drawn independently of the province-name zoom fade so
+  // forces/monsters/markers never disappear when you zoom in far enough for
+  // province names to appear. Each has its own size/viewport culling.
+  if(state.mapmode==="resource"){ drawFeatureIcons(ctx,cam,s,cw,ch,"resource"); drawResourceIcons(ctx,cam,s,cw,ch); }
   else if(state.mapmode==="monster") drawMonsters(ctx,cam,s,cw,ch);
   else if(state.mapmode==="military") drawForces(ctx,cam,s,cw,ch);
   else if(state.mapmode==="religion") drawHolySiteMarkers(ctx,cam,s,cw,ch);
@@ -2565,7 +2566,7 @@ function renderForceView(){
       <div class="elViewName">${esc(e.name||("Element "+(i+1)))}${elCount(e)>1?` <span class="note">×${elCount(e)}</span>`:""}</div>
       ${row("Class",esc(e.cls))}
       ${row("Mobility",esc(e.mob))}
-      ${row("TS "+(mult!==1?"<span class='note'>(each→adj.)</span>":"<span class='note'>(each)</span>"),tsCell)}
+      ${row("TS "+(mult!==1?"<span class='note'>(each→modified)</span>":"<span class='note'>(each)</span>"),tsCell)}
       ${e.pts>0?row("(TS) <span class='note'>(each)</span>",ptsCell):""}
       ${row("WT <span class='note'>(each)</span>",e.wt||0)}
       ${row("TL",e.tl||0)}
@@ -2670,7 +2671,7 @@ function renderForceEditor(){
   $("#fqskill").addEventListener("input",e=>{f.quartermaster.skill=+e.target.value||0;markDirty();});
   $("#fels").querySelectorAll(".elRow").forEach(row=>{
     const i=+row.dataset.i, e=f.elements[i]; if(!e)return;
-    { const et=row.querySelector(".elType"); if(et)et.addEventListener("change",ev=>{ const t=(world.elementTypes||[]).find(x=>x.id===ev.target.value); if(t){ Object.assign(e,{type:t.name,name:e.name||t.name,cls:t.cls,ts:+t.ts||0,pts:+t.pts||0,wt:+t.wt||0,mob:t.mob,tl:+t.tl||0,features:(t.features||[]).slice(),equip:t.equip,troop:t.troop}); renderForceEditor(); renderMap(); markDirty(); } }); }
+    { const et=row.querySelector(".elType"); if(et)et.addEventListener("change",ev=>{ const t=(world.elementTypes||[]).find(x=>x.id===ev.target.value); if(t){ const keepName = e.name && !(world.elementTypes||[]).some(x=>x.name===e.name); Object.assign(e,{type:t.name,name:keepName?e.name:t.name,cls:t.cls,ts:+t.ts||0,pts:+t.pts||0,wt:+t.wt||0,mob:t.mob,tl:+t.tl||0,features:(t.features||[]).slice(),equip:t.equip,troop:t.troop}); renderForceEditor(); renderMap(); markDirty(); } }); }
     bindElementFields(row, e, ()=>renderForceEditor(), ()=>{ const b=$("#fts"); if(b)b.textContent=forceTS(f); renderMap(); });
     const del=row.querySelector(".elDel"); if(del)del.addEventListener("click",()=>{ if(f.elements.length<=1){flash("A force needs at least one element.");return;} beginEdit(); f.elements.splice(i,1); renderForceEditor(); renderMap(); markDirty(); });
   });
@@ -4686,23 +4687,26 @@ function renderElementTypes(){
   const box=$("#elemTypes"); if(!box)return; box.innerHTML="";
   world.elementTypes=world.elementTypes||[];
   world.elementTypes.forEach((t,i)=>{
-    const row=div("elRow");
-    row.innerHTML=`
-      <div class="elRowHead">
-        <span style="display:flex;gap:4px;margin-left:auto">
-          <button class="btn tiny etUp" title="Move up">↑</button>
-          <button class="btn tiny etDown" title="Move down">↓</button>
-          <button class="btn tiny etDel" title="Delete" style="color:var(--bad)">✕</button>
-        </span>
-      </div>
-      ${elementFieldGrid(t, false, false)}`;
-    bindElementFields(row, t, ()=>renderElementTypes());
-    applyElStyle(row, t);
-    row.querySelector(".etUp").addEventListener("click",()=>{ if(i>0){ const a=world.elementTypes; [a[i-1],a[i]]=[a[i],a[i-1]]; renderElementTypes(); markDirty(); } });
-    row.querySelector(".etDown").addEventListener("click",()=>{ const a=world.elementTypes; if(i<a.length-1){ [a[i+1],a[i]]=[a[i],a[i+1]]; renderElementTypes(); markDirty(); } });
-    row.querySelector(".etDel").addEventListener("click",()=>{ if(world.elementTypes.length<=1){flash("Keep at least one element type.");return;} if(!confirm(`Delete element type "${t.name}"?`))return; world.elementTypes.splice(i,1); renderElementTypes(); markDirty(); });
-    box.appendChild(row);
+    // compact: one collapsible row per template — summary shows the key stats,
+    // expanding reveals the full editable field grid.
+    const det=document.createElement("details"); det.className="elTypeDet";
+    const sum=document.createElement("summary");
+    sum.innerHTML=`<span class="etSw" style="background:${t.color||'#5a6172'}"></span>
+      <b>${esc(t.name||"Unnamed")}</b>
+      <span class="note">TL${t.tl||0} · ${esc(t.cls)} · TS ${t.ts||0}${(t.pts||0)>0?` (${t.pts})`:""}${elCount(t)>1?` · ×${elCount(t)}`:""}</span>
+      <span class="etBtns"><button class="btn tiny etUp" title="Move up">↑</button><button class="btn tiny etDown" title="Move down">↓</button><button class="btn tiny etDel" title="Delete" style="color:var(--bad)">✕</button></span>`;
+    det.appendChild(sum);
+    const body=div("elRow"); body.style.marginTop="6px"; body.innerHTML=elementFieldGrid(t, false, false);
+    det.appendChild(body);
+    bindElementFields(body, t, ()=>renderElementTypes());
+    applyElStyle(body, t);
+    const btn=(sel,fn)=>{ const b=sum.querySelector(sel); if(b)b.addEventListener("click",ev=>{ ev.preventDefault(); ev.stopPropagation(); fn(); }); };
+    btn(".etUp",()=>{ if(i>0){ const a=world.elementTypes; [a[i-1],a[i]]=[a[i],a[i-1]]; renderElementTypes(); markDirty(); } });
+    btn(".etDown",()=>{ const a=world.elementTypes; if(i<a.length-1){ [a[i+1],a[i]]=[a[i],a[i+1]]; renderElementTypes(); markDirty(); } });
+    btn(".etDel",()=>{ if(world.elementTypes.length<=1){flash("Keep at least one element type.");return;} if(!confirm(`Delete element type "${t.name}"?`))return; world.elementTypes.splice(i,1); renderElementTypes(); markDirty(); });
+    box.appendChild(det);
   });
+  if(!world.elementTypes.length){ const n=div("note"); n.textContent="No element templates yet."; box.appendChild(n); }
 }
 /* ===== New GM Screen (v2) — pop growth + category tuning. Blank canvas we build up. ===== */
 async function openGM2(){
@@ -4803,6 +4807,12 @@ function renderGM2(){
         <table class="gm2tbl"><thead><tr><th>Terrain</th><th>Default image</th><th>Preview</th></tr></thead><tbody>${terrImgRows}</tbody></table>
         <div class="btnrow" style="margin-top:8px"><button class="btn tiny" id="gmTImgRescan">🔄 Rescan image folder</button></div>
       </section>
+      <section class="gmBlock gmSpanAll">
+        <div class="gmBlockH">⚔ Army element types (GURPS Mass Combat)</div>
+        <p class="note">Reusable templates you drop into armies on the Military map — applying one <b>names the element after the template</b> (you can rename it afterwards). TL 0 is the Stone Age Warriors. Click a template to expand and edit its stats; reorder with ↑/↓.</p>
+        <div id="elemTypes"></div>
+        <div class="btnrow" style="margin-top:8px"><button class="btn tiny" id="elemAdd">＋ Add element type</button></div>
+      </section>
     </div>
     <div class="btnrow" style="margin-top:12px"><button class="btn" id="gmResetPop">↺ Reset growth tunables</button></div>`;
   // ---- global pop tunables ----
@@ -4862,6 +4872,9 @@ function renderGM2(){
   host.querySelectorAll(".gmTImg").forEach(el=>el.addEventListener("change",e=>{ world.terrainImages=world.terrainImages||{}; const v=e.target.value; if(v)world.terrainImages[el.dataset.t]=v; else delete world.terrainImages[el.dataset.t]; markDirty(); renderGM2(); }));
   { const rb=$("#gmTImgRescan"); if(rb)rb.onclick=async()=>{ await loadExtraImages(); renderGM2(); flash(TERRAIN_IMAGES.length+" image(s) in static/img/terrain/."); }; }
   { const r=$("#gmResetPop"); if(r)r.onclick=()=>{ if(!confirm("Reset all population growth tunables (baseline, ceilings, terrain & settlement modifiers) to defaults?"))return; delete world.tune.pop; seedPopTune(world); markDirty(); renderGM2(); }; }
+  // ---- army element types ----
+  renderElementTypes();
+  { const ea=$("#elemAdd"); if(ea)ea.addEventListener("click",()=>{ world.elementTypes=world.elementTypes||[]; world.elementTypes.push(migrateElement({id:uid(),name:"New Element",cls:"Fire (F)",ts:5,pts:0,wt:0,mob:"Foot",tl:1,features:[],equip:"Basic",troop:"Average"})); renderElementTypes(); markDirty(); }); }
 }
 function openGMScreen(){
   syncTuneKeys();   // add mods for new terrains/races, prune deleted ones
