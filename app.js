@@ -971,6 +971,7 @@ function computeLabelGroups(mode){
   for(const gp of _provGeo){
     const val=keyer(gp.p); if(val==null||val==="")continue;
     items.push({val,cont:gp.p.continentId,cx:gp.cx,cy:gp.cy,
+      minx:gp.minx,miny:gp.miny,maxx:gp.maxx,maxy:gp.maxy,
       r:0.5*Math.hypot(gp.maxx-gp.minx,gp.maxy-gp.miny),
       area:Math.max(1,(gp.maxx-gp.minx)*(gp.maxy-gp.miny))});
   }
@@ -992,9 +993,10 @@ function computeLabelGroups(mode){
   }
   const groups={};
   for(let i=0;i<n;i++){const root=find(i),it=items[i];
-    let g=groups[root]; if(!g){g={val:it.val,sx:0,sy:0,sxx:0,syy:0,sxy:0,a:0};groups[root]=g;}
+    let g=groups[root]; if(!g){g={val:it.val,sx:0,sy:0,sxx:0,syy:0,sxy:0,a:0,members:[]};groups[root]=g;}
     g.sx+=it.cx*it.area; g.sy+=it.cy*it.area; g.a+=it.area;
     g.sxx+=it.cx*it.cx*it.area; g.syy+=it.cy*it.cy*it.area; g.sxy+=it.cx*it.cy*it.area;
+    g.members.push(it);
   }
   const out=[];
   for(const k in groups){const g=groups[k]; const text=labelText(mode,g.val); if(!text)continue;
@@ -1002,9 +1004,24 @@ function computeLabelGroups(mode){
     const Sxx=g.sxx/g.a-mx*mx, Syy=g.syy/g.a-my*my, Sxy=g.sxy/g.a-mx*my;
     let angle=0.5*Math.atan2(2*Sxy,(Sxx-Syy)||1e-9);
     if(angle>Math.PI/2)angle-=Math.PI; if(angle<-Math.PI/2)angle+=Math.PI;
-    const tr=(Sxx+Syy)/2, dd=Math.sqrt(Math.max(0,((Sxx-Syy)/2)**2+Sxy*Sxy));
-    const axisLen=Math.sqrt(Math.max(tr+dd,1))*4.2;
-    out.push({text,val:g.val,x:mx,y:my,a:g.a,angle,axisLen});
+    // Real oriented bounding box of the member provinces, in the label's axis frame,
+    // measured symmetrically about the (centered) label so it can't spill past the
+    // nearer territory edge on either side. This confines the label to its region.
+    const ca=Math.cos(angle), sa=Math.sin(angle);
+    let uRmax=0,uLmax=0,vTmax=0,vBmax=0;
+    for(const it of g.members){
+      const corners=[[it.minx,it.miny],[it.maxx,it.miny],[it.minx,it.maxy],[it.maxx,it.maxy]];
+      for(const [x,y] of corners){
+        const du=x-mx, dv=y-my; const u=du*ca+dv*sa, v=-du*sa+dv*ca;
+        if(u>=0) uRmax=Math.max(uRmax,u); else uLmax=Math.max(uLmax,-u);
+        if(v>=0) vTmax=Math.max(vTmax,v); else vBmax=Math.max(vBmax,-v);
+      }
+    }
+    const halfMajor=Math.max(4, Math.min(uRmax,uLmax));   // symmetric half-width that stays inside the region
+    const halfMinor=Math.max(3, Math.min(vTmax,vBmax));
+    const axisLen=halfMajor*2*0.90;                       // usable label width, with a small margin
+    const minorLen=halfMinor*2;                           // usable label height (font capped against this)
+    out.push({text,val:g.val,x:mx,y:my,a:g.a,angle,axisLen,minorLen});
   }
   return out;
 }
@@ -1345,7 +1362,7 @@ function wrapToWidth(ctx,words,maxW){
 const LABEL_FONT='"Segoe UI Semibold","Segoe UI",system-ui,Roboto,Arial,sans-serif';
 function drawFittedLabel(ctx,name,cx,cy,angle,boxLen,boxThick,maxFs,perpShift){
   perpShift=perpShift||0;                            // nudge text off a capital/admin marker
-  const boxW=boxLen*0.92, boxH=Math.max(9, boxThick*0.9 - Math.abs(perpShift)*1.6);
+  const boxW=boxLen*0.80, boxH=Math.max(9, boxThick*0.76 - Math.abs(perpShift)*1.6);
   const words=name.split(/\s+/).filter(Boolean); if(!words.length)return;
   let chosen=null;
   const hi=Math.max(9,Math.min(maxFs||16, boxH));
@@ -1651,7 +1668,7 @@ function drawFrame(){
   // Two zoom levels with a short crossfade so the handoff isn't jarring:
   // zoomed out → realm / region names; zoomed in → province names.
   const KEY_SZ=6;                          // capital/admin marker size (small, fixed)
-  const PROV_CAP=16;                       // max province-name font (px) — keeps them uniform
+  const PROV_CAP=13;                       // max province-name font (px) — keeps them uniform &amp; inside borders
   const nameZoom = 58/_medProvW;           // lower = province names appear earlier when zooming in
   const band = nameZoom*0.3;               // fade width around the threshold
   const provAlpha = clamp01((s-(nameZoom-band))/(2*band));
@@ -1667,7 +1684,9 @@ function drawFrame(){
     for(const lg of _labelGroups){
       if(_lf && lg.val!==_lf.value) continue;
       if(state.mapmode==="race" && state.selRaceGroup && subraceGroup(lg.val)!==state.selRaceGroup) continue;   // race group spotlight hides other labels
-      let fontPx=Math.sqrt(lg.a)*0.20*s; if(fontPx<9) continue; fontPx=Math.min(fontPx,180);
+      let fontPx=Math.sqrt(lg.a)*0.135*s; if(fontPx<9) continue; fontPx=Math.min(fontPx,160);
+      if(lg.minorLen) fontPx=Math.min(fontPx, lg.minorLen*s*0.52);   // keep the label within the region's short axis
+      if(fontPx<9) continue;
       const X=(lg.x-cam.x)*s, Y=(lg.y-cam.y)*s;
       if(X<-260||Y<-100||X>cw+260||Y>ch+100) continue;
       const txt=(lg.text||"").toUpperCase(); if(!txt)continue;
@@ -4026,6 +4045,7 @@ function setupMapInteraction(){
   let painted=false;
   const rel=ev=>{const r=cv.getBoundingClientRect();return [ev.clientX-r.left,ev.clientY-r.top];};
   cv.addEventListener("mousedown",ev=>{
+    if(Date.now()-(window._lastTouchEnd||0)<700) return;   // ignore mouse events synthesized from a touch tap (mobile)
     if(state.regionSel&&state.regionSel.active){ state.regionSel.start=rel(ev); state.regionSel.cur=state.regionSel.start.slice(); return; }
     if(state.split){ const w=screenToWorld(ev); state.split.pts.push([w[0],w[1]]); if(state.split.pts.length>=2)performSplit(); else requestRender(); return; }
     if(state.tilt)return;            // tilt = look-only mode
@@ -4225,6 +4245,7 @@ function setupTouch(cv){
       state.cam.x-=dx/state.cam.scale; state.cam.y-=dy/state.cam.scale; t.x=tt.clientX; t.y=tt.clientY; requestRender(); }
   },{passive:false});
   cv.addEventListener("touchend",ev=>{
+    window._lastTouchEnd=Date.now();   // suppress the mouse events the browser synthesizes from this tap
     if(t.mode==="draw"){ _curStroke=null; savePings(); }
     else if(t.mode==="erase"){ savePings(); }
     else if(t.mode==="pan" && !t.moved && ev.changedTouches.length){ const tt=ev.changedTouches[0]; const [wx,wy]=worldAt(tt.clientX,tt.clientY); handleTapWorld(wx,wy); }
@@ -4417,7 +4438,8 @@ function exportRender(rect,outW,mode,legend,legendPos,provNames=true){
     ctx.strokeText(c.name,X,Y);ctx.fillText(c.name,X,Y);
   });
   if(!isProvMap){const _lg=computeLabelGroups(renderMode);
-  for(const lg of _lg){let fontPx=Math.sqrt(lg.a)*0.20*s;if(fontPx<10)continue;fontPx=Math.min(fontPx,300);
+  for(const lg of _lg){let fontPx=Math.sqrt(lg.a)*0.135*s;if(fontPx<10)continue;fontPx=Math.min(fontPx,300);
+    if(lg.minorLen)fontPx=Math.min(fontPx,lg.minorLen*s*0.52);if(fontPx<10)continue;
     const X=(lg.x-rect.x)*s,Y=(lg.y-rect.y)*s;if(X<-300||Y<-100||X>mapW+300||Y>mapH+100)continue;
     const txt=(lg.text||"").toUpperCase();if(!txt)continue;
     ctx.font=`600 ${fontPx}px Georgia,serif`;
