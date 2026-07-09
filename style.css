@@ -135,6 +135,13 @@ body:not(.has-sel) #right{display:none}
 #paintPanel .ppModes,#popPanel .ppModes{display:flex; gap:4px; margin:4px 0; flex-wrap:wrap}
 #paintPanel .ppModes .btn,#popPanel .ppModes .btn{flex:1}
 #paintPanel .ppChips{display:flex; flex-wrap:wrap; gap:4px; max-height:34vh; overflow:auto}
+#paintPanel .pmixBox{margin-top:6px; padding-top:6px; border-top:1px solid var(--line)}
+#paintPanel .pmixRow{display:flex; align-items:center; gap:6px; margin:3px 0; font-size:12px}
+#paintPanel .pmixRow .sw{width:11px; height:11px; border-radius:3px; flex:none}
+#paintPanel .pmixRow .nm{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+#paintPanel .pmixRow .pmixW{width:48px; background:#fff; border:1px solid var(--line); color:var(--ink); padding:2px 4px; border-radius:5px; text-align:right}
+#paintPanel .pmixRow .pmixPct{min-width:34px; text-align:right; color:var(--muted); font-weight:700}
+#paintPanel .pmixRow .pmixX{cursor:pointer; color:var(--bad); flex:none; padding:0 2px}
 /* conversion tool panel — sits beside the paint panel (both show on identity maps) */
 #convPanel{position:absolute; left:250px; bottom:78px; z-index:8; width:230px; max-height:calc(100vh - 210px); overflow:auto;
   background:#ffffffee; border:1px solid var(--line); border-radius:12px; padding:9px 10px; box-shadow:0 4px 16px #00000022}

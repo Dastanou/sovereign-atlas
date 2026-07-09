@@ -482,6 +482,9 @@ let state = {
   cam: { x: 0, y: 0, scale: 0.3 },  // x,y = world coord at canvas top-left; scale = px/world-unit
   draft: null,              // in-progress polygon points (local coords) while drawing
   paintValue: null,         // category value to paint (non-political modes)
+  paintMixOn: false,        // identity paint: blend several groups by a breakdown instead of one
+  paintMixGroups: [],       // [{name,w}] chosen groups + relative weights for the mix
+  paintMixJitter: 15,       // mix paint: per-province random ± on the breakdown (%)
   paintUnclaim: false,      // political: paint provinces back to unclaimed
   drawCursor: null,         // live (snapped) cursor while drawing
   nodeDrag: null,           // {p,i} vertex being dragged in Nodes tool
@@ -2054,6 +2057,7 @@ function paintReady(){
   const m=state.mapmode;
   if(state.paintErase) return m==="political"||PAINTABLE_MODES.includes(m);
   if(m==="political")return !!state.selRealm || state.paintUnclaim;
+  if(MIX_MODES.includes(m) && state.paintMixOn) return paintMixReady();
   return PAINTABLE_MODES.includes(m) && state.paintValue!=null && state.paintValue!=="";
 }
 function paintHint(){
@@ -2083,16 +2087,28 @@ function renderPaintPanel(){
       ${state.expandMode==="settle"?`<div class="ppRow"><button class="btn tiny" id="ppSettleCfg" style="flex:1">⚙ Settle options…</button></div>`:""}
       <div class="ppRow"><button class="btn tiny${(painting&&state.paintUnclaim)?" danger":""}" id="ppErase">🧹 Erase (unclaim)</button><button class="btn tiny" id="ppUndo">↶ Undo</button></div>`;
   } else {
+    const isMix = MIX_MODES.includes(state.mapmode);
+    const mixOn = isMix && state.paintMixOn;
     const entries=legendEntries(state.mapmode).filter(e=>e[2]!==undefined);
-    const chips=entries.map(([c,l,v])=>{ const sel=(painting && !state.paintErase && state.paintValue===v);
+    const inMix=v=>(state.paintMixGroups||[]).some(g=>g.name===v);
+    const chips=entries.map(([c,l,v])=>{ const sel = mixOn ? inMix(v) : (painting && !state.paintErase && state.paintValue===v);
       return `<button class="ppChip${sel?" sel":""}" data-v="${esc(String(v))}"><span class="sw" style="background:${c}"></span>${esc(l)}</button>`; }).join("");
-    html+=`<div class="ppChips">${chips||'<span class="note">Nothing to paint here.</span>'}</div>
+    const mixToggle = isMix ? `<div class="ppModes"><button class="btn tiny ppMode${!mixOn?" primary":""}" id="ppMixSingle" title="Paint one group across the province">Single</button><button class="btn tiny ppMode${mixOn?" primary":""}" id="ppMixMulti" title="Blend several groups by a breakdown">Mix</button></div>` : "";
+    let mixEditor="";
+    if(mixOn){
+      const gs=state.paintMixGroups||[]; const cat=AXIS_CAT[state.mapmode]||state.mapmode;
+      const rows=gs.length ? gs.map((g,i)=>
+        `<div class="pmixRow"><span class="sw" style="background:${catColor(cat,g.name)}"></span><span class="nm">${esc(g.name)}</span><input class="pmixW" data-i="${i}" type="number" min="0" max="100" step="1" value="${Math.round(+g.w||0)}"/><span class="pmixPct">%</span><span class="pmixX" data-i="${i}" title="Remove">✕</span></div>`).join("")
+        : '<div class="note">Click groups above to add them to the mix.</div>';
+      mixEditor=`<div class="pmixBox">${rows}<div class="ppRow" style="margin-top:5px"><label class="note" style="flex:1;display:flex;align-items:center">Randomness ±<input id="pmixJit" type="number" min="0" max="90" value="${state.paintMixJitter}" style="width:50px;margin:0 4px"/>%</label></div></div>`;
+    }
+    html+=mixToggle+`<div class="ppChips">${chips||'<span class="note">Nothing to paint here.</span>'}</div>${mixEditor}
       <div class="ppRow"><button class="btn tiny${(painting&&state.paintErase)?" danger":""}" id="ppErase">🧹 Erase</button><button class="btn tiny" id="ppUndo">↶ Undo</button></div>`;
   }
   box.innerHTML=head+`<div class="ppBody">${html}</div>`;
   box.classList.toggle("collapsed",_paintCollapsed);
   { const cc=$("#ppCaret"); if(cc)cc.onclick=()=>{ _paintCollapsed=!_paintCollapsed; renderPaintPanel(); }; }
-  $("#ppSelect").onclick=()=>{ state.paintErase=false; setTool("select"); };
+  $("#ppSelect").onclick=()=>{ state.paintErase=false; setTool("select"); renderPaintPanel(); };
   { const u=$("#ppUndo"); if(u)u.onclick=()=>doUndo(); }
   { const e=$("#ppErase"); if(e)e.onclick=()=>{ state.paintErase=true; state.paintValue=null; state.paintUnclaim=(state.mapmode==="political"); setTool("paint"); renderPaintPanel(); flash("Erase mode — click/drag over provinces."); }; }
   if(state.mapmode==="political"){
@@ -2100,7 +2116,24 @@ function renderPaintPanel(){
     box.querySelectorAll(".ppMode").forEach(b=>b.onclick=()=>{ state.expandMode=b.dataset.exm; renderPaintPanel(); });
     { const sc=$("#ppSettleCfg"); if(sc)sc.onclick=openSettleConfig; }
   } else {
-    box.querySelectorAll(".ppChip").forEach(b=>b.onclick=()=>{ state.paintValue=b.dataset.v; state.paintErase=false; setTool("paint"); renderPaintPanel(); flash("Painting: "+b.dataset.v); });
+    const mixOn = MIX_MODES.includes(state.mapmode) && state.paintMixOn;
+    box.querySelectorAll(".ppChip").forEach(b=>b.onclick=()=>{
+      const v=b.dataset.v;
+      if(mixOn){
+        const gs=state.paintMixGroups=state.paintMixGroups||[];
+        const idx=gs.findIndex(g=>g.name===v);
+        if(idx>=0){ gs.splice(idx,1); normalizeMix(null); }        // remove → rebalance to 100
+        else { gs.push({name:v, w:0}); gs.forEach(g=>g.w=100/gs.length); normalizeMix(null); }   // add → even split summing to 100
+        state.paintErase=false; setTool("paint"); renderPaintPanel();
+      } else {
+        state.paintValue=v; state.paintErase=false; setTool("paint"); renderPaintPanel(); flash("Painting: "+v);
+      }
+    });
+    { const s=$("#ppMixSingle"); if(s)s.onclick=()=>{ state.paintMixOn=false; renderPaintPanel(); }; }
+    { const mm=$("#ppMixMulti"); if(mm)mm.onclick=()=>{ state.paintMixOn=true; state.paintErase=false; setTool("paint"); renderPaintPanel(); flash("Mix paint — pick groups above and set their breakdown."); }; }
+    box.querySelectorAll(".pmixW").forEach(el=>el.addEventListener("change",e=>{ const i=+el.dataset.i; if(state.paintMixGroups[i]){ state.paintMixGroups[i].w=Math.max(0,Math.min(100,+e.target.value||0)); normalizeMix(i); renderPaintPanel(); } }));
+    box.querySelectorAll(".pmixX").forEach(el=>el.onclick=()=>{ state.paintMixGroups.splice(+el.dataset.i,1); normalizeMix(null); renderPaintPanel(); });
+    { const j=$("#pmixJit"); if(j)j.addEventListener("input",e=>{ state.paintMixJitter=Math.max(0,Math.min(90,+e.target.value||0)); }); }
   }
 }
 // Editor-only population growth/decline tool — bottom-left of the Population map.
@@ -2393,6 +2426,55 @@ function openExpandPopup(r){
     renderMap();
   };
 }
+// Identity axes that support "mix" painting (blend several groups by a breakdown).
+const MIX_MODES=["religion","culture","race","language"];
+let _mixStrokeSet=null;   // provinces already mix-painted in the current stroke (avoids re-rolling on drag)
+function paintMixReady(){ return state.paintMixOn && (state.paintMixGroups||[]).some(g=>g.name && (+g.w>0)); }
+// Keep the mix breakdown summing to 100. If keepIdx is given, pin that group's
+// value and redistribute the remainder among the others proportionally; otherwise
+// scale everything to total 100 (used after add/remove).
+function normalizeMix(keepIdx){
+  const gs=state.paintMixGroups||[]; if(!gs.length) return;
+  if(gs.length===1){ gs[0].w=100; return; }
+  if(keepIdx!=null && gs[keepIdx]){
+    let v=Math.max(0,Math.min(100,+gs[keepIdx].w||0)); gs[keepIdx].w=v;
+    const others=gs.filter((_,i)=>i!==keepIdx); const rem=100-v;
+    const osum=others.reduce((a,g)=>a+(+g.w||0),0);
+    if(osum<=0) others.forEach(g=>g.w=rem/others.length);
+    else others.forEach(g=>g.w=rem*((+g.w||0)/osum));
+  } else {
+    const s=gs.reduce((a,g)=>a+(+g.w||0),0);
+    if(s<=0) gs.forEach(g=>g.w=100/gs.length);
+    else gs.forEach(g=>g.w=(+g.w||0)/s*100);
+  }
+  gs.forEach(g=>g.w=Math.round(g.w));
+}
+// Redistribute a province's pops across the selected groups on axis m, by the
+// chosen weights ± a per-province random jitter. Other axes are preserved
+// (each pop is split proportionally), so only the painted axis changes.
+function paintMixApply(p, m){
+  if(!(p.pops&&p.pops.length))return false;
+  const groups=(state.paintMixGroups||[]).filter(g=>g.name && (+g.w>0));
+  if(!groups.length) return false;
+  const jit=Math.max(0,Math.min(90,+state.paintMixJitter||0))/100;
+  const w=groups.map(g=>({name:g.name, w:Math.max(0,(+g.w)*(1+(Math.random()*2-1)*jit))}));
+  let wsum=w.reduce((a,g)=>a+g.w,0); if(wsum<=0){ w.forEach(g=>g.w=1); wsum=w.length; }
+  w.forEach(g=>g.frac=g.w/wsum);
+  const out=[];
+  for(const q of p.pops){
+    const s=Math.round(q.size||0); if(s<=0) continue;
+    let assigned=0;
+    w.forEach((g,idx)=>{
+      let take = idx===w.length-1 ? (s-assigned) : Math.round(s*g.frac);
+      take=Math.max(0, Math.min(take, s-assigned)); assigned+=take;
+      if(take<=0) return;
+      out.push(newPop(take, m==="religion"?g.name:q.religion, m==="culture"?g.name:q.culture,
+                            m==="race"?g.name:q.race, m==="language"?g.name:q.language, q.economy));
+    });
+  }
+  p.pops=out; deriveProvince(p);   // deriveProvince merges identical groups
+  return true;
+}
 function paintProvince(p){   // returns true if it changed something (and auto-logs it)
   const m=state.mapmode;
   const fieldMap={political:"realm",terrain:"terrain",settlement:"settlement",resource:"resource",religion:"religion",culture:"culture",race:"race",language:"language",economy:"economy"};
@@ -2404,7 +2486,8 @@ function paintProvince(p){   // returns true if it changed something (and auto-l
     if(!erasing && !state.paintUnclaim && !v) return false;
     if(p.realmId!==v){ p.realmId=v; changed=true; if(v){const rr=world.realms.find(x=>x.id===v); if(rr)expandPaint(p,rr);} }
   } else {
-    if(!erasing && (state.paintValue==null||state.paintValue==="")) return false;
+    const mixActive = MIX_MODES.includes(m) && state.paintMixOn && paintMixReady();
+    if(!erasing && !mixActive && (state.paintValue==null||state.paintValue==="")) return false;
     if(m==="terrain"){ const v=erasing?"":state.paintValue; if(p.terrain!==v){p.terrain=v;changed=true;} }
     else if(m==="settlement"){ const v=erasing?"Uninhabited":state.paintValue; if(p.settlement!==v){p.settlement=v;changed=true;} }
     else if(m==="resource"){
@@ -2413,9 +2496,14 @@ function paintProvince(p){   // returns true if it changed something (and auto-l
     }
     else{ // religion/culture/race/language/economy — convert EVERY pop group in the province
       if(!(p.pops&&p.pops.length))return false;   // no people here to convert/erase
-      const v=erasing?"":state.paintValue; let any=false;
-      p.pops.forEach(q=>{if(q[m]!==v){q[m]=v;any=true;}});
-      if(any){deriveProvince(p);changed=true;}
+      if(!erasing && MIX_MODES.includes(m) && state.paintMixOn && paintMixReady()){
+        if(_mixStrokeSet && _mixStrokeSet.has(p.id)) return false;   // only roll once per province per stroke
+        if(paintMixApply(p,m)){ if(_mixStrokeSet)_mixStrokeSet.add(p.id); changed=true; }
+      } else {
+        const v=erasing?"":state.paintValue; let any=false;
+        p.pops.forEach(q=>{if(q[m]!==v){q[m]=v;any=true;}});
+        if(any){deriveProvince(p);changed=true;}
+      }
     }
   }
   if(changed)autoLog(p,field,old);
@@ -4102,7 +4190,7 @@ function setupMapInteraction(){
     if(state.tool==="select" && state.showNames){ const cid=continentLabelAt(ev); if(cid){ beginEdit(); state.labelDrag=cid; down=true; dragged=false; return; } }
     if(state.tool==="nodes"){ const h=nodeAt(ev); if(h){ beginEdit(); state.nodeDrag=h; down=true; dragged=false; return; } }
     if(state.tool==="move"){ const w=screenToWorld(ev); const p=provinceAt(w[0],w[1]); if(p){ beginEdit(); state.moveDrag={p,start:p.points.map(pt=>pt.slice()),grab:[w[0],w[1]]}; down=true; dragged=false; return; } }
-    if(state.tool==="paint" && paintReady()){ beginEdit(); beginExpandStroke(); }
+    if(state.tool==="paint" && paintReady()){ beginEdit(); beginExpandStroke(); _mixStrokeSet=new Set(); }
     down=true; dragged=false; painted=false; sx0=ev.clientX; sy0=ev.clientY; camStart={x:state.cam.x,y:state.cam.y};
   });
   window.addEventListener("mousemove",ev=>{
@@ -4328,7 +4416,7 @@ function handleTapWorld(wx,wy){
     renderMap(); renderPopPanel(); return;
   }
   if(p && (convertSelectActive()||state.convertPickCenter) && convertAxis()){ convertHandleClick(p); return; }
-  if(p && state.tool==="paint" && paintReady()){ beginEdit(); beginExpandStroke(); if(paintProvince(p)){_labelsDirty=true;renderMap();renderLeft();markDirty();} return; }
+  if(p && state.tool==="paint" && paintReady()){ beginEdit(); beginExpandStroke(); _mixStrokeSet=new Set(); if(paintProvince(p)){_labelsDirty=true;renderMap();renderLeft();markDirty();} return; }
   if(p && state.mapmode==="resource"){ toggleResourceHighlight(p); selectProvince(p.id); return; }
   if(p && state.mapmode==="race"){ const d=dominant(p.race); if(d)toggleRaceGroup(subraceGroup(d)); selectProvince(p.id); return; }
   if(p){ spotlightProvinceItem(p); selectProvince(p.id); return; }   // open the province sheet (desktop panel or mobile bottom-sheet)
@@ -5506,6 +5594,7 @@ function setMapmode(m){
   if(m!=="race") state.selRaceGroup=null;       // clear the race-group spotlight when leaving that map
   state.legendFilter=null;                      // clear any legend spotlight on mode change
   state.convertSelecting=false; state.convertPickCenter=false;   // pause conversion picking when switching maps
+  state.paintMixGroups=[];                       // mix-paint groups are axis-specific — reset on map change
   updateResSpot();
   if(m!=="military" && (state.selForce||state.selBattle)){ state.selForce=null; state.selBattle=null; state.moveMode=null; }
   if(m!=="monster" && state.selMonster){ state.selMonster=null; state.moveMode=null; }
