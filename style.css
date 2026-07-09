@@ -319,18 +319,22 @@ details.rvProvinces[open]>summary::before{content:"▾"}
 .pvKey{display:inline-flex; align-items:center; gap:4px; font-size:11px; color:var(--muted)}
 .pvKey .sw{width:9px; height:9px; border-radius:2px; display:inline-block}
 /* population pies (2×2) */
-.pvPies{display:grid; grid-template-columns:1fr 1fr; gap:8px}
+.pvPies{display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px}
 .pvPie{display:flex; flex-direction:column; align-items:center; text-align:center; background:var(--panel);
-  border:1px solid var(--line); border-radius:9px; padding:6px 5px}
+  border:1px solid var(--line); border-radius:9px; padding:6px 5px; min-width:0; overflow:hidden}
 .pvPie .pvPieH{font-size:11px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.4px; margin-bottom:4px}
 .pvPie svg{margin:0 auto 4px}
-.pvLegs{width:100%; display:flex; flex-direction:column; gap:1px}
-.pvLeg{display:flex; align-items:center; gap:4px; font-size:11px; line-height:1.35}
+.pvLegs{width:100%; min-width:0; display:flex; flex-direction:column; gap:1px}
+.pvLeg{display:flex; align-items:center; gap:4px; font-size:11px; line-height:1.35; min-width:0}
 .pvLeg .sw{width:9px; height:9px; border-radius:2px; flex:none}
-.pvLeg .nm{flex:1; text-align:left; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.pvLeg .nm{flex:1; min-width:0; text-align:left; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
 .pvLeg b{flex:none}
-.pvLeg .pvLegPct{flex:none; min-width:30px; text-align:right; font-weight:700}
-.pvLeg .pvLegN{flex:none; min-width:34px; text-align:right; color:var(--muted); font-size:10px}
+.pvLeg .pvLegVal{flex:none; margin-left:auto; padding-left:4px; text-align:right; font-weight:700; white-space:nowrap; font-variant-numeric:tabular-nums}
+.pvPopHead{display:flex; align-items:center; gap:8px}
+.pvPieToggle{margin-left:auto; display:inline-flex; border:1px solid var(--line); border-radius:7px; overflow:hidden}
+.pvPieToggle .pvTg{border:none; background:var(--panel2); color:var(--muted); font-size:10.5px; font-weight:700; padding:2px 7px; cursor:pointer; line-height:1.5; text-transform:none; letter-spacing:0}
+.pvPieToggle .pvTg+.pvTg{border-left:1px solid var(--line)}
+.pvPieToggle .pvTg.on{background:var(--accent); color:#fff}
 /* monster image picker */
 .monImgRow{display:flex; flex-wrap:wrap; gap:6px}
 .monImgBtn{width:40px; height:40px; padding:3px; border:1px solid var(--line); border-radius:8px;
@@ -572,6 +576,10 @@ body.viewer #inspector .insTitle input:disabled{font-weight:700; font-size:17px}
 #mapLegend .mlRow .sw{width:12px; height:12px; border-radius:3px; border:1px solid #00000022; flex:none}
 #mapLegend .mlRow.active{outline:2px solid var(--accent); border-radius:5px; font-weight:700}
 #mapLegend .mlRow:active{opacity:.7}
+#mapLegend .mlRaceGroup{display:flex; align-items:center; margin:5px 0 1px; padding:1px 0; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.4px; color:var(--muted); white-space:nowrap}
+#mapLegend .mlRaceGroup.active{color:var(--accent)}
+#mapLegend .mlRaceGroup:first-child{margin-top:0}
+#mapLegend .mlSubRow{padding-left:10px}
 /* resource legend: regular resource + its prestige goods on one row, hidden section below */
 /* base | first prestige | second prestige — a fixed 3-column grid so prestige goods line up */
 #mapLegend .resLegRow{display:grid; grid-template-columns:96px minmax(0,1fr) minmax(0,1fr);

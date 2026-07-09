@@ -284,6 +284,8 @@ function raceGrowthMod(race){ const o=(world&&world.tune&&world.tune.raceGrowth)
 // ---- subraces: pops carry a subrace (q.race); races are the groups above them ----
 function subraceGroup(sr){ return (world&&world.subraceOf&&world.subraceOf[sr])||sr; }
 function subracesInGroup(g){ return (world.lists.subraces||[]).filter(sr=>subraceGroup(sr)===g); }
+// A race group's display colour = its representative subrace's colour (races carry no colour of their own).
+function raceGroupColor(g){ const subs=subracesInGroup(g); const rep=subs.length?subs[0]:g; return catColor("subraces",rep); }
 function subraceUsage(v){ let n=0; (world&&world.provinces||[]).forEach(p=>{ if((p.pops||[]).some(q=>q.race===v))n++; }); return n; }
 function renameSubrace(ov,nv){
   world.provinces.forEach(p=>{ let ch=false; (p.pops||[]).forEach(q=>{ if(q.race===ov){q.race=nv;ch=true;} }); if(ch)deriveProvince(p); });
@@ -513,6 +515,7 @@ let state = {
   popCont: null,            // chosen continent id for continent scope
   popRealm: null,           // chosen realm id for realm scope
   popSel: new Set(),        // province ids picked for "selected" scope
+  pvPieMode: "pct",         // viewer province pies: "pct" (percentages) | "num" (population numbers)
   convertTarget: null,      // conversion tool: target religion/culture/language value
   convertPct: 30,           // conversion tool: baseline % of pops converted
   convertFast: false,       // conversion tool: fast-spreading religion (→50%)
@@ -760,15 +763,27 @@ function mergePops(p){
   }
   p.pops=out;
 }
-function deriveProvince(p){
+// Recompute a province's totals & axis breakdowns from its pops WITHOUT merging
+// identical groups — so the pop editor can hold two identical groups apart while
+// you build a brand-new one.
+function recomputeProvince(p){
   p.pops=Array.isArray(p.pops)?p.pops:[];
-  mergePops(p);
   p.population=p.pops.reduce((a,q)=>a+(q.size||0),0);
   p.religion=axisFromPops(p.pops,"religion");
   p.culture=axisFromPops(p.pops,"culture");
   p.race=axisFromPops(p.pops,"race");
   p.language=axisFromPops(p.pops,"language");
   p.economy=axisFromPops(p.pops,"economy");
+}
+function deriveProvince(p){
+  p.pops=Array.isArray(p.pops)?p.pops:[];
+  mergePops(p);
+  recomputeProvince(p);
+}
+// Consolidate identical pop groups for a province once it's no longer being edited.
+function commitProvincePops(id){
+  const p=world.provinces.find(x=>x.id===id); if(!p)return;
+  deriveProvince(p);
 }
 function migratePops(p,lists){
   const pop=p.population||0; if(pop<=0)return [];
@@ -2494,6 +2509,7 @@ function holyWondersOf(rel){ return (world.wonders||[]).filter(w=>w.holySite && 
 function holyReligionsOfProvince(p){ const s=new Set(); wondersOf(p.id).forEach(w=>wonderReligions(w).forEach(r=>s.add(r))); return [...s]; }
 function holySiteProvincesOf(rel){ const seen=new Set(),out=[]; holyWondersOf(rel).forEach(w=>{ if(w.provinceId&&!seen.has(w.provinceId)){seen.add(w.provinceId); const p=world.provinces.find(x=>x.id===w.provinceId); if(p)out.push(p);} }); return out; }
 function selectProvince(id){
+  if(state.selProvince && state.selProvince!==id) commitProvincePops(state.selProvince);   // fold identical groups on leaving a province
   state.selProvince=id;state.selRealm=null;state.selReligion=null;state.selWater=null;state.selLabel=null;
   const p=world.provinces.find(p=>p.id===id);
   if(p) state.focusedContinent=p.continentId;
@@ -2501,26 +2517,31 @@ function selectProvince(id){
   renderMap();renderLeft();renderProvinceEditor();renderWonderPanel();
 }
 function selectRealm(id){
+  if(state.selProvince) commitProvincePops(state.selProvince);
   state.selRealm=id;state.selProvince=null;state.selReligion=null;state.selWater=null;state.selLabel=null;state.paintUnclaim=false;
   document.body.classList.add("has-sel");
   renderLeft();renderRealmEditor();renderWonderPanel();
 }
 function selectReligion(name){
+  if(state.selProvince) commitProvincePops(state.selProvince);
   state.selReligion=name;state.selProvince=null;state.selRealm=null;state.selWater=null;state.selLabel=null;state.selForce=null;state.selBattle=null;state.selMonster=null;
   document.body.classList.add("has-sel");
   renderMap();renderReligionEditor();renderWonderPanel();
 }
 function selectContinent(id){
+  if(state.selProvince) commitProvincePops(state.selProvince);
   state.focusedContinent=id;state.selProvince=null;state.selRealm=null;state.selReligion=null;state.selWater=null;state.selLabel=null;
   document.body.classList.add("has-sel");
   renderMap();renderLeft();renderContinentEditor();renderWonderPanel();
 }
 function selectCustomLabel(id){
+  if(state.selProvince) commitProvincePops(state.selProvince);
   state.selLabel=id;state.selProvince=null;state.selRealm=null;state.selReligion=null;state.selWater=null;
   document.body.classList.add("has-sel");
   renderMap();renderLabelEditor();renderWonderPanel();
 }
 function clearSelection(){   // click on empty void: deselect and hide the inspector
+  if(state.selProvince) commitProvincePops(state.selProvince);
   state.selProvince=null;state.selRealm=null;state.selReligion=null;state.selWater=null;state.selLabel=null;state.selForce=null;state.selBattle=null;state.selMonster=null;state.selResource=null;state.selRaceGroup=null;state.legendFilter=null;
   document.body.classList.remove("has-sel");
   updateResSpot();
@@ -3041,14 +3062,28 @@ function buildMapLegend(){
 // Race legend: subraces grouped under their race group. Click a group or subrace to spotlight
 // the whole group on the map (like the resource-family spotlight).
 function renderRaceLegend(box){
-  // flat list of subraces; clicking one highlights every subrace of its race group
-  (world.lists.subraces||[]).forEach(sr=>{
-    const g=subraceGroup(sr);
-    const row=div("mlRow"+(state.selRaceGroup===g?" active":""));
-    row.style.cursor="pointer"; row.dataset.grp=g; row.title=`Highlight all ${esc(g)} subraces`;
-    row.innerHTML=`<span class="sw" style="background:${catColor('subraces',sr)}"></span>${esc(sr)}`;
-    box.appendChild(row);
-  });
+  // subraces organized under their race group (group order follows world.lists.races);
+  // clicking a group header or any of its subraces highlights the whole group.
+  const subs=world.lists.subraces||[];
+  const order=(world.lists.races||[]).slice();
+  // include any race groups referenced by subraces but missing from the races list, then sort by list order
+  const groups=[]; const seen=new Set();
+  for(const g of order){ groups.push(g); seen.add(g); }
+  for(const sr of subs){ const g=subraceGroup(sr); if(!seen.has(g)){ groups.push(g); seen.add(g); } }
+  for(const g of groups){
+    const members=subs.filter(sr=>subraceGroup(sr)===g);
+    if(!members.length) continue;
+    const head=div("mlRaceGroup"+(state.selRaceGroup===g?" active":""));
+    head.dataset.grp=g; head.style.cursor="pointer"; head.title=`Highlight all ${esc(g)} subraces`;
+    head.innerHTML=`<span class="mlRaceGroupName">${esc(g)}</span>`;
+    box.appendChild(head);
+    members.forEach(sr=>{
+      const row=div("mlRow mlSubRow"+(state.selRaceGroup===g?" active":""));
+      row.dataset.grp=g; row.style.cursor="pointer"; row.title=`Highlight all ${esc(g)} subraces`;
+      row.innerHTML=`<span class="sw" style="background:${catColor('subraces',sr)}"></span>${esc(sr)}`;
+      box.appendChild(row);
+    });
+  }
   box.querySelectorAll("[data-grp]").forEach(el=>{ el.onclick=ev=>{ ev.stopPropagation(); toggleRaceGroup(el.dataset.grp); }; });
 }
 function toggleRaceGroup(g){ state.selRaceGroup = (state.selRaceGroup===g) ? null : g; renderMap(); buildMapLegend(); }
@@ -3181,7 +3216,8 @@ function renderLegend(){
   if(paintable){
     const h=div("note");h.style.marginTop="6px";h.textContent="Click an entry, then click/drag on the map to paint it.";box.appendChild(h);
     const lk=MODE_LIST[state.mapmode];
-    if(lk){const mb=document.createElement("button");mb.className="btn tiny";mb.style.marginTop="6px";mb.textContent="✎ Edit / add "+({governments:"governments",religions:"religions",cultures:"cultures",races:"races",languages:"languages",terrains:"terrains",settlements:"settlements",resources:"resources"}[lk]||lk);mb.onclick=()=>openLists(lk);box.appendChild(mb);}
+    if(state.mapmode==="race"){const mb=document.createElement("button");mb.className="btn tiny";mb.style.marginTop="6px";mb.textContent="✎ Edit race groups & subraces (GM Screen)";mb.onclick=()=>openGM2();box.appendChild(mb);}
+    else if(lk){const mb=document.createElement("button");mb.className="btn tiny";mb.style.marginTop="6px";mb.textContent="✎ Edit / add "+({governments:"governments",religions:"religions",cultures:"cultures",languages:"languages",terrains:"terrains",settlements:"settlements",resources:"resources"}[lk]||lk);mb.onclick=()=>openLists(lk);box.appendChild(mb);}
     if(state.mapmode!=="political"){
       const rob=document.createElement("button");rob.className="btn tiny"+(state.realmOverlay?" primary":"");rob.style.marginTop="6px";rob.style.marginLeft="6px";
       rob.textContent=(state.realmOverlay?"✓ ":"")+"⚑ Realm borders";
@@ -3246,7 +3282,8 @@ function pieCell(label,p,key,listKey){
   const m={}; let tot=0;
   for(const q of (p.pops||[])){ const v=q[key]; if(!v||!(q.size>0))continue; m[v]=(m[v]||0)+q.size; tot+=q.size; }
   const data=Object.entries(m).map(([name,size])=>({name,size,pct:tot?size/tot*100:0})).sort((a,b)=>b.size-a.size);
-  const leg = data.length ? data.slice(0,5).map(e=>`<div class="pvLeg" title="${esc(e.name)}: ${e.size.toLocaleString()} people (${Math.round(e.pct)}%)"><span class="sw" style="background:${catColor(listKey,e.name)}"></span><span class="nm">${esc(e.name)}</span><b class="pvLegPct">${Math.round(e.pct)}%</b><span class="pvLegN">${shortNum(e.size)}</span></div>`).join("")
+  const numMode=state.pvPieMode==="num";
+  const leg = data.length ? data.slice(0,5).map(e=>`<div class="pvLeg" title="${esc(e.name)}: ${e.size.toLocaleString()} people (${Math.round(e.pct)}%)"><span class="sw" style="background:${catColor(listKey,e.name)}"></span><span class="nm">${esc(e.name)}</span><span class="pvLegVal">${numMode?shortNum(e.size):Math.round(e.pct)+"%"}</span></div>`).join("")
                           : '<div class="note">—</div>';
   return `<div class="pvPie"><div class="pvPieH">${label}</div>${pieSVG(data,listKey,72)}<div class="pvLegs">${leg}</div></div>`;
 }
@@ -3294,7 +3331,12 @@ function renderProvinceView(){
       </div>
 
       <div class="pvBlock pvPopBlock">
-        <div class="pvBlockH">Population breakdown</div>
+        <div class="pvBlockH pvPopHead">Population breakdown
+          <span class="pvPieToggle" title="Show percentages or population numbers">
+            <button class="pvTg${state.pvPieMode!=="num"?" on":""}" data-pm="pct">%</button>
+            <button class="pvTg${state.pvPieMode==="num"?" on":""}" data-pm="num"># People</button>
+          </span>
+        </div>
         <div class="pvPies">
           ${pieCell("Religion",p,"religion","religions")}
           ${pieCell("Culture",p,"culture","cultures")}
@@ -3308,6 +3350,7 @@ function renderProvinceView(){
   `;
   const rl=$("#pvRealm"); if(rl&&realm)rl.onclick=e=>{e.preventDefault();selectRealm(realm.id);};
   ins.querySelectorAll(".pvFeat[data-f]").forEach(el=>el.onclick=()=>showFeatureBubble(el.dataset.f, el, false));
+  ins.querySelectorAll(".pvTg[data-pm]").forEach(b=>b.onclick=()=>{ state.pvPieMode=b.dataset.pm; renderProvinceView(); });
 }
 // A small blurb bubble for a feature (read-only in the viewer, editable in the editor).
 let _featBubbleEl=null;
@@ -3339,7 +3382,7 @@ function renderRealmView(){
   const leader=[r.leaderTitle,r.leaderName].filter(Boolean).join(" ");
   const row=(l,v)=>`<div class="rvRow"><span class="rvLbl">${l}</span><span class="rvVal">${v||"—"}</span></div>`;
   const raceTags=(arr)=>(arr&&arr.length)
-    ? arr.map(x=>`<span class="rvRace"><span class="sw" style="background:${catColor('races',x)}"></span>${esc(x)}</span>`).join("")
+    ? arr.map(x=>`<span class="rvRace"><span class="sw" style="background:${raceGroupColor(x)}"></span>${esc(x)}</span>`).join("")
     : `<span class="rvVal">—</span>`;
   const chip=(v,cls)=>`<span class="rvChip ${cls||''}">${esc(v)}</span>`;
   ins.innerHTML=`
@@ -3504,7 +3547,7 @@ function renderProvinceEditor(){
     beginEdit();
     const id=defaultPopIdentity(world.realms.find(x=>x.id===p.realmId));
     p.pops.push(newPop(1000, id[0], id[1], id[2], id[3], id[4]));
-    deriveProvince(p); renderProvinceEditor(); renderMap(); renderLeft(); markDirty();
+    recomputeProvince(p); renderProvinceEditor(); renderMap(); renderLeft(); markDirty();   // no merge while editing — lets you build a new group
   });
   // history
   renderHistory(p);
@@ -3553,18 +3596,18 @@ function renderPops(p){
   const totals=()=>{const t=$("#ppopTot");if(t)t.textContent=(p.population||0).toLocaleString();const n=$("#ppopN");if(n)n.textContent=p.pops.length;};
   p.pops.forEach((q,i)=>{
     const row=div("popRow");
-    row.style.borderLeft=`5px solid ${q.race?catColor("races",q.race):"#39415e"}`;   // tint by race colour
+    row.style.borderLeft=`5px solid ${q.race?catColor("subraces",q.race):"#39415e"}`;   // tint by subrace colour
     row.innerHTML=`<div class="popHead"><input class="psize" type="number" min="0" value="${q.size||0}" title="People in this group"/><span class="x" title="Remove group">✕</span></div>
       <div class="popAxes">${sel(world.lists.religions,q.religion,"prel","Religion")}${sel(world.lists.cultures,q.culture,"pcul","Culture")}${sel(world.lists.subraces,q.race,"prace","Subrace")}${sel(world.lists.languages,q.language,"plang","Language")}${sel(world.lists.economies,q.economy,"pecon2","Mode of Production")}</div>`;
-    const updSize=()=>{deriveProvince(p);totals();renderMap();renderLeft();markDirty();};
-    const updAxis=(k,val)=>{q[k]=val;deriveProvince(p);renderPops(p);totals();renderMap();renderLeft();markDirty();};   // re-render so identical groups merge visibly
+    const updSize=()=>{recomputeProvince(p);totals();renderMap();renderLeft();markDirty();};
+    const updAxis=(k,val)=>{q[k]=val;recomputeProvince(p);totals();renderMap();renderLeft();markDirty();};   // no merge while the province is open — identical groups fold together on deselect
     row.querySelector(".psize").addEventListener("input",e=>{q.size=Math.max(0,+e.target.value||0);updSize();});
     row.querySelector(".prel").addEventListener("change",e=>updAxis("religion",e.target.value));
     row.querySelector(".pcul").addEventListener("change",e=>updAxis("culture",e.target.value));
     row.querySelector(".prace").addEventListener("change",e=>updAxis("race",e.target.value));
     row.querySelector(".plang").addEventListener("change",e=>updAxis("language",e.target.value));
     row.querySelector(".pecon2").addEventListener("change",e=>updAxis("economy",e.target.value));
-    row.querySelector(".x").onclick=()=>{beginEdit();p.pops.splice(i,1);deriveProvince(p);renderProvinceEditor();renderMap();renderLeft();markDirty();};
+    row.querySelector(".x").onclick=()=>{beginEdit();p.pops.splice(i,1);recomputeProvince(p);renderProvinceEditor();renderMap();renderLeft();markDirty();};
     wrap.appendChild(row);
   });
 }
@@ -3768,7 +3811,7 @@ function renderRealmEditor(){
   // multi-race pickers: Racial Administration (keeps dominantRace in sync) + Racial Military
   const renderRaceMulti=(key,listId)=>{
     const wrap=$("#"+listId); if(!wrap)return; const arr=r[key]||(r[key]=[]);
-    wrap.innerHTML = arr.length ? arr.map((x,i)=>`<span class="tag" data-i="${i}" style="border-color:${catColor('races',x)}"><span class="swatch" style="background:${catColor('races',x)}"></span>${esc(x)} <span class="x">✕</span></span>`).join(" ") : '<span class="note">None</span>';
+    wrap.innerHTML = arr.length ? arr.map((x,i)=>`<span class="tag" data-i="${i}" style="border-color:${raceGroupColor(x)}"><span class="swatch" style="background:${raceGroupColor(x)}"></span>${esc(x)} <span class="x">✕</span></span>`).join(" ") : '<span class="note">None</span>';
     wrap.querySelectorAll(".tag .x").forEach(xb=>xb.onclick=()=>{ const i=+xb.parentElement.dataset.i; arr.splice(i,1); if(key==="adminRaces")r.dominantRace=arr[0]||""; renderRaceMulti(key,listId); renderMap(); renderLeft(); markDirty(); });
   };
   renderRaceMulti("adminRaces","radminRaces"); renderRaceMulti("militaryRaces","rmilRaces");
@@ -4664,7 +4707,8 @@ function applyListDelete(k,v){
     }
   }
 }
-const LIST_KEYS=[["religions","Religions"],["cultures","Cultures"],["races","Races"],["languages","Languages"],["terrains","Terrains"],["settlements","Settlement tiers"],["resources","Resources"],["hiddenResources","Strategic resources"],["features","Features"],["governments","Government types"],["economies","Modes of Production"]];
+// Races & subraces are managed in the 🧭 GM Screen (v2), not here.
+const LIST_KEYS=[["religions","Religions"],["cultures","Cultures"],["languages","Languages"],["terrains","Terrains"],["settlements","Settlement tiers"],["resources","Resources"],["hiddenResources","Strategic resources"],["features","Features"],["governments","Government types"],["economies","Modes of Production"]];
 const MODE_LIST={religion:"religions",culture:"cultures",race:"races",language:"languages",terrain:"terrains",settlement:"settlements",resource:"resources",economy:"economies"};
 function randomizeCategory(k){
   world.colors[k]=world.colors[k]||{};
@@ -4683,7 +4727,7 @@ function openLists(focusKey){
   $$("[data-rand]").forEach(b=>b.onclick=()=>randomizeCategory(b.dataset.rand));
   if(focusKey&&$("#card_"+focusKey)){const el2=$("#card_"+focusKey);el2.style.outline="2px solid var(--accent)";el2.scrollIntoView({block:"center"});}
 }
-const COLORABLE=["religions","cultures","races","languages","terrains","settlements","resources"];
+const COLORABLE=["religions","cultures","languages","terrains","settlements","resources"];   // races carry no colour now (subraces do)
 function renderListCard(k){
   const wrap=$("#lc_"+k);if(!wrap)return;wrap.innerHTML="";
   const colorable=COLORABLE.includes(k);
@@ -4869,10 +4913,15 @@ function renderGM2(){
       <td><input class="gmSGrow" data-s="${esc(s)}" type="number" step="0.05" min="0" value="${settleGrow(s)}" ${i<=0?"disabled":""}/></td>
       <td><input class="gmSCeil" data-s="${esc(s)}" type="number" step="1000" min="0" value="${settleCeilBase(s)}" ${i<=0?"disabled":""}/></td>
     </tr>`).join("");
-  const raceRows=(world.lists.races||[]).map(rc=>`<tr>
-      <td>${esc(rc)}</td>
+  const raceRows=(world.lists.races||[]).map((rc,ri)=>`<tr>
+      <td><input class="gmRName" data-r="${esc(rc)}" value="${esc(rc)}"/></td>
       <td><input class="gmRSize" data-r="${esc(rc)}" type="number" step="0.05" min="0.05" value="${raceSize(rc)}"/></td>
       <td><input class="gmRGrow" data-r="${esc(rc)}" type="number" step="0.05" min="0" value="${raceGrowthMod(rc)}"/></td>
+      <td style="white-space:nowrap">
+        <button class="btn tiny gmRUp" data-r="${esc(rc)}" ${ri===0?"disabled":""} title="Move up">↑</button>
+        <button class="btn tiny gmRDn" data-r="${esc(rc)}" ${ri===(world.lists.races.length-1)?"disabled":""} title="Move down">↓</button>
+        <button class="btn tiny gmRDel" data-r="${esc(rc)}" style="color:var(--bad)" title="Delete race group">✕</button>
+      </td>
     </tr>`).join("");
   const subRows=(world.lists.subraces||[]).map(sr=>{ const gp=subraceGroup(sr);
     const gOpts=(world.lists.races||[]).map(g=>`<option value="${esc(g)}" ${gp===g?"selected":""}>${esc(g)}</option>`).join("")+((world.lists.races||[]).includes(gp)?"":`<option value="${esc(gp)}" selected>${esc(gp)}</option>`);
@@ -4923,10 +4972,11 @@ function renderGM2(){
         <p class="note">Each tier's <b>growth ×</b> and <b>base ceiling</b> (soft cap before terrain & capital/admin). Uninhabited never grows.</p>
         <table class="gm2tbl"><thead><tr><th>Tier</th><th>Growth ×</th><th>Base ceiling</th></tr></thead><tbody>${settleRows}</tbody></table>
       </section>
-      <section class="gmBlock">
-        <div class="gmBlockH">🧬 Races (groups)</div>
-        <p class="note"><b>Size</b> = how much each individual counts toward a province's growth ceiling — 0.5 means half-size, so twice as many fit (denser). <b>Growth ×</b> = how fast they breed. (Add/rename race groups under “Edit other categories”.)</p>
-        <table class="gm2tbl"><thead><tr><th>Race</th><th>Size</th><th>Growth ×</th></tr></thead><tbody>${raceRows||'<tr><td class="note">No races.</td></tr>'}</tbody></table>
+      <section class="gmBlock gmSpanAll">
+        <div class="gmBlockH">🧬 Race groups</div>
+        <p class="note">The top-level races. Rename, reorder (↑/↓ — also sets the order they appear in the Race map legend), or delete them here. <b>Size</b> = how much each individual counts toward a province's growth ceiling — 0.5 means half-size, so twice as many fit (denser). <b>Growth ×</b> = how fast they breed. Subraces (below) are grouped under these and carry the colours.</p>
+        <table class="gm2tbl"><thead><tr><th>Race group</th><th>Size</th><th>Growth ×</th><th></th></tr></thead><tbody>${raceRows||'<tr><td class="note">No race groups.</td></tr>'}</tbody></table>
+        <div class="btnrow" style="margin-top:8px"><button class="btn tiny" id="gmAddRace">＋ Add race group</button></div>
       </section>
       <section class="gmBlock gmSpanAll">
         <div class="gmBlockH">🧝 Subraces</div>
@@ -4970,10 +5020,32 @@ function renderGM2(){
   // ---- settlement tiers ----
   host.querySelectorAll(".gmSGrow").forEach(el=>el.addEventListener("input",e=>{ t.settleGrow[el.dataset.s]=Math.max(0,+e.target.value||0); markDirty(); }));
   host.querySelectorAll(".gmSCeil").forEach(el=>el.addEventListener("input",e=>{ t.settleCeil[el.dataset.s]=Math.max(0,Math.round(+e.target.value||0)); markDirty(); }));
-  // ---- races ----
+  // ---- races (groups): size / growth / rename / reorder / delete / add ----
   world.tune.raceSize=world.tune.raceSize||{}; world.tune.raceGrowth=world.tune.raceGrowth||{};
   host.querySelectorAll(".gmRSize").forEach(el=>el.addEventListener("input",e=>{ world.tune.raceSize[el.dataset.r]=Math.max(0.05,+e.target.value||1); markDirty(); }));
   host.querySelectorAll(".gmRGrow").forEach(el=>el.addEventListener("input",e=>{ world.tune.raceGrowth[el.dataset.r]=Math.max(0,+e.target.value||0); markDirty(); }));
+  host.querySelectorAll(".gmRName").forEach(el=>el.addEventListener("change",e=>{
+    const ov=el.dataset.r, nv=e.target.value.trim();
+    if(!nv||nv===ov){ e.target.value=ov; return; }
+    if((world.lists.races||[]).includes(nv)){ flash("A race group “"+nv+"” already exists."); e.target.value=ov; return; }
+    const i=world.lists.races.indexOf(ov); if(i<0)return;
+    world.lists.races[i]=nv; applyListRename("races",ov,nv);   // also remaps subraceOf, tune keys, realm dominantRace
+    Object.keys(world.subraceOf||{}).forEach(sr=>{ if(world.subraceOf[sr]===ov)world.subraceOf[sr]=nv; });
+    renderMap(); renderLegend(); markDirty(); renderGM2();
+  }));
+  host.querySelectorAll(".gmRUp").forEach(el=>el.addEventListener("click",()=>{ const a=world.lists.races, i=a.indexOf(el.dataset.r); if(i>0){ [a[i-1],a[i]]=[a[i],a[i-1]]; markDirty(); renderLegend(); renderGM2(); } }));
+  host.querySelectorAll(".gmRDn").forEach(el=>el.addEventListener("click",()=>{ const a=world.lists.races, i=a.indexOf(el.dataset.r); if(i>=0&&i<a.length-1){ [a[i+1],a[i]]=[a[i],a[i+1]]; markDirty(); renderLegend(); renderGM2(); } }));
+  host.querySelectorAll(".gmRDel").forEach(el=>el.addEventListener("click",()=>{ const v=el.dataset.r;
+    if((world.lists.races||[]).length<=1){ flash("Keep at least one race group."); return; }
+    const subs=(world.lists.subraces||[]).filter(sr=>subraceGroup(sr)===v);
+    if(subs.length && !confirm(`“${v}” has ${subs.length} subrace${subs.length===1?"":"s"} (${subs.join(", ")}). Delete the group and move them to another race group?`))return;
+    const fallback=(world.lists.races||[]).find(x=>x!==v)||"";
+    subs.forEach(sr=>{ world.subraceOf[sr]=fallback; });
+    applyListDelete("races",v);
+    const i=world.lists.races.indexOf(v); if(i>=0)world.lists.races.splice(i,1);
+    renderMap(); renderLegend(); markDirty(); renderGM2();
+  }));
+  { const a=$("#gmAddRace"); if(a)a.onclick=()=>{ let base="New Race",n=base,k=2; while((world.lists.races||[]).includes(n))n=base+" "+(k++); world.lists.races.push(n); markDirty(); renderGM2(); }; }
   // ---- subraces ----
   world.subraceOf=world.subraceOf||{}; world.colors=world.colors||{};
   host.querySelectorAll(".gmSubCol").forEach(el=>el.addEventListener("input",e=>{ world.colors.subraces=world.colors.subraces||{}; world.colors.subraces[el.dataset.s]=e.target.value; renderMap(); renderLegend(); markDirty(); }));
@@ -5465,7 +5537,7 @@ function updateWorldPop(){
   el.textContent="👥 "+total.toLocaleString();
   if($("#popPanel")) buildWorldPopPanel();   // keep an open breakdown fresh
 }
-const POP_PANEL_AXES=[["race","races","Race"],["religion","religions","Religion"],["culture","cultures","Culture"],["language","languages","Language"],["economy","economies","Mode of Production"]];
+const POP_PANEL_AXES=[["race","subraces","Race"],["religion","religions","Religion"],["culture","cultures","Culture"],["language","languages","Language"],["economy","economies","Mode of Production"]];
 function buildWorldPopPanel(){
   const panel=$("#popPanel"); if(!panel)return;
   const grand=world.provinces.reduce((a,p)=>a+(p.population||0),0);
