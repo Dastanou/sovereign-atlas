@@ -563,7 +563,7 @@ let state = {
   editMode: false,          // map-drawing screen on/off
   showNames: false,         // show landmass names on the map (off by default)
   showWater: true,          // secondary topbar toggle: draw rivers & lakes on every mapmode
-  newRiverWidth: 6,         // default width for newly-drawn rivers
+  newRiverWidth: 3,         // default width for newly-drawn rivers (thin; max 10)
   newLakeWidth: 1.5,        // default outline width for newly-drawn lakes
   waterEditMode: false,     // terrain map (editor): click to select & reshape existing water
   realmOverlay: true,       // non-political modes: outline realm borders (on by default)
@@ -677,6 +677,7 @@ function normalize(w){
   if(!w.eras.length) w.eras=[{id:uid(),name:"First Age"}];   // history entries need at least one age
   if(!w.currentEraId || !w.eras.some(e=>e.id===w.currentEraId)) w.currentEraId=w.eras[0].id;
   w.rivers=w.rivers||[]; w.lakes=w.lakes||[]; w.colors=w.colors||{};
+  w.rivers.forEach(rv=>{ if(+rv.width>10) rv.width=10; });   // cap river width to the new maximum
   w.labels=w.labels||[];   // custom map annotations
   w.regions=Array.isArray(w.regions)?w.regions:[];   // named groupings of provinces (Regions map)
   w.regions.forEach(rg=>{ if(!rg.id)rg.id=uid(); if(typeof rg.name!=="string")rg.name="Region"; if(typeof rg.description!=="string")rg.description=""; rg.provinceIds=Array.isArray(rg.provinceIds)?rg.provinceIds:[]; if(!rg.color)rg.color=hashColor(rg.id); });
@@ -980,6 +981,7 @@ function growRealmPops(p, growPct, variance, opt, r, prio){
    CANVAS RENDERER  (scales to thousands of provinces)
    ============================================================ */
 let _geoDirty=true, _renderQueued=false, _provGeo=[], _contBox={}, _stars=null;
+let _coastSegs=[];   // ocean-tile edges that border a land province (dark coastline), rebuilt with geometry
 let _labelGroups=[], _labelMode=null, _labelsDirty=true, _medProvW=20;
 let _landCache={};   // continentId -> {canvas,x,y,w,h} silhouette of its provinces
 let _realmBorderCache={};   // continentId -> {canvas,x,y,w,h} overlay of realm borders
@@ -1180,6 +1182,33 @@ function rebuildGeo(){
   _realmBorderCache={}; _terrainBorderCache={};   // border overlays rebuilt lazily too
   // typical province width (world units) → drives the region/province zoom handoff
   if(_provGeo.length){const ws=_provGeo.map(g=>g.maxx-g.minx).sort((a,b)=>a-b);_medProvW=Math.max(2,ws[Math.floor(ws.length/2)]);}
+  computeCoastSegs();   // dark coastline only where ocean tiles touch land
+}
+// Collect the ocean-tile edges that abut a land province, so the coastline outline is drawn ONLY
+// where water meets land (not between ocean tiles or along open sea).
+function computeCoastSegs(){
+  _coastSegs=[];
+  const oceans=_provGeo.filter(g=>g.p.ocean); if(!oceans.length) return;
+  const epsB=Math.max(0.8,(_medProvW||20)*0.10);
+  const dists=[epsB*0.4, epsB*0.8, epsB*1.3, epsB*2, epsB*3];   // march outward; the FIRST province hit decides
+  // topmost province at (x,y) other than the given ocean tile (so a probe still inside its own tile is ignored)
+  const provAt=(x,y,exclId)=>{ for(let i=_provGeo.length-1;i>=0;i--){ const gg=_provGeo[i]; if(gg.p.id===exclId)continue;
+    if(x<gg.minx||x>gg.maxx||y<gg.miny||y>gg.maxy)continue; if(pointInPoly(gg.pts,x,y))return gg.p; } return null; };
+  for(const g of oceans){ const pts=g.pts, N=pts.length; if(N<3)continue;
+    // decide which perpendicular side is OUTSIDE once, using the LONGEST edge (unambiguous),
+    // then apply it to every edge — reliable even on tiny / concave segments.
+    let refI=0,refL=-1; for(let i=0;i<N;i++){const a=pts[i],b=pts[(i+1)%N];const l=(b[0]-a[0])**2+(b[1]-a[1])**2;if(l>refL){refL=l;refI=i;}}
+    { const a=pts[refI],b=pts[(refI+1)%N]; let dx=b[0]-a[0],dy=b[1]-a[1]; const L=Math.hypot(dx,dy)||1; dx/=L;dy/=L;
+      var outSign = pointInPoly(pts,(a[0]+b[0])/2+dy*epsB,(a[1]+b[1])/2-dx*epsB) ? -1 : 1; }   // is the right-normal side inside?
+    for(let i=0;i<N;i++){ const a=pts[i], b=pts[(i+1)%N];
+      let dx=b[0]-a[0], dy=b[1]-a[1]; const L=Math.hypot(dx,dy)||1; dx/=L; dy/=L;
+      const nx=dy*outSign, ny=-dx*outSign;                              // outward normal
+      const mx=(a[0]+b[0])/2, my=(a[1]+b[1])/2;
+      let coast=false;
+      for(const d of dists){ const q=provAt(mx+nx*d, my+ny*d, g.p.id); if(q){ coast=!q.ocean; break; } }   // first neighbour wins: land→coast, ocean→none
+      if(coast) _coastSegs.push([a[0],a[1],b[0],b[1]]);
+    }
+  }
 }
 // Build a continent's landmass silhouette from its provinces (fat stroke merges
 // the gaps), cached to an offscreen canvas in world space.
@@ -1746,6 +1775,12 @@ function drawFrame(){
     ctx.fillStyle=provinceFill(gp.p); ctx.fill();
     if(drawStroke)ctx.stroke();
   }
+  // coastline: a thin dark line only where ocean tiles meet land, so water reads clearly at a glance
+  if(_coastSegs.length){
+    ctx.save(); ctx.lineCap="round"; ctx.lineWidth=1.6/s; ctx.strokeStyle="rgba(18,36,60,.9)";
+    ctx.beginPath(); for(const sg of _coastSegs){ ctx.moveTo(sg[0],sg[1]); ctx.lineTo(sg[2],sg[3]); } ctx.stroke();
+    ctx.restore();
+  }
   // identity maps: diagonal hatching for large-minority / melting-pot provinces
   drawAxisStripes(ctx, state.mapmode, s);
   // prestige goods get a gold outline on the resource map
@@ -2133,7 +2168,7 @@ function waterAt(wx,wy){
   for(let i=world.lakes.length-1;i>=0;i--){const lk=world.lakes[i];const c=world.continents.find(cc=>cc.id===lk.continentId)||{ox:0,oy:0};
     const poly=lk.points.map(([x,y])=>[c.ox+x,c.oy+y]); if(poly.length>=3&&pointInPoly(poly,wx,wy))return {type:"lake",id:lk.id};}
   for(let i=world.rivers.length-1;i>=0;i--){const rv=world.rivers[i];const c=world.continents.find(cc=>cc.id===rv.continentId)||{ox:0,oy:0};
-    const thr=(rv.width||6)/2+8/state.cam.scale, pts=rv.points;
+    const thr=(rv.width||3)/2+8/state.cam.scale, pts=rv.points;
     for(let k=0;k<pts.length-1;k++){const ax=c.ox+pts[k][0],ay=c.oy+pts[k][1],bx=c.ox+pts[k+1][0],by=c.oy+pts[k+1][1];
       const dx=bx-ax,dy=by-ay,L2=dx*dx+dy*dy||1;let t=((wx-ax)*dx+(wy-ay)*dy)/L2;t=Math.max(0,Math.min(1,t));
       if((ax+dx*t-wx)**2+(ay+dy*t-wy)**2 < thr*thr)return {type:"river",id:rv.id};}}
@@ -2160,7 +2195,7 @@ function renderWaterEditor(){
   ins.innerHTML=`<div class="insTitle"><input id="wname" value="${esc(obj.name||"")}" placeholder="${w.type==="lake"?"Lake name":"River name"}"/></div>
     <div class="note">${w.type==="lake"?"Lake (water polygon)":"River (water line)"}</div>
     ${w.type==="river"
-      ? `<div class="field"><label>Width — <b id="wwv">${obj.width||6}</b></label><input id="wwidth" type="range" min="2" max="40" value="${obj.width||6}"/></div>`
+      ? `<div class="field"><label>Width — <b id="wwv">${obj.width||3}</b></label><input id="wwidth" type="range" min="1" max="10" step="0.5" value="${obj.width||3}"/></div>`
       : `<div class="field"><label>Outline width — <b id="wwv">${obj.width||1.5}</b></label><input id="wwidth" type="range" min="0.5" max="12" step="0.5" value="${obj.width||1.5}"/></div>`}
     <div class="note">Drag the round handles on the map to reshape this ${w.type}.</div>
     <div class="btnrow"><button class="btn danger" id="wdel">Delete ${w.type}</button></div>`;
@@ -2178,7 +2213,7 @@ function drawWater(ctx,s){
   if(state.showWater!==false) for(const rv of world.rivers){const c=world.continents.find(cc=>cc.id===rv.continentId);if(!c||rv.points.length<2)continue;
     ctx.beginPath();ctx.moveTo(c.ox+rv.points[0][0],c.oy+rv.points[0][1]);for(let i=1;i<rv.points.length;i++)ctx.lineTo(c.ox+rv.points[i][0],c.oy+rv.points[i][1]);
     const selR=state.selWater&&state.selWater.type==="river"&&state.selWater.id===rv.id;
-    ctx.lineWidth=Math.max(rv.width||6,0.8/s);ctx.strokeStyle=selR?"#8fc0ff":"#3f78b8";ctx.stroke();}
+    ctx.lineWidth=Math.max(rv.width||3,0.8/s);ctx.strokeStyle=selR?"#8fc0ff":"#3f78b8";ctx.stroke();}
   ctx.lineCap="butt";
 }
 // ---- Conform: pull provinces to fit a painted shape (concave-safe) ----
@@ -2282,9 +2317,9 @@ function renderPaintPanel(){
     if(state.mapmode==="terrain"){
       const drawingWater = state.tool==="river"||state.tool==="lake";
       const wKey = state.tool==="lake" ? "newLakeWidth" : "newRiverWidth";
-      const wDef = state.tool==="lake" ? 1.5 : 6, wVal = state[wKey]||wDef;
+      const wDef = state.tool==="lake" ? 1.5 : 3, wVal = state[wKey]||wDef;
       const widthSlider = drawingWater
-        ? `<div class="ppRow"><label class="note" style="flex:1;display:flex;align-items:center;gap:6px">${state.tool==="lake"?"Lake outline":"River"} width<input id="ppWaterW" type="range" min="${state.tool==="lake"?0.5:2}" max="${state.tool==="lake"?12:40}" step="${state.tool==="lake"?0.5:1}" value="${wVal}" style="flex:1"/><b id="ppWaterWV">${wVal}</b></label></div>`
+        ? `<div class="ppRow"><label class="note" style="flex:1;display:flex;align-items:center;gap:6px">${state.tool==="lake"?"Lake outline":"River"} width<input id="ppWaterW" type="range" min="${state.tool==="lake"?0.5:1}" max="${state.tool==="lake"?12:10}" step="0.5" value="${wVal}" style="flex:1"/><b id="ppWaterWV">${wVal}</b></label></div>`
         : "";
       waterRow = `<div class="note" style="margin-top:8px">Water</div>
         <div class="ppModes">
@@ -4354,7 +4389,7 @@ function finishDraft(){
   if(state.draft && c){
     if(t==="conform" && state.draft.length>=3){ conformToShape(state.draft.slice()); return; }
     if(t==="river" && state.draft.length>=2){
-      beginEdit(); world.rivers.push({id:uid(),continentId:c.id,points:state.draft.slice(),width:Math.max(1,+state.newRiverWidth||6),name:""});
+      beginEdit(); world.rivers.push({id:uid(),continentId:c.id,points:state.draft.slice(),width:Math.min(10,Math.max(1,+state.newRiverWidth||3)),name:""});
       state.draft=null;state.drawCursor=null;setTool("select");_geoDirty=true;renderMap();markDirty();flash("River added.");return;
     }
     if(t==="lake" && state.draft.length>=3){
@@ -4826,6 +4861,8 @@ function exportRender(rect,outW,mode,legend,legendPos,provNames=true){
       ctx.drawImage(lc.canvas,lc.x,lc.y,lc.w,lc.h);}});
   if(s>0.12){ctx.lineWidth=1/s;ctx.strokeStyle="rgba(90,98,112,.45)";}
   for(const gp of _provGeo){const pts=gp.pts;if(!pts.length)continue;ctx.beginPath();ctx.moveTo(pts[0][0],pts[0][1]);for(let i=1;i<pts.length;i++)ctx.lineTo(pts[i][0],pts[i][1]);ctx.closePath();ctx.fillStyle=provinceFill(gp.p);ctx.fill();if(s>0.12)ctx.stroke();}
+  if(_coastSegs.length){ ctx.save(); ctx.lineCap="round"; ctx.lineWidth=1.6/s; ctx.strokeStyle="rgba(18,36,60,.9)";
+    ctx.beginPath(); for(const sg of _coastSegs){ ctx.moveTo(sg[0],sg[1]); ctx.lineTo(sg[2],sg[3]); } ctx.stroke(); ctx.restore(); }
   drawAxisStripes(ctx, renderMode, s);   // identity maps: melting-pot hatching
   // resource map: gold outline on prestige-good provinces (no icons — outline only, to distinguish them)
   if(mode==="resource"){
