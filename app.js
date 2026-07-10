@@ -282,6 +282,74 @@ function seedPopTune(w){
 function terrainHab(t){ const o=(world&&world.tune&&world.tune.terrainHab)||{}; if(o[t]!=null)return o[t]; const v=TERRAIN_HAB[t]; return v!=null?v:0.6; }
 function raceGrowthMod(race){ const o=(world&&world.tune&&world.tune.raceGrowth)||{}; return o[race]!=null?o[race]:1; }
 // ---- subraces: pops carry a subrace (q.race); races are the groups above them ----
+// ---- Regions: named groupings of provinces (may overlap) ----
+function regionById(id){ return (world.regions||[]).find(r=>r.id===id)||null; }
+function regionsOfProvince(pid){ return (world.regions||[]).filter(r=>(r.provinceIds||[]).includes(pid)); }
+function regionColor(rg){ return (rg&&rg.color)||"#8a6fd0"; }
+function newRegion(){ const id=uid(); return {id, name:"New Region", description:"", provinceIds:[], color:hashColor(id)}; }
+function toggleRegionMember(regionId, pid){
+  const rg=regionById(regionId); if(!rg)return;
+  rg.provinceIds=rg.provinceIds||[];
+  const i=rg.provinceIds.indexOf(pid);
+  if(i>=0) rg.provinceIds.splice(i,1); else rg.provinceIds.push(pid);
+  markDirty();
+}
+// Click a province on the Regions map: editor toggles it in the active region; viewer opens its region.
+function regionProvinceClick(p){
+  if(VIEWER){ const regs=regionsOfProvince(p.id); if(regs.length) selectRegion(regs[0].id); else flash("This province isn't in any region."); return; }
+  if(!state.selRegion){ flash("Pick or create a region in the legend first, then click provinces to add them."); return; }
+  toggleRegionMember(state.selRegion, p.id); renderMap(); buildMapLegend(); renderRegionEditor();
+}
+function renderRegionLegend(box){
+  const regs=world.regions||[];
+  if(!VIEWER){
+    const add=document.createElement("button"); add.className="btn tiny"; add.style.margin="0 0 6px"; add.textContent="＋ New region";
+    add.onclick=()=>{ beginEdit(); const rg=newRegion(); world.regions.push(rg); markDirty(); selectRegion(rg.id); buildMapLegend(); };
+    box.appendChild(add);
+  }
+  if(!regs.length){ const n=div("note"); n.textContent=VIEWER?"No regions defined.":"No regions yet. Click ＋ New region, then click provinces on the map to add them."; box.appendChild(n); return; }
+  regs.forEach(rg=>{
+    const row=div("mlRow"+(state.selRegion===rg.id?" active":""));
+    row.style.cursor="pointer"; row.dataset.rid=rg.id; row.title=VIEWER?`Highlight ${esc(rg.name)}`:`Edit ${esc(rg.name)}`;
+    row.innerHTML=`<span class="sw" style="background:${regionColor(rg)}"></span>${esc(rg.name||"Region")}<span class="note" style="margin-left:auto">${(rg.provinceIds||[]).length}</span>`;
+    box.appendChild(row);
+  });
+  box.querySelectorAll("[data-rid]").forEach(el=>el.onclick=ev=>{ ev.stopPropagation(); const id=el.dataset.rid;
+    if(state.selRegion===id){ state.selRegion=null; renderMap(); buildMapLegend(); clearSelection(); }
+    else { selectRegion(id); buildMapLegend(); }
+  });
+}
+function selectRegion(id){
+  state.selRegion=id; state.selProvince=null;state.selRealm=null;state.selReligion=null;state.selWater=null;state.selLabel=null;state.selForce=null;state.selBattle=null;state.selMonster=null;
+  document.body.classList.add("has-sel");
+  renderMap(); renderRegionEditor(); renderWonderPanel();
+}
+function renderRegionEditor(){
+  if(VIEWER) return renderRegionView();
+  const ins=$("#inspector"); const rg=regionById(state.selRegion);
+  if(!rg){ins.innerHTML='<div class="empty">No region selected.</div>';return;}
+  ins.innerHTML=`
+    <div class="insTitle"><input id="rgname" value="${esc(rg.name)}"/>
+      <input id="rgcolor" type="color" value="${toHex(regionColor(rg))}" style="width:42px;height:34px;padding:2px"/></div>
+    <div class="note">${(rg.provinceIds||[]).length} provinces · click provinces on the map to add or remove them. Provinces may belong to several regions.</div>
+    <div class="field"><label>Description <span class="note">(shown to players)</span></label><textarea id="rgdesc" rows="6">${esc(rg.description||"")}</textarea></div>
+    <div class="btnrow"><button class="btn tiny" id="rgclear">Clear provinces</button><button class="btn danger" id="rgdel">Delete region</button></div>`;
+  $("#rgname").addEventListener("input",e=>{rg.name=e.target.value;markDirty();renderMap();buildMapLegend();});
+  $("#rgcolor").addEventListener("input",e=>{rg.color=e.target.value;markDirty();renderMap();buildMapLegend();});
+  $("#rgdesc").addEventListener("input",e=>{rg.description=e.target.value;markDirty();});
+  $("#rgclear").onclick=()=>{ beginEdit(); rg.provinceIds=[]; markDirty(); renderMap(); renderRegionEditor(); buildMapLegend(); };
+  $("#rgdel").onclick=()=>{ if(!confirm(`Delete region "${rg.name}"?`))return; beginEdit(); world.regions=world.regions.filter(x=>x.id!==rg.id); state.selRegion=null; markDirty(); renderMap(); buildMapLegend(); $("#inspector").innerHTML='<div class="empty">Region deleted.</div>'; };
+}
+function renderRegionView(){
+  const ins=$("#inspector"); const rg=regionById(state.selRegion);
+  if(!rg){ins.innerHTML='<div class="empty">No region selected.</div>';return;}
+  ins.innerHTML=`
+    <div class="realmCard" style="--rc:${regionColor(rg)}">
+      <div class="realmName" style="font-size:19px">${esc(rg.name)}</div>
+      <div class="rvSub">${(rg.provinceIds||[]).length} province${(rg.provinceIds||[]).length===1?"":"s"}</div>
+      ${rg.description?`<div class="rvBlock" style="margin-top:8px"><div class="rvText">${esc(rg.description).replace(/\n/g,"<br>")}</div></div>`:'<div class="note" style="margin-top:8px">No description.</div>'}
+    </div>`;
+}
 function subraceGroup(sr){ return (world&&world.subraceOf&&world.subraceOf[sr])||sr; }
 function subracesInGroup(g){ return (world.lists.subraces||[]).filter(sr=>subraceGroup(sr)===g); }
 // A race group's display colour = its representative subrace's colour (races carry no colour of their own).
@@ -477,6 +545,9 @@ let state = {
   selRealm: null,
   selReligion: null,        // religion info panel: selected religion name
   selRaceGroup: null,       // race map: spotlight all subraces of this race group
+  selRegion: null,          // region map: active/highlighted region id
+  showRegions: false,       // secondary topbar toggle: draw region names on every mapmode
+  terrainSel: new Set(),    // terrain map: multi-select set of highlighted terrain types
   focusedContinent: null,   // continent currently targeted for drawing
   tilt: false,
   cam: { x: 0, y: 0, scale: 0.3 },  // x,y = world coord at canvas top-left; scale = px/world-unit
@@ -491,6 +562,10 @@ let state = {
   split: null,              // {p, pts:[], cur:[x,y]} active split-line for a province
   editMode: false,          // map-drawing screen on/off
   showNames: false,         // show landmass names on the map (off by default)
+  showWater: true,          // secondary topbar toggle: draw rivers & lakes on every mapmode
+  newRiverWidth: 6,         // default width for newly-drawn rivers
+  newLakeWidth: 1.5,        // default outline width for newly-drawn lakes
+  waterEditMode: false,     // terrain map (editor): click to select & reshape existing water
   realmOverlay: true,       // non-political modes: outline realm borders (on by default)
   terrainOverlay: false,    // non-political modes: overlay terrain-region outlines
   selForce: null,           // military mode: selected force id
@@ -603,6 +678,8 @@ function normalize(w){
   if(!w.currentEraId || !w.eras.some(e=>e.id===w.currentEraId)) w.currentEraId=w.eras[0].id;
   w.rivers=w.rivers||[]; w.lakes=w.lakes||[]; w.colors=w.colors||{};
   w.labels=w.labels||[];   // custom map annotations
+  w.regions=Array.isArray(w.regions)?w.regions:[];   // named groupings of provinces (Regions map)
+  w.regions.forEach(rg=>{ if(!rg.id)rg.id=uid(); if(typeof rg.name!=="string")rg.name="Region"; if(typeof rg.description!=="string")rg.description=""; rg.provinceIds=Array.isArray(rg.provinceIds)?rg.provinceIds:[]; if(!rg.color)rg.color=hashColor(rg.id); });
   if(!w.milesPerUnit)w.milesPerUnit=10;   // map scale: miles per world unit
   if(w.distanceUnit!=="km")w.distanceUnit="mi";   // display unit for the scale bar
   if(w.capitalBoost==null)w.capitalBoost=1.8;   // population distribution: capital multiplier
@@ -637,6 +714,7 @@ function normalize(w){
     w.resourcesV2=true;
   }
   w.provinces.forEach(p=>{ p.hidden=p.hidden||""; });
+  w.provinces=w.provinces.filter(p=>p && Array.isArray(p.points));   // drop provinces with no geometry at all (unrenderable)
   w.provinces.forEach(p=>{
     ["religion","culture","race","language"].forEach(k=>p[k]=p[k]||[]);
     p.features=p.features||[]; p.history=p.history||[];
@@ -780,6 +858,7 @@ function recomputeProvince(p){
 }
 function deriveProvince(p){
   p.pops=Array.isArray(p.pops)?p.pops:[];
+  if(p.ocean){ p.pops=[]; p.population=0; p.religion=[];p.culture=[];p.race=[];p.language=[];p.economy=[]; return; }   // water province: no people
   mergePops(p);
   recomputeProvince(p);
 }
@@ -1010,8 +1089,11 @@ function computeLabelGroups(mode){
     }
   }
   const groups={};
-  for(let i=0;i<n;i++){const root=find(i),it=items[i];
-    let g=groups[root]; if(!g){g={val:it.val,sx:0,sy:0,sxx:0,syy:0,sxy:0,a:0,members:[]};groups[root]=g;}
+  for(let i=0;i<n;i++){const it=items[i];
+    // Political: one label per realm across ALL its land (so a realm spanning landmasses
+    // gets a single name that floats over the void between them). Other modes: contiguous pockets.
+    const key = (mode==="political") ? ("R:"+it.val) : find(i);
+    let g=groups[key]; if(!g){g={val:it.val,sx:0,sy:0,sxx:0,syy:0,sxy:0,a:0,members:[]};groups[key]=g;}
     g.sx+=it.cx*it.area; g.sy+=it.cy*it.area; g.a+=it.area;
     g.sxx+=it.cx*it.cx*it.area; g.syy+=it.cy*it.cy*it.area; g.sxy+=it.cx*it.cy*it.area;
     g.members.push(it);
@@ -1035,10 +1117,17 @@ function computeLabelGroups(mode){
         if(v>=0) vTmax=Math.max(vTmax,v); else vBmax=Math.max(vBmax,-v);
       }
     }
-    const halfMajor=Math.max(4, Math.min(uRmax,uLmax));   // symmetric half-width that stays inside the region
-    const halfMinor=Math.max(3, Math.min(vTmax,vBmax));
-    const axisLen=halfMajor*2*0.90;                       // usable label width, with a small margin
-    const minorLen=halfMinor*2;                           // usable label height (font capped against this)
+    let axisLen, minorLen;
+    if(mode==="political"){
+      // realm names span their whole territory (and float over the void when it crosses landmasses)
+      axisLen=Math.max(8,(uRmax+uLmax))*0.95;
+      minorLen=Math.max(6,(vTmax+vBmax));
+    } else {
+      const halfMajor=Math.max(4, Math.min(uRmax,uLmax));   // symmetric half-width that stays inside the region
+      const halfMinor=Math.max(3, Math.min(vTmax,vBmax));
+      axisLen=halfMajor*2*0.90;                             // usable label width, with a small margin
+      minorLen=halfMinor*2;                                 // usable label height (font capped against this)
+    }
     out.push({text,val:g.val,x:mx,y:my,a:g.a,angle,axisLen,minorLen});
   }
   return out;
@@ -1067,8 +1156,23 @@ function rebuildGeo(){
     if(len < thick*1.12) ang=0;                                 // round-ish → keep level
     if(ang> Math.PI/2) ang-=Math.PI; else if(ang<-Math.PI/2) ang+=Math.PI;
     if(ang> Math.PI/2-0.3) ang-=Math.PI;                        // near-vertical reads bottom-to-top
-    _provGeo.push({p,pts,minx,miny,maxx,maxy,cx,cy,ang,len,thick});
+    // label anchor: the pole of inaccessibility (widest interior point) so the name sits inside
+    // the actual land even for concave / ring provinces. Its HEIGHT is capped to the inscribed
+    // width there so it can't bulge across a border; its length still uses the major axis (clipping
+    // trims the ends to the outline). Cached per-province and recomputed only when the shape changes.
+    let lx=cx, ly=cy, llen=len, lthick=thick;
+    if(pts.length>=3){
+      const sig=pts.length+"|"+Math.round(minx)+","+Math.round(miny)+","+Math.round(maxx)+","+Math.round(maxy);
+      let pole=(p._pole&&p._pole.sig===sig)?p._pole:null;
+      if(!pole){ const q=poleOfInaccessibility(pts,minx,miny,maxx,maxy); pole={sig,x:q.x,y:q.y,r:q.r}; p._pole=pole; }
+      lx=pole.x; ly=pole.y;
+      lthick=Math.min(thick, Math.max(6, pole.r*2*0.9));
+    }
+    _provGeo.push({p,pts,minx,miny,maxx,maxy,cx,cy,ang,len,thick,lx,ly,llen,lthick});
   });
+  // ocean tiles sit on the BACK layer: draw them first (behind all land), and since
+  // provinceAt() picks the topmost hit, clicks still prefer the land province on top.
+  _provGeo.sort((a,b)=>(a.p.ocean?0:1)-(b.p.ocean?0:1));
   world.continents.forEach(c=>{ _contBox[c.id]=continentBox(c.id); });
   _contProvCount={}; world.provinces.forEach(p=>{_contProvCount[p.continentId]=(_contProvCount[p.continentId]||0)+1;});
   _keyLocMap={}; world.realms.forEach(r=>{if(r.capitalId)_keyLocMap[r.capitalId]="capital";(r.adminCenters||[]).forEach(pid=>{if(!_keyLocMap[pid])_keyLocMap[pid]="admin";});});
@@ -1582,6 +1686,22 @@ function contentBounds(){
 }
 function roundRect(ctx,x,y,w,h,r){r=Math.min(r,w/2,h/2);ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();}
 function pointInPoly(pts,x,y){let inside=false;for(let i=0,j=pts.length-1;i<pts.length;j=i++){const xi=pts[i][0],yi=pts[i][1],xj=pts[j][0],yj=pts[j][1];if(((yi>y)!=(yj>y))&&(x<(xj-xi)*(y-yi)/((yj-yi)||1e-9)+xi))inside=!inside;}return inside;}
+function _distToSeg(px,py,ax,ay,bx,by){const dx=bx-ax,dy=by-ay,L2=dx*dx+dy*dy||1;let t=((px-ax)*dx+(py-ay)*dy)/L2;t=t<0?0:t>1?1:t;const qx=ax+dx*t,qy=ay+dy*t;return Math.hypot(px-qx,py-qy);}
+// "pole of inaccessibility": the interior point farthest from any edge (largest inscribed circle
+// centre). Used to anchor a label inside concave / ring-shaped provinces whose centroid falls in a
+// gap. Returns {x,y,r} where r is the distance to the nearest edge.
+function poleOfInaccessibility(pts,minx,miny,maxx,maxy){
+  const edgeDist=(x,y)=>{let m=Infinity;for(let i=0,j=pts.length-1;i<pts.length;j=i++){const d=_distToSeg(x,y,pts[j][0],pts[j][1],pts[i][0],pts[i][1]);if(d<m)m=d;}return m;};
+  const w=(maxx-minx)||1, h=(maxy-miny)||1, N=12;
+  let best={x:(minx+maxx)/2,y:(miny+maxy)/2,r:0};
+  for(let gi=0;gi<=N;gi++)for(let gj=0;gj<=N;gj++){ const x=minx+w*gi/N, y=miny+h*gj/N;
+    if(!pointInPoly(pts,x,y))continue; const d=edgeDist(x,y); if(d>best.r)best={x,y,r:d}; }
+  let step=Math.max(w,h)/N;
+  for(let pass=0;pass<4;pass++){ step*=0.5; const bx=best.x,by=best.y;
+    for(let gi=-1;gi<=1;gi++)for(let gj=-1;gj<=1;gj++){ if(!gi&&!gj)continue; const x=bx+step*gi,y=by+step*gj;
+      if(!pointInPoly(pts,x,y))continue; const d=edgeDist(x,y); if(d>best.r)best={x,y,r:d}; } }
+  return best;
+}
 function provinceAt(wx,wy){for(let i=_provGeo.length-1;i>=0;i--){const g=_provGeo[i];if(wx<g.minx||wx>g.maxx||wy<g.miny||wy>g.maxy)continue;if(pointInPoly(g.pts,wx,wy))return g.p;}return null;}
 function continentAt(wx,wy){for(let i=world.continents.length-1;i>=0;i--){const c=world.continents[i];const b=contBoxC(c.id);if(wx>=b.x&&wx<=b.x+b.w&&wy>=b.y&&wy<=b.y+b.h)return c;}return null;}
 function makeStars(){const b=contentBounds();const pad=Math.max(b.w,b.h)*0.4;_stars=[];for(let i=0;i<240;i++)_stars.push([b.x-pad+Math.random()*(b.w+2*pad),b.y-pad+Math.random()*(b.h+2*pad),Math.random()*1.8+0.4,Math.random()*0.5+0.12]);}
@@ -1676,6 +1796,9 @@ function drawFrame(){
   if(state.tool==="draw"&&state.drawCursor){ctx.beginPath();ctx.arc(state.drawCursor.x,state.drawCursor.y,(state.drawCursor.snapped?6:3.5)/s,0,7);ctx.fillStyle=state.drawCursor.snapped?"#e0b24e":"#6ea8ff";ctx.fill();if(state.drawCursor.snapped){ctx.lineWidth=1.5/s;ctx.strokeStyle="#a9791f";ctx.stroke();}}
   // vertex handles (Nodes tool, selected province)
   if(state.tool==="nodes"&&state.selProvince){const sp=world.provinces.find(x=>x.id===state.selProvince);const c=sp&&world.continents.find(cc=>cc.id===sp.continentId);if(sp&&c){ctx.fillStyle="#fff";ctx.strokeStyle="#24364f";ctx.lineWidth=1.5/s;for(const pt of sp.points){ctx.beginPath();ctx.arc(c.ox+pt[0],c.oy+pt[1],5/s,0,7);ctx.fill();ctx.stroke();}}}
+  // reshape handles on the selected river / lake (editor)
+  if(!VIEWER && state.selWater){ const arr=state.selWater.type==="lake"?world.lakes:world.rivers; const obj=arr.find(x=>x.id===state.selWater.id); const c=obj&&world.continents.find(cc=>cc.id===obj.continentId);
+    if(obj&&c){ ctx.fillStyle="#eaf3ff"; ctx.strokeStyle="#2c5788"; ctx.lineWidth=1.5/s; for(const pt of obj.points){ ctx.beginPath(); ctx.arc(c.ox+pt[0],c.oy+pt[1],5/s,0,7); ctx.fill(); ctx.stroke(); } } }
   // split cut line preview
   if(state.split){const a=state.split.pts[0],b=(state.split.pts.length>1?state.split.pts[1]:state.split.cur);ctx.setLineDash([6/s,4/s]);ctx.lineWidth=1.6/s;ctx.strokeStyle="#d8746c";if(a&&b){ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.stroke();}ctx.setLineDash([]);ctx.fillStyle="#d8746c";state.split.pts.forEach(pt=>{ctx.beginPath();ctx.arc(pt[0],pt[1],4/s,0,7);ctx.fill();});}
 
@@ -1701,6 +1824,7 @@ function drawFrame(){
     ctx.globalAlpha=regionAlpha;
     for(const lg of _labelGroups){
       if(_lf && lg.val!==_lf.value) continue;
+      if(state.mapmode==="terrain" && state.terrainSel && state.terrainSel.size && !state.terrainSel.has(lg.val)) continue;   // terrain multi-select hides other labels
       if(state.mapmode==="race" && state.selRaceGroup && subraceGroup(lg.val)!==state.selRaceGroup) continue;   // race group spotlight hides other labels
       let fontPx=Math.sqrt(lg.a)*0.135*s; if(fontPx<9) continue; fontPx=Math.min(fontPx,160);
       if(lg.minorLen) fontPx=Math.min(fontPx, lg.minorLen*s*0.52);   // keep the label within the region's short axis
@@ -1725,8 +1849,14 @@ function drawFrame(){
     for(const gl of _provGeo){
       const wpx=(gl.maxx-gl.minx)*s, hpx=(gl.maxy-gl.miny)*s;
       if(Math.max(wpx,hpx)<24) continue;
-      const sx=(gl.cx-cam.x)*s, sy=(gl.cy-cam.y)*s; if(sx<-60||sy<-40||sx>cw+60||sy>ch+40)continue;
-      drawFittedLabel(ctx,gl.p.name,sx,sy,gl.ang,gl.len*s,gl.thick*s,PROV_CAP, _keyLocMap[gl.p.id]?KEY_SZ*1.8:0);
+      const sx=(gl.lx-cam.x)*s, sy=(gl.ly-cam.y)*s; if(sx<-60||sy<-40||sx>cw+60||sy>ch+40)continue;
+      // clip the name to the province polygon so it can never spill past its borders
+      ctx.save(); const pts=gl.pts;
+      ctx.beginPath(); ctx.moveTo((pts[0][0]-cam.x)*s,(pts[0][1]-cam.y)*s);
+      for(let i=1;i<pts.length;i++) ctx.lineTo((pts[i][0]-cam.x)*s,(pts[i][1]-cam.y)*s);
+      ctx.closePath(); ctx.clip();
+      drawFittedLabel(ctx,gl.p.name,sx,sy,gl.ang,gl.llen*s,gl.lthick*s,PROV_CAP, _keyLocMap[gl.p.id]?KEY_SZ*1.8:0);
+      ctx.restore();
     }
     // capital & admin markers — small fixed size, appearing with the province names
     drawKeyLocations(ctx, cam.x, cam.y, s, cw, ch, KEY_SZ);
@@ -1755,6 +1885,21 @@ function drawFrame(){
       ctx.strokeText(c.name,sx,sy);ctx.fillText(c.name,sx,sy);
       const w=ctx.measureText(c.name).width; _contLabelRects[c.id]={x:sx-w/2,y:sy-9,w,h:18};
     });
+  }
+
+  // region names (toggleable, on every mapmode; placed at each region's province centroid)
+  if(state.showRegions && (world.regions||[]).length){
+    const cen={}; for(const g of _provGeo) cen[g.p.id]=[g.cx,g.cy];
+    ctx.font="700 13px Georgia,serif"; ctx.textAlign="center"; ctx.textBaseline="middle";
+    for(const rg of world.regions){
+      const ids=(rg.provinceIds||[]).filter(id=>cen[id]); if(!ids.length) continue;
+      let mx=0,my=0; ids.forEach(id=>{mx+=cen[id][0];my+=cen[id][1];}); mx/=ids.length; my/=ids.length;
+      const sx=(mx-cam.x)*s, sy=(my-cam.y)*s; if(sx<-200||sx>cw+200||sy<-30||sy>ch+30) continue;
+      const nm=(rg.name||"Region").toUpperCase();
+      ctx.lineWidth=3.5; ctx.strokeStyle="rgba(255,255,255,.9)"; ctx.strokeText(nm,sx,sy);
+      ctx.fillStyle=regionColor(rg); ctx.fillText(nm,sx,sy);
+    }
+    ctx.textAlign="left"; ctx.textBaseline="alphabetic";
   }
 
   // custom labels
@@ -1802,7 +1947,22 @@ function popColor(pop){
       c=[Math.round(a[0]+(b[0]-a[0])*u),Math.round(a[1]+(b[1]-a[1])*u),Math.round(a[2]+(b[2]-a[2])*u)];break;}}
   return `rgb(${c[0]},${c[1]},${c[2]})`;
 }
+const OCEAN_FILL="#3f78b8";   // default ocean-tile colour — matches the lake/water fill
 function provinceFill(p){
+  // Terrain map multi-select spotlight — ocean tiles match the "__ocean__" key (before the ocean early-return)
+  if(state.mapmode==="terrain" && state.terrainSel && state.terrainSel.size){
+    const key = p.ocean ? "__ocean__" : p.terrain;
+    if(!state.terrainSel.has(key)) return "#333a46";
+    return p.ocean ? (p.oceanColor||OCEAN_FILL) : catColor("terrains",p.terrain);
+  }
+  if(p.ocean) return p.oceanColor || OCEAN_FILL;   // ocean tiles render as sea (or a custom colour) on every mapmode
+  if(state.mapmode==="region"){
+    const rg=state.selRegion?regionById(state.selRegion):null;
+    if(rg && (rg.provinceIds||[]).length){ return (rg.provinceIds.includes(p.id)) ? regionColor(rg) : "#333a46"; }   // spotlight the active (non-empty) region
+    const regs=regionsOfProvince(p.id);
+    if(!regs.length) return "#3a4256";                      // not in any region
+    return regionColor(regs[0]);                            // colour by the first region it belongs to
+  }
   if(state.legendFilter && state.legendFilter.mode===state.mapmode && !provinceMatchesLegend(p,state.legendFilter.value)) return "#333a46";  // legend spotlight
   switch(state.mapmode){
     case "political":{const r=world.realms.find(r=>r.id===p.realmId);return r?r.color:"#39415e";}
@@ -1980,26 +2140,42 @@ function waterAt(wx,wy){
   return null;
 }
 function selectWater(type,id){state.selWater={type,id};state.selProvince=null;state.selRealm=null;document.body.classList.add("has-sel");renderMap();renderWaterEditor();}
+// Handle on the currently-selected water feature under the cursor (for reshaping).
+function waterNodeAt(ev){
+  const w=state.selWater; if(!w)return null;
+  const arr=w.type==="lake"?world.lakes:world.rivers, obj=arr.find(x=>x.id===w.id); if(!obj)return null;
+  const c=world.continents.find(cc=>cc.id===obj.continentId)||{ox:0,oy:0};
+  const cv=$("#map"),r=cv.getBoundingClientRect(),mx=ev.clientX-r.left,my=ev.clientY-r.top,rad=11;
+  for(let i=0;i<obj.points.length;i++){ const wx=c.ox+obj.points[i][0],wy=c.oy+obj.points[i][1];
+    const sx=(wx-state.cam.x)*state.cam.scale,sy=(wy-state.cam.y)*state.cam.scale;
+    if(Math.hypot(sx-mx,sy-my)<=rad)return {obj,c,i}; }
+  return null;
+}
+// Is water-editing active (terrain map in the editor with the Edit toggle on)?
+function waterEditActive(){ return !VIEWER && state.waterEditMode && state.mapmode==="terrain"; }
 function renderWaterEditor(){
   const ins=$("#inspector"),w=state.selWater; if(!w)return;
   const arr=w.type==="lake"?world.lakes:world.rivers, obj=arr.find(x=>x.id===w.id);
   if(!obj){ins.innerHTML='<div class="empty">Not found.</div>';return;}
   ins.innerHTML=`<div class="insTitle"><input id="wname" value="${esc(obj.name||"")}" placeholder="${w.type==="lake"?"Lake name":"River name"}"/></div>
     <div class="note">${w.type==="lake"?"Lake (water polygon)":"River (water line)"}</div>
-    ${w.type==="river"?`<div class="field"><label>Width — <b id="wwv">${obj.width||6}</b></label><input id="wwidth" type="range" min="2" max="40" value="${obj.width||6}"/></div>`:""}
+    ${w.type==="river"
+      ? `<div class="field"><label>Width — <b id="wwv">${obj.width||6}</b></label><input id="wwidth" type="range" min="2" max="40" value="${obj.width||6}"/></div>`
+      : `<div class="field"><label>Outline width — <b id="wwv">${obj.width||1.5}</b></label><input id="wwidth" type="range" min="0.5" max="12" step="0.5" value="${obj.width||1.5}"/></div>`}
+    <div class="note">Drag the round handles on the map to reshape this ${w.type}.</div>
     <div class="btnrow"><button class="btn danger" id="wdel">Delete ${w.type}</button></div>`;
   $("#wname").addEventListener("input",e=>{obj.name=e.target.value;markDirty();renderMap();});
   if($("#wwidth"))$("#wwidth").addEventListener("input",e=>{obj.width=+e.target.value;$("#wwv").textContent=e.target.value;renderMap();markDirty();});
   $("#wdel").addEventListener("click",()=>{beginEdit();const a=w.type==="lake"?world.lakes:world.rivers,idx=a.findIndex(x=>x.id===w.id);if(idx>=0)a.splice(idx,1);state.selWater=null;_geoDirty=true;renderMap();ins.innerHTML='<div class="empty">Deleted.</div>';markDirty();});
 }
 function drawWater(ctx,s){
-  for(const lk of world.lakes){const c=world.continents.find(cc=>cc.id===lk.continentId);if(!c||lk.points.length<3)continue;
+  if(state.showWater!==false) for(const lk of world.lakes){const c=world.continents.find(cc=>cc.id===lk.continentId);if(!c||lk.points.length<3)continue;
     ctx.beginPath();ctx.moveTo(c.ox+lk.points[0][0],c.oy+lk.points[0][1]);for(let i=1;i<lk.points.length;i++)ctx.lineTo(c.ox+lk.points[i][0],c.oy+lk.points[i][1]);ctx.closePath();
     ctx.fillStyle="#3f78b8";ctx.fill();
     const selL=state.selWater&&state.selWater.type==="lake"&&state.selWater.id===lk.id;
-    ctx.lineWidth=(selL?2.5:1.2)/s;ctx.strokeStyle=selL?"#8fc0ff":"#2c5788";ctx.stroke();}
+    ctx.lineWidth=(selL?2.5:(lk.width||1.2))/s;ctx.strokeStyle=selL?"#8fc0ff":"#2c5788";ctx.stroke();}
   ctx.lineCap="round";ctx.lineJoin="round";
-  for(const rv of world.rivers){const c=world.continents.find(cc=>cc.id===rv.continentId);if(!c||rv.points.length<2)continue;
+  if(state.showWater!==false) for(const rv of world.rivers){const c=world.continents.find(cc=>cc.id===rv.continentId);if(!c||rv.points.length<2)continue;
     ctx.beginPath();ctx.moveTo(c.ox+rv.points[0][0],c.oy+rv.points[0][1]);for(let i=1;i<rv.points.length;i++)ctx.lineTo(c.ox+rv.points[i][0],c.oy+rv.points[i][1]);
     const selR=state.selWater&&state.selWater.type==="river"&&state.selWater.id===rv.id;
     ctx.lineWidth=Math.max(rv.width||6,0.8/s);ctx.strokeStyle=selR?"#8fc0ff":"#3f78b8";ctx.stroke();}
@@ -2102,7 +2278,22 @@ function renderPaintPanel(){
         : '<div class="note">Click groups above to add them to the mix.</div>';
       mixEditor=`<div class="pmixBox">${rows}<div class="ppRow" style="margin-top:5px"><label class="note" style="flex:1;display:flex;align-items:center">Randomness ±<input id="pmixJit" type="number" min="0" max="90" value="${state.paintMixJitter}" style="width:50px;margin:0 4px"/>%</label></div></div>`;
     }
-    html+=mixToggle+`<div class="ppChips">${chips||'<span class="note">Nothing to paint here.</span>'}</div>${mixEditor}
+    let waterRow="";
+    if(state.mapmode==="terrain"){
+      const drawingWater = state.tool==="river"||state.tool==="lake";
+      const wKey = state.tool==="lake" ? "newLakeWidth" : "newRiverWidth";
+      const wDef = state.tool==="lake" ? 1.5 : 6, wVal = state[wKey]||wDef;
+      const widthSlider = drawingWater
+        ? `<div class="ppRow"><label class="note" style="flex:1;display:flex;align-items:center;gap:6px">${state.tool==="lake"?"Lake outline":"River"} width<input id="ppWaterW" type="range" min="${state.tool==="lake"?0.5:2}" max="${state.tool==="lake"?12:40}" step="${state.tool==="lake"?0.5:1}" value="${wVal}" style="flex:1"/><b id="ppWaterWV">${wVal}</b></label></div>`
+        : "";
+      waterRow = `<div class="note" style="margin-top:8px">Water</div>
+        <div class="ppModes">
+          <button class="btn tiny${state.tool==="river"?" primary":""}" id="ppRiver" title="Draw a river — click points, Enter/double-click to finish">〜 River</button>
+          <button class="btn tiny${state.tool==="lake"?" primary":""}" id="ppLake" title="Draw a lake — click points, Enter/double-click to finish">💧 Lake</button>
+          <button class="btn tiny${state.waterEditMode?" primary":""}" id="ppWaterEdit" title="Click an existing river/lake to select it, then drag its handles or change its width">✎ Edit</button>
+        </div>${widthSlider}`;
+    }
+    html+=mixToggle+`<div class="ppChips">${chips||'<span class="note">Nothing to paint here.</span>'}</div>${mixEditor}${waterRow}
       <div class="ppRow"><button class="btn tiny${(painting&&state.paintErase)?" danger":""}" id="ppErase">🧹 Erase</button><button class="btn tiny" id="ppUndo">↶ Undo</button></div>`;
   }
   box.innerHTML=head+`<div class="ppBody">${html}</div>`;
@@ -2134,6 +2325,10 @@ function renderPaintPanel(){
     box.querySelectorAll(".pmixW").forEach(el=>el.addEventListener("change",e=>{ const i=+el.dataset.i; if(state.paintMixGroups[i]){ state.paintMixGroups[i].w=Math.max(0,Math.min(100,+e.target.value||0)); normalizeMix(i); renderPaintPanel(); } }));
     box.querySelectorAll(".pmixX").forEach(el=>el.onclick=()=>{ state.paintMixGroups.splice(+el.dataset.i,1); normalizeMix(null); renderPaintPanel(); });
     { const j=$("#pmixJit"); if(j)j.addEventListener("input",e=>{ state.paintMixJitter=Math.max(0,Math.min(90,+e.target.value||0)); }); }
+    { const rb=$("#ppRiver"); if(rb)rb.onclick=()=>{ state.paintErase=false; state.waterEditMode=false; setTool(state.tool==="river"?"select":"river"); renderPaintPanel(); }; }
+    { const lb=$("#ppLake"); if(lb)lb.onclick=()=>{ state.paintErase=false; state.waterEditMode=false; setTool(state.tool==="lake"?"select":"lake"); renderPaintPanel(); }; }
+    { const eb=$("#ppWaterEdit"); if(eb)eb.onclick=()=>{ state.waterEditMode=!state.waterEditMode; if(state.waterEditMode){ setTool("select"); flash("Click a river or lake to select it, then drag its round handles or change its width."); } else { state.selWater=null; } renderPaintPanel(); renderMap(); }; }
+    { const ww=$("#ppWaterW"); if(ww)ww.addEventListener("input",e=>{ const k=state.tool==="lake"?"newLakeWidth":"newRiverWidth"; state[k]=+e.target.value; const v=$("#ppWaterWV"); if(v)v.textContent=e.target.value; }); }
   }
 }
 // Editor-only population growth/decline tool — bottom-left of the Population map.
@@ -2517,27 +2712,54 @@ function onProvinceClick(p){
   }
   // Conversion tool: selecting provinces / picking a center
   if(convertSelectActive()||state.convertPickCenter){ if(convertAxis()){ convertHandleClick(p); return; } }
+  // Regions map: editor toggles province membership in the active region; viewer opens the region it's in
+  if(state.mapmode==="region"){ regionProvinceClick(p); return; }
   if(state.tool==="paint"){
     if(!paintReady()){flash(paintHint());return;}
     if(paintProvince(p)){ _labelsDirty=true; renderMap(); renderLeft(); markDirty(); }
     return;
   }
-  if(state.mapmode==="resource") toggleResourceHighlight(p);
-  else if(state.mapmode==="race"){ const d=dominant(p.race); if(d) toggleRaceGroup(subraceGroup(d)); }
+  if(state.mapmode==="resource") spotlightResource(p);
+  else if(state.mapmode==="race"){ const d=dominant(p.race); if(d) setRaceGroup(subraceGroup(d)); }
   else spotlightProvinceItem(p);
   selectProvince(p.id);
 }
 // Clicking a province in political/religion/culture/language/terrain highlights that item's
-// provinces (minorities included) and hides the other items' labels — same as clicking its legend entry.
+// provinces (minorities included). Clicking another province of the SAME category keeps the
+// highlight on (only switches to a different category, or add a terrain to the set) — clearing
+// is done by clicking the legend entry again or clicking empty space.
 function spotlightProvinceItem(p){
   if(!["political","religion","culture","language","terrain"].includes(state.mapmode)) return;
-  const v = state.mapmode==="political" ? (p.realmId||"__none__")
-          : state.mapmode==="terrain"   ? p.terrain
-          : dominant(p[state.mapmode]);
-  if(v==null||v==="") return;
-  const cur=state.legendFilter;
-  state.legendFilter=(cur&&cur.mode===state.mapmode&&cur.value===v)?null:{mode:state.mapmode,value:v};
+  if(state.mapmode==="terrain"){ if(!p.ocean) addTerrainSel(p.terrain); return; }   // terrain multi-select: clicking adds (ocean tiles are highlighted only via the legend)
+  const v = dominant(p[state.mapmode]);
+  const val = state.mapmode==="political" ? (p.realmId||"__none__") : v;
+  if(val==null||val==="") return;
+  state.legendFilter={mode:state.mapmode,value:val};   // set (a province click never toggles the highlight off)
   renderLegend();
+}
+// Terrain map: toggle a terrain in/out of the multi-select set (used by legend clicks).
+function toggleTerrainSel(t){
+  if(t==null||t==="") return;
+  if(!state.terrainSel) state.terrainSel=new Set();
+  if(state.terrainSel.has(t)) state.terrainSel.delete(t); else state.terrainSel.add(t);
+  renderLegend(); renderMap();
+}
+// Terrain map: add a terrain to the multi-select set (province clicks — never removes).
+function addTerrainSel(t){
+  if(t==null||t==="") return;
+  if(!state.terrainSel) state.terrainSel=new Set();
+  if(!state.terrainSel.has(t)){ state.terrainSel.add(t); renderLegend(); renderMap(); }
+}
+// Race map: set the highlighted race group (province clicks — never toggles off).
+function setRaceGroup(g){ if(state.selRaceGroup!==g){ state.selRaceGroup=g; renderMap(); buildMapLegend(); } }
+// Resource map: spotlight a province's resource (province clicks — never toggles off).
+function spotlightResource(p){ const sel=p.resource||null; if(sel && state.selResource!==sel){ state.selResource=sel; updateResSpot(); renderMap(); } }
+// Resource map: click a province to spotlight its whole resource family (base + prestige
+// goods), greying the rest. Click the same family again (or the void) to clear.
+function toggleResourceHighlight(p){
+  const sel = p.resource || null;
+  state.selResource = (sel && state.selResource===sel) ? null : sel;   // store the exact resource
+  updateResSpot();
 }
 // Resource map: click a province to spotlight its whole resource family (base + prestige
 // goods), greying the rest. Click the same family again (or the void) to clear.
@@ -2553,6 +2775,7 @@ function legendClickValue(v){
     state.selResource = (state.selResource===v) ? null : v;
     updateResSpot(); renderMap(); return;
   }
+  if(state.mapmode==="terrain"){ toggleTerrainSel(v); return; }   // terrain: multi-select highlight
   const cur=state.legendFilter;
   state.legendFilter = (cur && cur.mode===state.mapmode && cur.value===v) ? null : {mode:state.mapmode, value:v};
   renderLegend(); renderMap();
@@ -2631,6 +2854,8 @@ function selectCustomLabel(id){
 function clearSelection(){   // click on empty void: deselect and hide the inspector
   if(state.selProvince) commitProvincePops(state.selProvince);
   state.selProvince=null;state.selRealm=null;state.selReligion=null;state.selWater=null;state.selLabel=null;state.selForce=null;state.selBattle=null;state.selMonster=null;state.selResource=null;state.selRaceGroup=null;state.legendFilter=null;
+  if(state.terrainSel)state.terrainSel.clear();
+  state.selRegion=null;
   document.body.classList.remove("has-sel");
   updateResSpot();
   renderMap();renderLegend();renderWonderPanel();
@@ -3086,11 +3311,12 @@ function renderLeft(){
   else if(!shown){rl.innerHTML='<div class="note" style="padding:8px 10px">No realms match your search.</div>';}
   renderLegend();
 }
-const MODE_TITLES={political:"Political",provincemap:"Province Map",terrain:"Terrain",settlement:"Settlements",religion:"Religions",culture:"Cultures",race:"Races",language:"Languages",population:"Population",resource:"Resources",economy:"Modes of Production",monster:"Monsters",military:"Military",imported:"Imported colors"};
+const MODE_TITLES={political:"Political",provincemap:"Province Map",terrain:"Terrain",settlement:"Settlements",religion:"Religions",culture:"Cultures",race:"Races",language:"Languages",population:"Population",resource:"Resources",economy:"Modes of Production",monster:"Monsters",military:"Military",region:"Regions",imported:"Imported colors"};
 function legendEntries(mode){           // [color, label, paintValue]
   const L=world.lists, e=[];
   if(mode==="political"){e.push(["#39415e","Unclaimed","__none__"]);world.realms.forEach(r=>e.push([r.color,r.name,r.id]));}
-  else if(mode==="terrain")L.terrains.forEach(t=>e.push([catColor("terrains",t),t,t]));
+  else if(mode==="terrain"){L.terrains.forEach(t=>e.push([catColor("terrains",t),t,t]));
+    if(world.provinces.some(p=>p.ocean)) e.push([OCEAN_FILL,"🌊 Ocean","__ocean__"]);}
   else if(mode==="settlement")L.settlements.forEach(s=>e.push([catColor("settlements",s),s,s]));
   else if(mode==="religion")L.religions.forEach(x=>e.push([catColor("religions",x),x,x]));
   else if(mode==="culture")L.cultures.forEach(x=>e.push([catColor("cultures",x),x,x]));
@@ -3113,7 +3339,7 @@ const PAINTABLE_MODES=["political","terrain","settlement","religion","culture","
 function buildMapLegend(){
   const box=$("#mapLegend"); if(!box)return;
   if(typeof world==="undefined" || !world || state.mapmode==="imported"){ box.classList.add("hidden"); return; }
-  if(state.mapmode==="monster" || state.mapmode==="military" || state.mapmode==="resource" || state.mapmode==="race"){   // custom legends rendered right on the map
+  if(state.mapmode==="monster" || state.mapmode==="military" || state.mapmode==="resource" || state.mapmode==="race" || state.mapmode==="region"){   // custom legends rendered right on the map
     box.classList.remove("hidden");
     box.innerHTML=`<button class="mlHead">${esc(MODE_TITLES[state.mapmode]||"Legend")}</button><div class="mlList" id="mlCustomBody"></div>`;
     box.querySelector(".mlHead").onclick=()=>box.classList.toggle("open");
@@ -3121,6 +3347,7 @@ function buildMapLegend(){
     if(state.mapmode==="monster") renderMonsterLegend(body);
     else if(state.mapmode==="military") renderForceLegend(body);
     else if(state.mapmode==="race") renderRaceLegend(body);
+    else if(state.mapmode==="region") renderRegionLegend(body);
     else renderResourceLegend(body);
     return;
   }
@@ -3129,6 +3356,7 @@ function buildMapLegend(){
   box.classList.remove("hidden");
   const rows=entries.map(([c,l,v],idx)=>{
     const active = v!==undefined && ((state.mapmode==="resource")? state.selResource===v
+      : (state.mapmode==="terrain") ? (state.terrainSel && state.terrainSel.has(v))
       : (state.legendFilter && state.legendFilter.mode===state.mapmode && state.legendFilter.value===v));
     return `<div class="mlRow${active?' active':''}" data-vi="${idx}"${v!==undefined?' style="cursor:pointer"':''}><span class="sw" style="background:${c}"></span>${esc(l)}</div>`;
   }).join("");
@@ -3378,6 +3606,7 @@ function pieCell(label,p,key,listKey){
 function renderProvinceView(){
   const p=world.provinces.find(x=>x.id===state.selProvince); const ins=$("#inspector");
   if(!p){ins.innerHTML='<div class="empty">No province selected.</div>';return;}
+  if(p.ocean){ const oc=p.oceanColor||OCEAN_FILL; ins.innerHTML=`<div class="provCard" style="--rc:${oc};--tc:${oc}"><div class="provName">${esc(p.name)}</div><div class="provSettName">🌊 Ocean</div></div>`; return; }
   const realm=world.realms.find(r=>r.id===p.realmId);
   const cont=world.continents.find(c=>c.id===p.continentId);
   const rc=realm?realm.color:"#6f8fc9";
@@ -3523,15 +3752,65 @@ function renderContinentView(){
     <div class="note">${provs.length} provinces · ${pop.toLocaleString()} people</div>
     <div class="note" style="margin-top:8px">Click a province or realm to view its details.</div>`;
 }
+// Minimal editor for ocean tiles — just a name, colour, shape tools and delete.
+function renderOceanTileEditor(p){
+  const ins=$("#inspector");
+  ins.innerHTML=`
+    <div class="insTitle"><input id="pname" value="${esc(p.name)}"/></div>
+    <label style="display:flex;align-items:center;gap:6px;font-size:13px;margin:2px 0 8px"><input type="checkbox" id="pocean" checked/> 🌊 Ocean tile <span class="note">(water only — no people or details)</span></label>
+    <div class="field2">
+      <div class="field"><label>Water colour</label><input id="poceancol" type="color" value="${toHex(p.oceanColor||OCEAN_FILL)}" style="width:100%;height:34px;padding:2px"/></div>
+      <div class="field" style="display:flex;align-items:flex-end"><button class="btn tiny" id="poceanreset" style="width:100%" title="Reset to the default ocean colour">↺ Match ocean</button></div>
+    </div>
+    <div class="field2">
+      <div class="field"><label>Continent</label><select id="pcont">${world.continents.map(c=>`<option value="${c.id}" ${p.continentId===c.id?"selected":""}>${esc(c.name)}</option>`).join("")}</select></div>
+      <div class="field"></div>
+    </div>
+    <div class="sectionH">Shape</div>
+    <div class="btnrow"><button class="btn" id="pnodes">✦ Reshape (nodes)</button><button class="btn" id="psplit">✂ Split</button></div>
+    <div class="field2" style="margin-top:6px">
+      <div class="field"><label>Merge a neighbor into this</label><select id="pmerge"></select></div>
+      <div style="flex:0 0 auto;display:flex;align-items:flex-end"><button class="btn" id="pmergebtn">Merge</button></div>
+    </div>
+    <div class="btnrow"><button class="btn danger" id="pdel">Delete tile</button></div>`;
+  $("#pname").addEventListener("input",e=>{p.name=e.target.value;markDirty();renderMap();renderLeft();});
+  $("#pocean").addEventListener("change",e=>{ beginEdit(); p.ocean=e.target.checked; deriveProvince(p); renderProvinceEditor(); renderMap(); renderLeft(); markDirty(); });
+  $("#poceancol").addEventListener("input",e=>{ p.oceanColor=e.target.value; markDirty(); renderMap(); });
+  $("#poceanreset").onclick=()=>{ delete p.oceanColor; markDirty(); renderMap(); renderOceanTileEditor(p); };
+  $("#pcont").addEventListener("change",e=>{p.continentId=e.target.value;renderMap();renderLeft();markDirty();});
+  $("#pnodes").addEventListener("click",()=>setTool("nodes"));
+  $("#psplit").addEventListener("click",()=>startSplit(p));
+  const cand=world.provinces.filter(x=>x.id!==p.id && x.continentId===p.continentId && provincesShareVertex(p,x));
+  const ms=$("#pmerge");
+  ms.innerHTML = cand.length ? cand.map(x=>`<option value="${x.id}">${esc(x.name)}</option>`).join("") : `<option value="">— no adjacent tiles —</option>`;
+  $("#pmergebtn").addEventListener("click",()=>{
+    const oid=ms.value; const b=oid&&world.provinces.find(x=>x.id===oid); if(!b){flash("No adjacent tile to merge.");return;}
+    const c=world.continents.find(cc=>cc.id===p.continentId)||{ox:0,oy:0};
+    const A=p.points.map(([x,y])=>[c.ox+x,c.oy+y]), B=b.points.map(([x,y])=>[c.ox+x,c.oy+y]);
+    const merged=mergeAdjacentPolys(A,B)||mergeAdjacentPolys(B,A);
+    if(!merged){flash("These tiles don't share a full border edge.");return;}
+    beginEdit();
+    p.points=merged.map(([x,y])=>[Math.round(x-c.ox),Math.round(y-c.oy)]);
+    world.provinces=world.provinces.filter(x=>x.id!==oid);
+    _geoDirty=true; renderMap(); renderLeft(); selectProvince(p.id); markDirty(); flash("Tiles merged.");
+  });
+  $("#pdel").addEventListener("click",()=>{
+    if(!confirm("Delete this ocean tile?"))return;
+    beginEdit(); world.provinces=world.provinces.filter(x=>x.id!==p.id);
+    state.selProvince=null; renderMap(); renderLeft(); $("#inspector").innerHTML='<div class="empty">Ocean tile deleted.</div>'; markDirty();
+  });
+}
 function renderProvinceEditor(){
   if(VIEWER)return renderProvinceView();
   const p=world.provinces.find(p=>p.id===state.selProvince);
   const ins=$("#inspector");
   if(!p){ins.innerHTML='<div class="empty">No province selected.</div>';return;}
+  if(p.ocean) return renderOceanTileEditor(p);
   const realmOpts=`<option value="">— Unclaimed —</option>`+world.realms.map(r=>`<option value="${r.id}" ${p.realmId===r.id?"selected":""}>${esc(r.name)}</option>`).join("");
   const opt=(list,v)=>list.map(o=>`<option ${o===v?"selected":""}>${esc(o)}</option>`).join("");
   ins.innerHTML=`
     <div class="insTitle"><input id="pname" value="${esc(p.name)}"/></div>
+    <label style="display:flex;align-items:center;gap:6px;font-size:13px;margin:2px 0 6px"><input type="checkbox" id="pocean"/> 🌊 Ocean tile <span class="note">(water only — no people or details)</span></label>
     <div class="field"><label>Settlement name <span class="note">(blank = same as province)</span></label><input id="psettname" value="${esc(p.settlementName||"")}" placeholder="${esc(p.name)}"/></div>
     <div class="field2">
       <div class="field"><label>Realm</label><select id="prealm">${realmOpts}</select></div>
@@ -3557,10 +3836,10 @@ function renderProvinceEditor(){
     <div id="pwonders"></div>
     <button class="btn tiny" id="pwonderAdd" style="margin-top:6px">＋ Add wonder</button>
 
-    <div class="sectionH">Population — <span id="ppopTot">${(p.population||0).toLocaleString()}</span> · <span id="ppopN">${p.pops.length}</span> group(s)</div>
+    ${p.ocean?"":`<div class="sectionH">Population — <span id="ppopTot">${(p.population||0).toLocaleString()}</span> · <span id="ppopN">${p.pops.length}</span> group(s)</div>
     <div class="note">Each group is a chunk of people sharing one religion, culture, race and language. Add groups for minorities — the map-mode percentages update automatically from the groups.</div>
     <div id="ppops"></div>
-    <button class="btn tiny" id="ppopAdd" style="margin-top:6px">＋ Add pop group</button>
+    <button class="btn tiny" id="ppopAdd" style="margin-top:6px">＋ Add pop group</button>`}
 
     <div class="sectionH">History</div>
     <details class="histBox"><summary>Recorded events</summary><div id="phist" class="hist"></div></details>
@@ -3629,14 +3908,18 @@ function renderProvinceEditor(){
   renderFeatures(p);
   renderProvinceWonders(p);
   { const wa=$("#pwonderAdd"); if(wa)wa.addEventListener("click",()=>{ beginEdit(); world.wonders.push(newWonder(p.id)); renderProvinceWonders(p); markDirty(); }); }
-  // population pop-groups
-  renderPops(p);
-  $("#ppopAdd").addEventListener("click",()=>{
-    beginEdit();
-    const id=defaultPopIdentity(world.realms.find(x=>x.id===p.realmId));
-    p.pops.push(newPop(1000, id[0], id[1], id[2], id[3], id[4]));
-    recomputeProvince(p); renderProvinceEditor(); renderMap(); renderLeft(); markDirty();   // no merge while editing — lets you build a new group
-  });
+  // ocean/water toggle
+  { const oc=$("#pocean"); if(oc)oc.addEventListener("change",e=>{ beginEdit(); p.ocean=e.target.checked; if(p.ocean){ p.pops=[]; p.settlement="Uninhabited"; } deriveProvince(p); renderProvinceEditor(); renderMap(); renderLeft(); markDirty(); }); }
+  // population pop-groups (skipped for ocean provinces)
+  if(!p.ocean){
+    renderPops(p);
+    { const pa=$("#ppopAdd"); if(pa)pa.addEventListener("click",()=>{
+      beginEdit();
+      const id=defaultPopIdentity(world.realms.find(x=>x.id===p.realmId));
+      p.pops.push(newPop(1000, id[0], id[1], id[2], id[3], id[4]));
+      recomputeProvince(p); renderProvinceEditor(); renderMap(); renderLeft(); markDirty();   // no merge while editing — lets you build a new group
+    }); }
+  }
   // history
   renderHistory(p);
   $("#haddBtn").addEventListener("click",()=>{
@@ -4071,11 +4354,11 @@ function finishDraft(){
   if(state.draft && c){
     if(t==="conform" && state.draft.length>=3){ conformToShape(state.draft.slice()); return; }
     if(t==="river" && state.draft.length>=2){
-      beginEdit(); world.rivers.push({id:uid(),continentId:c.id,points:state.draft.slice(),width:6,name:""});
+      beginEdit(); world.rivers.push({id:uid(),continentId:c.id,points:state.draft.slice(),width:Math.max(1,+state.newRiverWidth||6),name:""});
       state.draft=null;state.drawCursor=null;setTool("select");_geoDirty=true;renderMap();markDirty();flash("River added.");return;
     }
     if(t==="lake" && state.draft.length>=3){
-      beginEdit(); world.lakes.push({id:uid(),continentId:c.id,points:state.draft.slice(),name:""});
+      beginEdit(); world.lakes.push({id:uid(),continentId:c.id,points:state.draft.slice(),width:Math.max(0.5,+state.newLakeWidth||1.5),name:""});
       state.draft=null;state.drawCursor=null;setTool("select");_geoDirty=true;renderMap();markDirty();flash("Lake added.");return;
     }
     if(t==="province" && state.draft.length>=3){
@@ -4188,6 +4471,7 @@ function setupMapInteraction(){
     }
     if(state.tool==="select"){ const lid=customLabelAt(ev); if(lid){ beginEdit(); state.customDrag=lid; down=true; dragged=false; return; } }
     if(state.tool==="select" && state.showNames){ const cid=continentLabelAt(ev); if(cid){ beginEdit(); state.labelDrag=cid; down=true; dragged=false; return; } }
+    if(!VIEWER && state.selWater){ const h=waterNodeAt(ev); if(h){ beginEdit(); state.waterNodeDrag=h; down=true; dragged=false; return; } }   // reshape selected river/lake
     if(state.tool==="nodes"){ const h=nodeAt(ev); if(h){ beginEdit(); state.nodeDrag=h; down=true; dragged=false; return; } }
     if(state.tool==="move"){ const w=screenToWorld(ev); const p=provinceAt(w[0],w[1]); if(p){ beginEdit(); state.moveDrag={p,start:p.points.map(pt=>pt.slice()),grab:[w[0],w[1]]}; down=true; dragged=false; return; } }
     if(state.tool==="paint" && paintReady()){ beginEdit(); beginExpandStroke(); _mixStrokeSet=new Set(); }
@@ -4202,6 +4486,8 @@ function setupMapInteraction(){
     if(state.customDrag){ const w=screenToWorld(ev); const lb=world.labels.find(x=>x.id===state.customDrag); if(lb){lb.x=Math.round(w[0]);lb.y=Math.round(w[1]);} dragged=true; requestRender(); return; }
     if(state.labelDrag){ const w=screenToWorld(ev); const c=world.continents.find(x=>x.id===state.labelDrag); if(c)c.labelPos=[Math.round(w[0]),Math.round(w[1])]; dragged=true; requestRender(); return; }
     if(DRAW_TOOLS.includes(state.tool)){ const w=screenToWorld(ev); state.drawCursor=snapWorld(w[0],w[1],null); requestRender(); return; }
+    if(state.waterNodeDrag){ const w=screenToWorld(ev); const h=state.waterNodeDrag;
+      h.obj.points[h.i]=[Math.round(w[0]-h.c.ox),Math.round(w[1]-h.c.oy)]; dragged=true; markDirty(); requestRender(); return; }
     if(state.nodeDrag){ const w=screenToWorld(ev); const sn=snapWorld(w[0],w[1],state.nodeDrag.p.id);
       const c=world.continents.find(x=>x.id===state.nodeDrag.p.continentId)||{ox:0,oy:0};
       state.nodeDrag.p.points[state.nodeDrag.i]=[Math.round(sn.x-c.ox),Math.round(sn.y-c.oy)];
@@ -4222,6 +4508,10 @@ function setupMapInteraction(){
       const [wx,wy]=screenToWorld(ev); const p=provinceAt(wx,wy);
       if(p && !state.convertSel.has(p.id)){ state.convertSel.add(p.id); renderConvertPanel(); requestRender(); }
       return;
+    }
+    if(!VIEWER && state.mapmode==="region" && state.selRegion){   // drag to add provinces to the active region (drag on empty space still pans)
+      const [wx,wy]=screenToWorld(ev); const p=provinceAt(wx,wy);
+      if(p){ const rg=regionById(state.selRegion); if(rg && !(rg.provinceIds||[]).includes(p.id)){ rg.provinceIds.push(p.id); markDirty(); requestRender(); buildMapLegend(); renderRegionEditor(); } return; }
     }
     if(state.tool==="paint" && paintReady()){
       // drag-to-paint: apply the current map mode's value to every province under the cursor
@@ -4247,6 +4537,7 @@ function setupMapInteraction(){
       }
       return;
     }
+    if(state.waterNodeDrag){ state.waterNodeDrag=null; down=false; markDirty(); return; }
     if(state.customDrag){ const id=state.customDrag; state.customDrag=null; down=false; if(dragged)markDirty(); else selectCustomLabel(id); return; }
     if(state.labelDrag){ state.labelDrag=null; down=false; markDirty(); return; }
     if(state.nodeDrag){ state.nodeDrag=null; down=false; _geoDirty=true; renderMap(); markDirty(); return; }
@@ -4284,7 +4575,7 @@ function setupMapInteraction(){
       if(!state.draft)state.draft=[];
       state.draft.push([Math.round(sc.x-c.ox),Math.round(sc.y-c.oy)]); requestRender(); return;
     }
-    if(state.editMode){ const ws=waterAt(wx,wy); if(ws){ selectWater(ws.type,ws.id); return; } }
+    if(state.editMode || waterEditActive()){ const ws=waterAt(wx,wy); if(ws){ selectWater(ws.type,ws.id); return; } if(waterEditActive()){ if(state.selWater){state.selWater=null;renderMap();} return; } }
     const p=provinceAt(wx,wy);
     if(p){ onProvinceClick(p); return; }
     const c=continentAt(wx,wy);
@@ -4332,6 +4623,7 @@ function setupMapInteraction(){
     if(/^[0-9]$/.test(ev.key)){const idx=ev.key==="0"?9:(+ev.key-1); const m=MAPMODE_BAR[idx]; if(m){setMapmode(m[0]);return;}}
     if(ev.key==="o"||ev.key==="O"){setMapmode("monster");return;}
     if(ev.key==="p"||ev.key==="P"){setMapmode("military");return;}
+    if(ev.key==="r"||ev.key==="R"){setMapmode("region");return;}
     if(ev.key==="v")setTool("select");
     if(ev.key==="d")setTool("draw");
     if(ev.key==="b")setTool("paint");
@@ -4416,9 +4708,10 @@ function handleTapWorld(wx,wy){
     renderMap(); renderPopPanel(); return;
   }
   if(p && (convertSelectActive()||state.convertPickCenter) && convertAxis()){ convertHandleClick(p); return; }
+  if(p && state.mapmode==="region"){ regionProvinceClick(p); return; }
   if(p && state.tool==="paint" && paintReady()){ beginEdit(); beginExpandStroke(); _mixStrokeSet=new Set(); if(paintProvince(p)){_labelsDirty=true;renderMap();renderLeft();markDirty();} return; }
-  if(p && state.mapmode==="resource"){ toggleResourceHighlight(p); selectProvince(p.id); return; }
-  if(p && state.mapmode==="race"){ const d=dominant(p.race); if(d)toggleRaceGroup(subraceGroup(d)); selectProvince(p.id); return; }
+  if(p && state.mapmode==="resource"){ spotlightResource(p); selectProvince(p.id); return; }
+  if(p && state.mapmode==="race"){ const d=dominant(p.race); if(d)setRaceGroup(subraceGroup(d)); selectProvince(p.id); return; }
   if(p){ spotlightProvinceItem(p); selectProvince(p.id); return; }   // open the province sheet (desktop panel or mobile bottom-sheet)
   document.body.classList.remove("has-sel");
   const c=continentAt(wx,wy); if(c) state.focusedContinent=c.id;
@@ -4551,11 +4844,16 @@ function exportRender(rect,outW,mode,legend,legendPos,provNames=true){
     const provMaxFs=Math.max(14,Math.round(mapW/120));
     for(const gl of _provGeo){
       if(Math.max((gl.maxx-gl.minx),(gl.maxy-gl.miny))*s<9)continue;
-      const X=(gl.cx-rect.x)*s,Y=(gl.cy-rect.y)*s;if(X<-40||Y<-20||X>mapW+40||Y>mapH+20)continue;
-      drawFittedLabel(ctx,gl.p.name,X,Y,gl.ang,gl.len*s,gl.thick*s,provMaxFs, _keyLocMap[gl.p.id]?keySz*1.5:0);
+      const X=(gl.lx-rect.x)*s,Y=(gl.ly-rect.y)*s;if(X<-40||Y<-20||X>mapW+40||Y>mapH+20)continue;
+      ctx.save(); const pts=gl.pts; ctx.beginPath(); ctx.moveTo((pts[0][0]-rect.x)*s,(pts[0][1]-rect.y)*s);
+      for(let i=1;i<pts.length;i++)ctx.lineTo((pts[i][0]-rect.x)*s,(pts[i][1]-rect.y)*s); ctx.closePath(); ctx.clip();
+      drawFittedLabel(ctx,gl.p.name,X,Y,gl.ang,gl.llen*s,gl.lthick*s,provMaxFs, _keyLocMap[gl.p.id]?keySz*1.5:0);
+      ctx.restore();
     }
   } else if(provNames && s>0.45){const pMax=Math.max(12,Math.round(mapW/160));
-    for(const gl of _provGeo){if(Math.max((gl.maxx-gl.minx),(gl.maxy-gl.miny))*s<46)continue;const X=(gl.cx-rect.x)*s,Y=(gl.cy-rect.y)*s;if(X<-40||Y<-20||X>mapW+40||Y>mapH+20)continue;drawFittedLabel(ctx,gl.p.name,X,Y,gl.ang,gl.len*s,gl.thick*s,pMax, _keyLocMap[gl.p.id]?keySz*1.5:0);}}
+    for(const gl of _provGeo){if(Math.max((gl.maxx-gl.minx),(gl.maxy-gl.miny))*s<46)continue;const X=(gl.lx-rect.x)*s,Y=(gl.ly-rect.y)*s;if(X<-40||Y<-20||X>mapW+40||Y>mapH+20)continue;
+      ctx.save(); const pts=gl.pts; ctx.beginPath(); ctx.moveTo((pts[0][0]-rect.x)*s,(pts[0][1]-rect.y)*s); for(let i=1;i<pts.length;i++)ctx.lineTo((pts[i][0]-rect.x)*s,(pts[i][1]-rect.y)*s); ctx.closePath(); ctx.clip();
+      drawFittedLabel(ctx,gl.p.name,X,Y,gl.ang,gl.llen*s,gl.lthick*s,pMax, _keyLocMap[gl.p.id]?keySz*1.5:0); ctx.restore();}}
   // landmass names at their on-map placement (skip small landmasses, like the map)
   const nfs=Math.max(16,Math.round(mapW/110));
   ctx.font=`600 ${nfs}px system-ui,sans-serif`;
@@ -5417,11 +5715,45 @@ async function openTimeline(){
   host.querySelectorAll(".tlSnap").forEach(b=>b.onclick=()=>loadSnapshot(b.dataset.mode,b.dataset.age,b.dataset.file));
   { const rp=$("#tlPresent"); if(rp)rp.onclick=returnToPresent; }
 }
+// Backwards compatibility: a snapshot saved before province geometry was stored
+// (or one that omits it) borrows the CURRENT map's layout so it still renders.
+// Newer snapshots carry their own province points and are left untouched.
+function backfillMapGeometry(snap){
+  if(!snap || typeof snap!=="object") return snap;
+  let present=null;
+  const getPresent=()=>{ if(present)return present; try{ present=_presentSnapshot?JSON.parse(_presentSnapshot):JSON.parse(JSON.stringify(world)); }catch(e){ present={}; } return present; };
+  const hasGeo=p=>Array.isArray(p&&p.points)&&p.points.length>=3;
+  if(!Array.isArray(snap.provinces)){ snap.provinces = JSON.parse(JSON.stringify(getPresent().provinces||[])); snap._geoBackfilled=true; }   // no provinces at all → use the current map wholesale
+  const needFill = snap.provinces.some(p=>!hasGeo(p));
+  const needCont = !Array.isArray(snap.continents) || !snap.continents.length;
+  if(needFill || needCont){
+    const pres=getPresent();
+    const provById={}; (pres.provinces||[]).forEach(p=>provById[p.id]=p);
+    // fill geometry for any province lacking it, matched by id to the CURRENT map
+    snap.provinces.forEach(p=>{ if(!hasGeo(p)){ const src=provById[p.id]; if(src){ p.points=JSON.parse(JSON.stringify(src.points||[])); p.continentId=src.continentId; snap._geoBackfilled=true; } } });
+    // provinces that existed then but were since deleted (no current geometry to borrow) can't be drawn → drop them
+    const before=snap.provinces.length; snap.provinces = snap.provinces.filter(p=>hasGeo(p)); if(snap.provinces.length!==before) snap._geoBackfilled=true;
+    // ensure every continent referenced by a (kept) province exists; pull missing ones from the current map
+    if(needCont){ snap.continents = []; snap._geoBackfilled=true; }
+    const contById={}; (snap.continents||[]).forEach(c=>contById[c.id]=c);
+    const presContById={}; (pres.continents||[]).forEach(c=>presContById[c.id]=c);
+    snap.provinces.forEach(p=>{ if(p.continentId && !contById[p.continentId] && presContById[p.continentId]){ const c=JSON.parse(JSON.stringify(presContById[p.continentId])); contById[c.id]=c; snap.continents.push(c); } });
+  }
+  return snap;
+}
 async function loadSnapshot(mode,age,file){
   try{
     flash("Loading "+file.replace(/\.json$/,"")+"…");
     const data=await loadTimelineWorld(mode,age,file);
     if(!_presentSnapshot) _presentSnapshot=JSON.stringify(world);   // remember the live world once
+    backfillMapGeometry(data);                                      // fill in map layout for older/geometry-less snapshots
+    const upgraded=!!data._geoBackfilled; delete data._geoBackfilled;
+    // Freeze the fallback: in the editor, save the borrowed layout back into the file so it
+    // becomes self-contained and won't drift as the map changes later.
+    if(upgraded && mode==="api" && !VIEWER){
+      const m=file.match(/phase\s*(\d+)\s*-\s*turn\s*(\d+)/i);
+      if(m){ try{ await fetch("/api/timeline_save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({age,phase:+m[1],turn:+m[2],world:data})}); flash("Older snapshot upgraded with the current map layout — it's now self-contained."); }catch(e){} }
+    }
     _timelineViewing={age,label:file.replace(/\.json$/,"")};
     const cam={...state.cam}, mm=state.mapmode;                     // keep the player's view & map mode
     world=normalize(data); afterLoad(); state.mapmode=mm; state.cam=cam; renderMap(); renderLegend();
@@ -5546,6 +5878,7 @@ const MM_ICON={
   economy:`<svg viewBox="0 0 24 24" class="mmi"><path fill="currentColor" fill-rule="evenodd" d="M12 2a10 10 0 100 20 10 10 0 000-20zm0 2.4a7.6 7.6 0 110 15.2 7.6 7.6 0 010-15.2z"/><path fill="currentColor" d="M11 6.6h2V9c1.5.2 2.6 1.1 2.6 2.4h-2c0-.5-.6-.9-1.5-.9-.8 0-1.4.4-1.4.9 0 .5.6.7 1.8 1 1.7.4 3.2 1 3.2 2.8 0 1.3-1.1 2.3-2.7 2.5v2.3h-2v-2.3c-1.6-.2-2.8-1.2-2.8-2.6h2c0 .6.7 1 1.7 1s1.5-.4 1.5-.9-.7-.8-1.9-1.1c-1.6-.4-3.1-1-3.1-2.7 0-1.3 1.1-2.2 2.6-2.4V6.6z"/></svg>`,
   monster:`<svg viewBox="0 0 24 24" class="mmi"><path fill="currentColor" fill-rule="evenodd" d="M4 3c2 1 3.1 2.5 3.5 4.4C8.8 6.6 10.3 6.1 12 6.1s3.2.5 4.5 1.3C16.9 5.5 18 4 20 3c-.3 2.4-1 3.8-2 4.9 1.2 1.2 2 3 2 4.8 0 4.5-4 8.6-8 8.6s-8-4.1-8-8.6c0-1.8.8-3.6 2-4.8C5 6.8 4.3 5.4 4 3zm5.6 8.2a1.5 1.5 0 100 3 1.5 1.5 0 000-3zm4.8 0a1.5 1.5 0 100 3 1.5 1.5 0 000-3z"/></svg>`,
   military:`<svg viewBox="0 0 24 24" class="mmi"><path fill="currentColor" d="M3 3h2.3l9 9-2.3 2.3-9-9V3zm18 0v2.3l-9 9-2.3-2.3 9-9H21zM3 18.9l4.2-4.2 1.6 1.6-4.2 4.2H3v-1.6zm18 0v1.6h-1.6l-4.2-4.2 1.6-1.6 4.2 4.2z"/></svg>`,
+  region:`<svg viewBox="0 0 24 24" class="mmi"><path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" d="M4 6.5 9 4l6 2.5L20 4v13.5L15 20 9 17.5 4 20z"/><path fill="none" stroke="currentColor" stroke-width="1.3" d="M9 4v13.5M15 6.5V20"/></svg>`,
 };
 // 5th field = EU4 button-art basename in /img (uses mm_<name>.png / mm_<name>_a.png
 // for the normal + active/pressed states). null → fall back to the custom SVG glyph.
@@ -5560,6 +5893,7 @@ const MAPMODE_BAR=[
   ["population",MM_ICON.population,"Population","8","population"],
   ["settlement",MM_ICON.settlement,"Settlements","9","settlement"],
   ["economy",MM_ICON.economy,"Modes of Production","0","economy"],
+  ["region",MM_ICON.region,"Regions","R",null],
   ["monster",MM_ICON.monster,"Monsters","O","monster"],
   ["military",MM_ICON.military,"Military","P","military"],
 ];
@@ -5592,6 +5926,9 @@ function setMapmode(m){
   state.mapmode=m; state.paintValue=null; state.paintUnclaim=false; state.paintErase=false;
   if(m!=="resource") state.selResource=null;   // clear the resource spotlight when leaving that map
   if(m!=="race") state.selRaceGroup=null;       // clear the race-group spotlight when leaving that map
+  if(m!=="terrain" && state.terrainSel) state.terrainSel.clear();   // clear terrain multi-select when leaving
+  if(m!=="region") state.selRegion=null;   // clear region highlight when leaving the Regions map
+  if(m!=="terrain"){ state.waterEditMode=false; state.selWater=null; state.waterNodeDrag=null; }   // exit water editing when leaving terrain
   state.legendFilter=null;                      // clear any legend spotlight on mode change
   state.convertSelecting=false; state.convertPickCenter=false;   // pause conversion picking when switching maps
   state.paintMixGroups=[];                       // mix-paint groups are axis-specific — reset on map change
@@ -5665,12 +6002,15 @@ function wireTopbar(){
   const syncToggleBtns=()=>{
     const set=(t,on)=>{ const b=document.querySelector(`#toggleBar .tgl[data-toggle="${t}"]`); if(b)b.classList.toggle("on",!!on); };
     set("continents",state.showNames); set("realms",state.realmOverlay); set("terrain",state.terrainOverlay);
+    set("water",state.showWater); set("regions",state.showRegions);
   };
   $$("#toggleBar .tgl").forEach(b=>b.addEventListener("click",()=>{
     const t=b.dataset.toggle;
     if(t==="continents") state.showNames=!state.showNames;
     else if(t==="realms") state.realmOverlay=!state.realmOverlay;
     else if(t==="terrain") state.terrainOverlay=!state.terrainOverlay;
+    else if(t==="water") state.showWater=!state.showWater;
+    else if(t==="regions") state.showRegions=!state.showRegions;
     syncToggleBtns(); renderMap(); renderLegend();
   }));
   syncToggleBtns();
