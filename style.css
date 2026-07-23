@@ -280,6 +280,123 @@ details.rvProvinces>summary::before{content:"▸"; display:inline-block; width:1
 details.rvProvinces[open]>summary::before{content:"▾"}
 .rvSearch{width:100%; margin:6px 0; padding:5px 8px; border:1px solid var(--line);
   border-radius:8px; background:var(--panel); font-size:13px; box-sizing:border-box}
+/* ===== realm view v2 — two columns, bolder header, clickable compendium chips ===== */
+#right.wideRealm{width:680px; max-width:94vw}
+.realmName.rvBig{font-size:27px; letter-spacing:.6px; margin:2px 0 3px}
+.rvStatRow{display:flex; justify-content:center; align-items:baseline; gap:14px; margin-bottom:11px;
+  font-family:"Georgia","Palatino Linotype",serif}
+.rvStatRow .rvStatPop{font-size:16px; font-weight:700; color:var(--ink)}
+.rvStatRow .rvStatProv{font-size:13px; color:var(--muted)}
+.rvCols{display:grid; grid-template-columns:1fr 1fr; gap:12px; align-items:start}
+.rvColL,.rvColR{min-width:0}
+/* rows are narrower in two-column mode: stack label over value so nothing overlaps */
+.rvCols .rvRow{flex-direction:column; align-items:stretch; gap:2px}
+.rvCols .rvRow .rvLbl{min-width:0}
+.rvCols .rvRow .rvVal{text-align:left; justify-content:flex-start}
+.rvBlockH{font-size:11px; text-transform:uppercase; letter-spacing:.5px; color:var(--muted);
+  font-weight:700; margin-bottom:5px}
+.rvBlock.rvPowers{border-left-color:#7c5cff; background:rgba(124,92,255,.10)}
+.rvBlock.rvTechBlock{border-left-color:#9b5de5; background:rgba(155,93,229,.08)}
+.rvPowerChips{display:flex; flex-wrap:wrap; gap:5px}
+.rvBlock.rvTechBlock .techFieldDet{margin:5px 0}
+/* clickable compendium chips */
+.compChip{cursor:pointer; font-family:inherit; color:var(--ink); transition:filter .1s, transform .06s}
+.compChip:hover{filter:brightness(1.08); transform:translateY(-1px);
+  box-shadow:0 2px 7px rgba(0,0,0,.18)}
+.compChip:active{transform:translateY(0)}
+/* ===== Compendium modal ===== */
+.cmpWrap{width:100%; height:100%; display:flex; flex-direction:column}
+.cmpHead{display:flex; align-items:center; gap:12px; padding:2px 2px 14px; border-bottom:1px solid var(--line)}
+.cmpTitle{font-family:"Georgia","Palatino Linotype",serif; font-weight:700; font-size:24px; flex:0 0 auto}
+.cmpHead #cmpSearch{flex:1; min-width:0; font-size:15px; padding:8px 12px}
+.cmpBody{display:flex; gap:0; min-height:0; flex:1; overflow:hidden}
+.cmpTabs{flex:0 0 230px; overflow-y:auto; border-right:1px solid var(--line); padding:12px 12px 12px 0;
+  display:flex; flex-direction:column; gap:4px}
+.cmpTab{text-align:left; background:transparent; border:1px solid transparent; border-radius:9px;
+  padding:10px 13px; font-size:14.5px; font-weight:600; color:var(--ink); cursor:pointer;
+  display:flex; align-items:center; justify-content:space-between; gap:6px}
+.cmpTab:hover{background:var(--panel2)}
+.cmpTab.on{background:color-mix(in srgb, var(--accent) 16%, var(--panel)); border-color:color-mix(in srgb, var(--accent) 40%, var(--line))}
+.cmpTab .cmpN{flex:0 0 auto; font-size:12px; color:var(--muted); background:var(--panel2);
+  border-radius:10px; padding:1px 8px}
+.cmpMain{flex:1; overflow-y:auto; padding:14px 8px 16px 20px; min-width:0}
+/* list: compact clickable rows that open a full page */
+.cmpEntry{border:1px solid var(--line); border-radius:11px; padding:12px 15px; margin-bottom:9px;
+  background:var(--panel2); cursor:pointer; transition:border-color .1s, transform .06s, box-shadow .1s}
+.cmpEntry:hover,.cmpEntry:focus{border-color:var(--accent); transform:translateY(-1px);
+  box-shadow:0 3px 12px rgba(0,0,0,.16); outline:none}
+.cmpEntryH{display:flex; align-items:center; gap:10px}
+.cmpEntryName{font-weight:700; font-size:17px; color:var(--ink)}
+.cmpEntrySub{margin-left:auto; font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.3px}
+.cmpEntryGo{flex:0 0 auto; color:var(--muted); font-size:22px; font-weight:700; margin-left:8px}
+.cmpEntry:hover .cmpEntryGo{color:var(--accent)}
+/* detail mode: hide the sidebar + search, give the page room */
+.cmpWrap.cmpDetailMode #cmpTabs{display:none}
+.cmpWrap.cmpDetailMode #cmpSearch{visibility:hidden}
+.cmpDetail{max-width:820px; margin:0 auto}
+.cmpBack{margin-bottom:14px; font-size:14px}
+.cmpDetHead{display:flex; align-items:center; gap:12px; margin-bottom:4px}
+.cmpDetName{font-family:"Georgia","Palatino Linotype",serif; font-weight:700; font-size:30px; color:var(--ink)}
+.cmpDetSub{font-size:13px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; margin-bottom:14px}
+.cmpDetBody{font-size:15px; line-height:1.65}
+.cmpDetBody .cmpRow{margin:5px 0}
+.cmpDetBody .cmpRow b{color:var(--muted); font-weight:700; font-size:12px; text-transform:uppercase;
+  letter-spacing:.4px; margin-right:6px}
+.cmpDetBody .cmpDesc{margin:12px 0; white-space:normal; font-size:15px}
+.cmpDetBody .cmpUsed{margin-top:14px; padding-top:12px; border-top:1px solid var(--line); font-size:13.5px; color:var(--muted)}
+.cmpDetBody .cmpUsed .cmpUsedL{font-weight:700; text-transform:uppercase; font-size:11px; letter-spacing:.4px; margin-right:6px}
+.cmpSecH{margin:18px 0 7px; font-family:"Georgia","Palatino Linotype",serif; font-weight:700; font-size:16px;
+  color:var(--ink); border-bottom:1px solid var(--line); padding-bottom:5px}
+.cmpDetail .li{cursor:pointer}
+.cmpDetail .li:hover{background:var(--panel2)}
+/* editable compendium fields (editor only) */
+.cmpRefBox{background:var(--panel2); border:1px solid var(--line); border-radius:9px; padding:8px 12px; margin-bottom:12px; font-size:13.5px}
+.cmpEditGrid{display:grid; grid-template-columns:1fr 1fr; gap:10px 14px; margin-bottom:6px}
+.cmpF{display:flex; flex-direction:column; gap:4px}
+.cmpF.cmpFWide{grid-column:1 / -1}
+.cmpF>span{font-size:11px; text-transform:uppercase; letter-spacing:.4px; color:var(--muted); font-weight:700}
+.cmpF input.cmpFld, .cmpF textarea.cmpFld{width:100%; box-sizing:border-box; font-size:14px; padding:8px 10px;
+  border:1px solid var(--line); border-radius:8px; background:var(--panel); color:var(--ink); font-family:inherit}
+.cmpF input[type="color"].cmpFld{height:38px; padding:2px}
+.cmpF textarea.cmpFld{resize:vertical; line-height:1.5}
+.cmpLoreEdit{width:100%; box-sizing:border-box; font-size:14.5px; line-height:1.6; padding:11px 13px;
+  border:1px solid var(--line); border-radius:9px; background:var(--panel); color:var(--ink); font-family:inherit; resize:vertical}
+.cmpLoreView{font-size:15px; line-height:1.65; white-space:normal}
+/* character page: ruler checkbox + role tags */
+.cmpF.cmpCheck{flex-direction:row; align-items:center; gap:8px}
+.cmpF.cmpCheck input{width:16px; height:16px}
+.cmpTagChips{display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px}
+.cmpTagChips .tag{display:inline-flex; align-items:center; gap:5px; background:var(--panel2); border:1px solid var(--line);
+  border-radius:16px; padding:3px 10px; font-size:13px}
+.cmpTagChips .tag .x{cursor:pointer; color:var(--muted); font-size:11px}
+.cmpTagChips .tag .x:hover{color:var(--bad)}
+.cmpTagAddRow{display:flex; gap:8px; flex-wrap:wrap}
+.cmpTagAddRow select, .cmpTagAddRow input{flex:1; min-width:140px; padding:7px 9px; border:1px solid var(--line);
+  border-radius:8px; background:var(--panel); color:var(--ink); font-size:13.5px}
+/* ruler timeline — editor rows */
+.rulerTimeline{display:flex; flex-direction:column; gap:10px; margin-bottom:6px}
+.rulerRow{border:1px solid var(--line); border-radius:10px; padding:9px 11px; background:var(--panel2)}
+.rulerRowTop{display:flex; align-items:center; gap:6px; margin-bottom:6px}
+.rulerRowTop .rulerChar{flex:1; min-width:0; padding:6px 8px; border:1px solid var(--line); border-radius:7px;
+  background:var(--panel); color:var(--ink); font-size:13.5px}
+.rulerOrd{flex:0 0 auto; width:22px; height:22px; border-radius:50%; background:var(--accent); color:#fff;
+  display:inline-flex; align-items:center; justify-content:center; font-size:12px; font-weight:700}
+.rulerRowFields{display:grid; grid-template-columns:2fr 1fr 1fr; gap:7px; margin-bottom:6px}
+.rulerRowFields input{padding:6px 8px; border:1px solid var(--line); border-radius:7px; background:var(--panel);
+  color:var(--ink); font-size:13px; box-sizing:border-box; width:100%}
+.rulerRow textarea.rulerNote{width:100%; box-sizing:border-box; padding:6px 8px; border:1px solid var(--line);
+  border-radius:7px; background:var(--panel); color:var(--ink); font-size:13px; resize:vertical; font-family:inherit}
+.rulerAddRow{display:flex; gap:8px; margin-top:8px}
+/* ruler timeline — viewer rows */
+.rulerViewRow{display:flex; gap:10px; align-items:flex-start; border:1px solid var(--line); border-left:3px solid var(--accent);
+  border-radius:9px; padding:8px 11px; margin-bottom:8px; background:var(--panel2); transition:transform .06s, box-shadow .1s}
+.rulerViewRow:hover{transform:translateX(2px); box-shadow:0 2px 9px rgba(0,0,0,.15)}
+.rulerViewMain{flex:1; min-width:0}
+.rulerViewName{font-weight:700; font-size:15px}
+.rulerViewTitle{font-size:13px; color:var(--muted)}
+.rulerViewNote{margin-top:3px; font-size:13px; line-height:1.5; white-space:normal}
+.rulerCurrent{display:inline-block; margin-left:6px; font-size:10.5px; text-transform:uppercase; letter-spacing:.4px;
+  background:var(--accent); color:#fff; border-radius:9px; padding:1px 7px; vertical-align:middle}
 /* ===== province viewer panel (read-only) — distinct from the realm card ===== */
 .provCard{--rc:#6f8fc9; --tc:#7a8a5a; border:1px solid var(--line); border-radius:12px; padding:10px 11px 13px;
   background:var(--panel)}
@@ -319,6 +436,59 @@ details.rvProvinces[open]>summary::before{content:"▾"}
   vertical-align:middle; border:1px solid rgba(0,0,0,.2)}
 /* features + type key */
 .pvFeats{display:flex; flex-wrap:wrap; gap:5px}
+/* ---- Tech Level: realm-panel button + side breakdown panel ---- */
+.techBtnRow{margin:6px 0}
+.techRealmBtn{display:flex; align-items:center; gap:8px; width:100%; text-align:left; cursor:pointer; font-size:13px; font-weight:600;
+  color:var(--ink); background:var(--panel2); border:1px solid var(--line); border-left:5px solid var(--tlc,#888); border-radius:9px; padding:7px 10px}
+.techRealmBtn:hover{border-color:var(--accent)}
+.techRealmBtn.open{background:var(--panel)}
+.techRealmBtn .techRBIco{font-size:15px}
+.techRealmBtn .techRBTxt{color:var(--muted); font-weight:700}
+.techRealmBtn .techRBVal{margin-left:auto; font-size:15px; color:var(--tlc,var(--ink))}
+.techRealmBtn.star .techRBVal{color:#9b5de5}
+.techRealmBtn .techRBArrow{color:var(--muted); font-size:11px}
+#techPanel{position:absolute; z-index:9; width:290px; max-width:44vw; overflow:auto; background:var(--panel);
+  border:1px solid var(--line); border-left:5px solid var(--tlc,#888); border-radius:12px; box-shadow:0 6px 22px #00000030; padding:0 0 8px}
+.techPHead{position:sticky; top:0; display:flex; align-items:center; gap:8px; background:var(--panel); border-bottom:1px solid var(--line);
+  padding:8px 10px; z-index:1}
+.techPHead .techPIco{font-size:16px; flex:none}
+.techPHead .techPCol{flex:1; min-width:0; display:flex; flex-direction:column; line-height:1.2}
+.techPHead .techPTitle{font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.techPHead .techPSub{color:var(--muted); font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.4px}
+.techPHead .techPTL{flex:none; font-size:16px; font-weight:700; color:var(--tlc,var(--ink))}
+.techPHead .techPTL.star{color:#9b5de5}
+.techPBody{padding:8px 10px}
+.techInline{margin-top:8px; border:1px solid var(--line); border-left:5px solid var(--tlc,#888); border-radius:10px; overflow:hidden}
+.techInline .techPHead{border-radius:0}
+.techStar{color:#9b5de5; font-weight:700}
+.techDisc{background:var(--panel2); border:1px solid var(--line); border-left:4px solid var(--dc,#e0a020); border-radius:7px; padding:4px 7px; margin:4px 0 2px}
+.techDiscHead{display:flex; align-items:center; gap:6px; font-size:12.5px; font-weight:600}
+.techDiscName{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis}
+.techDiscMaker{flex:none; display:inline-flex; align-items:center; gap:3px; font-size:10.5px; font-weight:600; color:var(--muted)}
+.techDiscMaker .sw{width:8px; height:8px; border-radius:2px; box-shadow:0 0 0 1px rgba(0,0,0,.25) inset}
+.techDiscTL{flex:none; color:#fff; font-weight:700; font-size:10px; padding:1px 6px; border-radius:9px; box-shadow:0 0 0 1px rgba(0,0,0,.2) inset}
+.techDiscDesc{font-size:12px; line-height:1.35; color:var(--ink); margin-top:1px}
+.techField{background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:6px 8px; margin:5px 0}
+.techFieldDet{background:var(--panel); border:1px solid var(--line); border-radius:8px; margin:4px 0; overflow:hidden}
+.techFSum{display:flex; align-items:center; gap:6px; cursor:pointer; padding:5px 8px; list-style:none; font-size:13px}
+.techFSum::-webkit-details-marker{display:none}
+.techFSum::before{content:"▸"; color:var(--muted); font-size:10px; flex:none; transition:transform .12s}
+.techFieldDet[open]>.techFSum::before{transform:rotate(90deg)}
+.techFDiscN{flex:none; font-size:10.5px; font-weight:700; color:#8a6a12; background:rgba(224,160,32,.18); padding:1px 6px; border-radius:9px}
+.techFBody{padding:0 8px 8px}
+.techFRow{display:flex; align-items:center; gap:6px; font-size:13px}
+.techFName{font-weight:600; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis}
+.techFTL{flex:none; color:var(--muted); font-size:12px; display:inline-flex; align-items:center; gap:3px}
+.techFTL input{width:44px; background:#fff; border:1px solid var(--line); color:var(--ink); padding:2px 4px; border-radius:5px; text-align:right}
+.techFTLv{flex:none; color:#fff; font-weight:700; font-size:11px; padding:1px 7px; border-radius:10px; box-shadow:0 0 0 1px rgba(0,0,0,.2) inset}
+.techFEra{font-size:11px; color:var(--muted); margin:1px 0 2px}
+.techFDesc{font-size:12.5px; line-height:1.4}
+.techColGrid{display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:4px 10px; margin:4px 0}
+.techColCell{display:flex; align-items:center; gap:6px}
+.techColCell input[type=color]{width:30px; height:24px; padding:1px; flex:none}
+.techColCell .note{overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+#gmTech .gmTFDesc{width:100%; background:#fff; border:1px solid var(--line); color:var(--ink); padding:3px 6px; border-radius:6px; font:inherit; font-size:12px; resize:vertical}
+.techField textarea{width:100%; background:#fff; border:1px solid var(--line); color:var(--ink); padding:4px 6px; border-radius:6px; font:inherit; font-size:12.5px; resize:vertical}
 .pvFeat{display:inline-flex; align-items:center; gap:5px; background:var(--panel); border:1px solid var(--line);
   border-radius:20px; padding:2px 9px; font-size:12.5px; font-weight:600}
 .pvFeat .sw{width:9px; height:9px; border-radius:2px; display:inline-block}
@@ -488,6 +658,8 @@ body.viewer .viewerchrome{ display:inline-flex !important; }
   width:min(720px,96vw); max-height:88vh; overflow:auto; padding:18px 20px;
   box-shadow:0 20px 60px #00000033}
 .modal.gmWide{width:min(1240px,97vw)}
+/* Compendium takes over almost the whole screen — no cramped 720px box */
+.modal:has(.cmpWrap){width:98vw; max-width:1800px; height:94vh; max-height:94vh; padding:16px 20px; overflow:hidden}
 /* timeline browser */
 .tlNow{display:flex; align-items:center; gap:10px; background:rgba(217,165,33,.14); border:1px solid #d9a52155;
   border-radius:9px; padding:7px 10px; margin:4px 0 10px; font-size:13.5px}
@@ -642,6 +814,15 @@ body.viewer #inspector .insTitle input:disabled{font-weight:700; font-size:17px}
   .rvBlock, .pvBlock{padding:9px 11px; margin:8px 0}
   .provName{font-size:19px}
   .realmName{font-size:19px}
+  .realmName.rvBig{font-size:23px}
+  .rvCols{grid-template-columns:1fr; gap:8px}   /* stack the two columns on phones */
+  #right.wideRealm{width:auto; max-width:none}
+  .cmpBody{flex-direction:column; overflow:auto}
+  .cmpTabs{flex:0 0 auto; flex-direction:row; flex-wrap:wrap; border-right:none;
+    border-bottom:1px solid var(--line); padding:0 0 8px}
+  .cmpMain{padding:10px 2px}
+  .cmpEditGrid{grid-template-columns:1fr}
+  .rulerRowFields{grid-template-columns:1fr}
   .pvPie{padding:8px 6px}
   .pvPie svg{width:84px; height:84px}
 

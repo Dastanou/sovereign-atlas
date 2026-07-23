@@ -294,11 +294,246 @@ function toggleRegionMember(regionId, pid){
   if(i>=0) rg.provinceIds.splice(i,1); else rg.provinceIds.push(pid);
   markDirty();
 }
+/* ============================================================
+   TECHNOLOGY LEVEL (GURPS-style TL0..TL12) — per-realm Tech Fields
+   ============================================================ */
+const DEFAULT_TECH_FIELDS=["Transportation","Weapons and Armor","Power","Biotechnology/Medicine","Communications","Architecture","Administration","Magic"];
+const TL_NAMES=["Stone Age","Bronze Age","Iron Age","Medieval","Age of Sail","Industrial Revolution","Mechanized Age","Nuclear Age","Digital Age","Microtech Age","Robotic Age","Age of Exotic Matter","Beyond"];
+const TL_DEFAULT_DESC=[
+  "Stone Age (Prehistory+). Counting; oral tradition.",
+  "Bronze Age (3500 B.C.+). Arithmetic; writing.",
+  "Iron Age (1200 B.C.+). Geometry; scrolls.",
+  "Medieval (600 A.D.+). Algebra; books.",
+  "Age of Sail (1450+). Calculus; movable type.",
+  "Industrial Revolution (1730+). Mechanical calculators; telegraph.",
+  "Mechanized Age (1880+). Electrical calculators; telephone and radio.",
+  "Nuclear Age (1940+). Mainframe computers; television.",
+  "Digital Age (1980+). Personal computers; global networks.",
+  "Microtech Age (2025+?). Artificial intelligence; real-time virtuality.",
+  "Robotic Age (2070+?). Nanotechnology blurs distinctions between technologies.",
+  "Age of Exotic Matter.",
+  "Whatever the GM likes!"];
+const TL_COLORS=["#6d4c2f","#c8641b","#e8a71e","#cfc72e","#6fb23a","#1f9e7a","#2f9fc7","#2f6bd0","#33489e","#b84f9e","#d14f6a","#d14030","#333947"];
+const TL_STAR_COLOR="#9b5de5";   // a field above its realm's average TL is shown in purple
+const TL_MAX=12;
+function tlClamp(t){ t=Math.round(+t||0); return t<0?0:(t>TL_MAX?TL_MAX:t); }
+function tlColor(t){ t=tlClamp(t); return (world&&world.techColors&&world.techColors[t])||TL_COLORS[t]; }
+function techFieldIsDefault(f){ return !(world&&world.techFieldDefault) || world.techFieldDefault[f]!==false; }
+function tlName(t){ return TL_NAMES[tlClamp(t)]||("TL"+tlClamp(t)); }
+function realmTechFields(r){   // the fields this realm actually has, in the world order then any extras
+  if(!r||!r.tech||typeof r.tech!=="object") return [];
+  const keys=Object.keys(r.tech), order=(world.techFields||[]);
+  const inOrder=order.filter(f=>keys.includes(f));
+  const extra=keys.filter(f=>!order.includes(f));
+  return inOrder.concat(extra);
+}
+function realmHasTech(r){ return realmTechFields(r).length>0; }
+// Overall TL = average of the realm's Tech Fields (TL0 if none set up yet).
+function realmTL(r){
+  const fields=realmTechFields(r);
+  if(!fields.length) return {avg:0, fields:[], star:false, unset:true};
+  let sum=0; fields.forEach(f=>sum+=(+r.tech[f]||0));
+  const avg=sum/fields.length;
+  const star=fields.some(f=>(+r.tech[f]||0)>avg+1e-9);
+  return {avg, fields, star, unset:false};
+}
+function tlDisplay(avg){ return Number.isInteger(avg)?String(avg):(Math.round(avg*10)/10).toFixed(1); }
+// Description for a field at a TL: realm override → world default → the built-in TL blurb.
+function techDescFor(r, field, tl){
+  tl=tlClamp(tl);
+  if(r&&r.techDesc&&r.techDesc[field]&&typeof r.techDesc[field][tl]==="string"&&r.techDesc[field][tl].trim()) return r.techDesc[field][tl];
+  if(world.techDesc&&world.techDesc[field]&&typeof world.techDesc[field][tl]==="string"&&world.techDesc[field][tl].trim()) return world.techDesc[field][tl];
+  return TL_DEFAULT_DESC[tl]||"";
+}
+// Give a new realm the Tech Fields flagged "default on new realms" (all at TL0).
+function initRealmTech(r){ r.tech=r.tech||{}; (world.techFields||[]).forEach(f=>{ if(techFieldIsDefault(f) && r.tech[f]==null) r.tech[f]=0; }); }
+// Rename a Tech Field everywhere (global list, default flag, descriptions, every realm).
+function renameTechField(ov,nv){
+  nv=(nv||"").trim(); const i=world.techFields.indexOf(ov);
+  if(i<0||!nv||nv===ov||world.techFields.includes(nv)) return false;
+  world.techFields[i]=nv;
+  if(world.techFieldDefault){ if(world.techFieldDefault[ov]!==undefined){world.techFieldDefault[nv]=world.techFieldDefault[ov];delete world.techFieldDefault[ov];} }
+  if(world.techDesc && world.techDesc[ov]!==undefined){ world.techDesc[nv]=world.techDesc[ov]; delete world.techDesc[ov]; }
+  (world.realms||[]).forEach(r=>{ if(r.tech&&r.tech[ov]!==undefined){r.tech[nv]=r.tech[ov];delete r.tech[ov];}
+    if(r.techDesc&&r.techDesc[ov]!==undefined){r.techDesc[nv]=r.techDesc[ov];delete r.techDesc[ov];} });
+  (world.discoveries||[]).forEach(d=>{ if(d.field===ov)d.field=nv; });
+  return true;
+}
+// ---- Discoveries: notable techs assigned to a Tech Field + TL; realms acquire them over time ----
+function discoveryById(id){ return (world.discoveries||[]).find(d=>d.id===id)||null; }
+function realmDiscoveries(r){ return ((r&&r.discoveries)||[]).map(discoveryById).filter(Boolean); }
+function discoveriesInField(r, field){ return realmDiscoveries(r).filter(d=>d.field===field).sort((a,b)=>a.tl-b.tl); }
+function newDiscovery(){ return {id:uid(), name:"New Discovery", field:(world.techFields||[])[0]||"", tl:0, description:"", color:"#e0a020", realmId:""}; }
+function discoveryMaker(d){ return d&&d.realmId ? (world.realms||[]).find(r=>r.id===d.realmId) : null; }
+function discoveryColor(d){ const rm=discoveryMaker(d); return (rm&&rm.color) || (d&&d.color) || "#e0a020"; }
+// ---- Powers: distinctive traditions (Druidic, Magic, Demonic…) realms wield ----
+function powerById(id){ return (world.powers||[]).find(p=>p.id===id)||null; }
+function realmPowers(r){ return ((r&&r.powers)||[]).map(powerById).filter(Boolean); }
+function realmHasPower(r,id){ return !!(r&&Array.isArray(r.powers)&&r.powers.includes(id)); }
+function toggleRealmPower(r,id){ r.powers=r.powers||[]; const i=r.powers.indexOf(id); if(i>=0)r.powers.splice(i,1); else r.powers.push(id); markDirty(); }
+function newPower(){ return {id:uid(), name:"New Power", type:"", origin:"", description:"", color:"#7c5cff"}; }
+function realmHasDiscovery(r,id){ return !!(r&&Array.isArray(r.discoveries)&&r.discoveries.includes(id)); }
+function toggleRealmDiscovery(r,id){ r.discoveries=r.discoveries||[]; const i=r.discoveries.indexOf(id); if(i>=0)r.discoveries.splice(i,1); else r.discoveries.push(id); markDirty(); }
+// ============================================================
+// GLOBAL COMPENDIUM STORE — characters, role tags, ruler timelines and lore
+// live OUTSIDE per-turn snapshots. The same information shows no matter which
+// timeline phase you view. Persisted on world.compendiumStore (kept in sync).
+// ============================================================
+let _compendium=null;
+function blankCompendium(){ return {characters:[], charTags:["Commander","Diplomat","Hero"], lore:{}, realmRulers:{}}; }
+function normalizeCompendium(src){
+  const cp=(src&&typeof src==="object")?src:{}; const out=blankCompendium();
+  if(Array.isArray(cp.charTags)&&cp.charTags.length)out.charTags=cp.charTags.slice();
+  if(Array.isArray(cp.characters))out.characters=cp.characters.map(c=>({id:c.id||uid(), name:typeof c.name==="string"?c.name:"Character", isRuler:!!c.isRuler, tags:Array.isArray(c.tags)?c.tags.slice():[], description:typeof c.description==="string"?c.description:"", color:c.color||"#c9a86f"}));
+  if(cp.lore&&typeof cp.lore==="object")out.lore=JSON.parse(JSON.stringify(cp.lore));
+  if(cp.realmRulers&&typeof cp.realmRulers==="object"){ Object.keys(cp.realmRulers).forEach(rid=>{ const arr=cp.realmRulers[rid]; if(Array.isArray(arr))out.realmRulers[rid]=arr.filter(x=>x&&x.charId).map(x=>({charId:x.charId, title:x.title||"", from:x.from||"", to:x.to||"", note:x.note||""})); }); }
+  out.characters.forEach(c=>{ c.tags=c.tags.filter(t=>out.charTags.includes(t)); });
+  return out;
+}
+// Build _compendium once per world (from its stored compendium, or migrate legacy fields).
+function ensureCompendium(w){
+  if(_compendium)return;
+  if(w&&w.compendiumStore){ _compendium=normalizeCompendium(w.compendiumStore); }
+  else {
+    const src={characters:(w&&w.characters)||[], charTags:(w&&w.charTags)||[], lore:(w&&w.compendium)||{}, realmRulers:{}};
+    // migrate legacy per-realm leaderName/leaderTitle → a ruler character + a reign
+    (w&&w.realms||[]).forEach(r=>{
+      if(Array.isArray(r.rulers)&&r.rulers.length){ src.realmRulers[r.id]=r.rulers; return; }
+      const nm=(r.leaderName||r.leaderTitle||"").trim(); if(!nm)return;
+      let ch=src.characters.find(c=>c.isRuler&&c.name===nm);
+      if(!ch){ ch={id:uid(),name:nm,isRuler:true,tags:[],description:"",color:r.color||"#c9a86f"}; src.characters.push(ch); }
+      src.realmRulers[r.id]=[{charId:ch.id,title:(r.leaderTitle||""),from:"",to:"",note:""}];
+    });
+    _compendium=normalizeCompendium(src);
+  }
+}
+// keep the persisted copy on the live world pointing at the global store
+function syncCompendiumToWorld(){ if(typeof world!=="undefined"&&world)world.compendiumStore=_compendium; }
+// ---- Characters: named people (rulers / commanders / other tagged roles) ----
+function allCharacters(){ ensureCompendium(world); return _compendium.characters; }
+function allCharTags(){ ensureCompendium(world); return _compendium.charTags; }
+function characterById(id){ return allCharacters().find(c=>c.id===id)||null; }
+function charName(id){ const c=characterById(id); return c?c.name:""; }
+function newCharacter(opts){ opts=opts||{}; return {id:uid(), name:opts.name||"New Character", isRuler:!!opts.isRuler, tags:opts.tags?opts.tags.slice():[], description:"", color:opts.color||"#c9a86f"}; }
+function charTagsOf(c){ return (c&&Array.isArray(c.tags))?c.tags.filter(t=>allCharTags().includes(t)):[]; }
+function charHasTag(c,t){ return !!(c&&Array.isArray(c.tags)&&c.tags.includes(t)); }
+function toggleCharTag(c,t){ c.tags=c.tags||[]; const i=c.tags.indexOf(t); if(i>=0)c.tags.splice(i,1); else c.tags.push(t); markDirty(); }
+// a realm's ruler timeline (ordered reigns), stored globally by realm id
+function realmRulers(r){ ensureCompendium(world); const id=r&&r.id; if(!id)return []; if(!Array.isArray(_compendium.realmRulers[id]))_compendium.realmRulers[id]=[]; return _compendium.realmRulers[id]; }
+// realms this character has ruled (with their reign entry)
+function charRealmReigns(charId){ const out=[]; (world.realms||[]).forEach(r=>{ realmRulers(r).forEach((reign,i)=>{ if(reign.charId===charId)out.push({realm:r,reign,index:i}); }); }); return out; }
+// forces this character commands (forces are per-snapshot)
+function charForces(charId){ return (world.forces||[]).filter(f=>f.commanderCharId===charId); }
+// the realm's current ruler = the last reign in the ordered timeline
+function realmCurrentReign(r){ const rs=realmRulers(r); return rs.length?rs[rs.length-1]:null; }
+function realmCurrentRuler(r){ const reign=realmCurrentReign(r); return reign?characterById(reign.charId):null; }
+// Remove a Tech Field from the world and from every realm.
+function deleteTechFieldGlobal(f){
+  world.techFields=(world.techFields||[]).filter(x=>x!==f);
+  if(world.techFieldDefault)delete world.techFieldDefault[f];
+  if(world.techDesc)delete world.techDesc[f];
+  (world.realms||[]).forEach(r=>{ if(r.tech)delete r.tech[f]; if(r.techDesc)delete r.techDesc[f]; });
+}
+// Collapsible Tech Level section for a realm panel — shared by editor (editable=true) and viewer.
+// The full breakdown body (fields, descriptions, discoveries) — editor-editable or read-only.
+function techBreakdownBody(r, editable){
+  const tl=realmTL(r);
+  if(tl.unset){
+    return editable
+      ? `<div class="note">No Tech Levels set up yet — this realm reads as <b>TL0</b>.</div><div class="btnrow" style="margin-top:6px"><button class="btn tiny" id="rTechInit">Set up Tech Levels</button></div>`
+      : `<div class="note">No Tech Levels were set up for this realm (treated as TL0).</div>`;
+  }
+  const avg=tl.avg;
+  const rows=tl.fields.map(f=>{
+    const t=tlClamp(r.tech[f]); const above=(+r.tech[f]||0)>avg+1e-9; const col=above?TL_STAR_COLOR:tlColor(t);
+    const discs=discoveriesInField(r,f);
+    const discHTML=discs.map(d=>{ const mk=discoveryMaker(d); const dc=discoveryColor(d);
+      return `<div class="techDisc" style="--dc:${dc}">
+      <div class="techDiscHead"><span class="techDiscName">✦ ${esc(d.name)}</span>${mk?`<span class="techDiscMaker" title="Discovered by ${esc(mk.name)}"><span class="sw" style="background:${mk.color}"></span>${esc(mk.name)}</span>`:""}<span class="techDiscTL" style="background:${dc}">TL${tlClamp(d.tl)}</span>${editable?`<button class="btn tiny rTechDiscDel" data-id="${d.id}" style="color:var(--bad)" title="Remove">✕</button>`:""}</div>
+      ${d.description?`<div class="techDiscDesc">${esc(d.description)}</div>`:""}</div>`; }).join("");
+    let addDisc="";
+    if(editable){ const avail=(world.discoveries||[]).filter(d=>d.field===f && !realmHasDiscovery(r,d.id));
+      if(avail.length) addDisc=`<select class="rTechDiscAdd" data-f="${esc(f)}" style="margin-top:4px"><option value="">✦ add a discovery…</option>${avail.map(d=>`<option value="${d.id}">${esc(d.name)} (TL${tlClamp(d.tl)})</option>`).join("")}</select>`; }
+    // compact one-line summary; body (era, description, discoveries, edit controls) is collapsed by default
+    const summary=`<summary class="techFSum" style="border-left:4px solid ${col}"><span class="techFName">${esc(f)}${above?' <span class="techStar">★</span>':''}</span>${discs.length?`<span class="techFDiscN" title="${discs.length} discoveries">✦${discs.length}</span>`:""}<span class="techFTLv" style="background:${col}">TL${t}</span></summary>`;
+    let body;
+    if(editable){
+      const cust=(r.techDesc&&r.techDesc[f]&&typeof r.techDesc[f][t]==="string")?r.techDesc[f][t]:"";
+      body=`<div class="techFRow" style="margin-top:2px"><span class="techFEra" style="flex:1">${esc(tlName(t))}</span>
+          <span class="techFTL">TL <input class="rTechTL" data-f="${esc(f)}" type="number" min="0" max="12" step="1" value="${t}"/></span>
+          <button class="btn tiny rTechDel" data-f="${esc(f)}" style="color:var(--bad)" title="Remove this field from this realm">✕</button></div>
+        <textarea class="rTechDesc" data-f="${esc(f)}" rows="2" placeholder="${esc(TL_DEFAULT_DESC[t]||"")}">${esc(cust)}</textarea>${discHTML}${addDisc}`;
+    } else {
+      const desc=techDescFor(r,f,t);
+      body=`<div class="techFEra">${esc(tlName(t))}</div>${desc?`<div class="techFDesc">${esc(desc)}</div>`:""}${discHTML}`;
+    }
+    return `<details class="techFieldDet">${summary}<div class="techFBody">${body}</div></details>`;
+  }).join("");
+  const addable=(world.techFields||[]).filter(f=>!(f in (r.tech||{})));
+  const addSel = editable ? `<div class="ppRow" style="margin-top:8px"><select id="rTechAdd"><option value="">＋ add a Tech Field…</option>${addable.map(f=>`<option>${esc(f)}</option>`).join("")}<option value="__new">＋ new field (adds it globally too)…</option></select></div>` : "";
+  return `<div class="note" style="margin-bottom:6px">Overall <b>TL ${tlDisplay(avg)}</b>, the average of the fields. Tap a field to expand it. ★ / purple = above average; ✦ = discoveries.${editable?" Custom descriptions override the GM defaults.":""}</div>${rows}${addSel}`;
+}
+// Called after a realm panel renders — (re)build the always-visible Tech Level side panel.
+function wireTechRealmUI(r, editable){ renderTechPanel(); }
+// Build / position / wire the Tech Level side panel for the selected realm. It sticks out to the
+// left of the realm panel (like the Wonders panel on the province view), and is always shown while
+// a realm is selected. On mobile it renders inline at the bottom of the realm sheet.
+function renderTechPanel(){
+  hideTechPanel();
+  const r = state.selRealm ? world.realms.find(x=>x.id===state.selRealm) : null;
+  if(!r) return;
+  const editable = !VIEWER;
+  const tl=realmTL(r);
+  const disp = tl.unset ? "TL0" : "TL "+tlDisplay(tl.avg);
+  const star = (!tl.unset && tl.star);
+  const col = star ? TL_STAR_COLOR : (tl.unset?tlColor(0):tlColor(tl.avg));
+  const head=`<div class="techPHead"><span class="techPIco">🔬</span><span class="techPCol"><b class="techPTitle">${esc(r.name)}</b><span class="techPSub">Tech Level</span></span><b class="techPTL${star?' star':''}">${disp}${star?' ★':''}</b></div>`;
+  const html=`${head}<div class="techPBody">${techBreakdownBody(r,editable)}</div>`;
+  const mobile=document.body.classList.contains("mobile");
+  let root;
+  if(mobile){ const ins=$("#inspector"); if(!ins)return; root=document.createElement("div"); root.id="techInline"; root.className="techInline"; root.innerHTML=html; ins.appendChild(root); }
+  else { root=document.createElement("div"); root.id="techPanel"; ($("#stage")||document.body).appendChild(root); root.innerHTML=html; positionTechPanel(); }
+  root.style.setProperty("--tlc", col);   // colour the panel's accent + the TL value
+  wireTechPanel(r, editable, root);
+}
+function hideTechPanel(){ const a=document.getElementById("techPanel"); if(a)a.remove(); const b=document.getElementById("techInline"); if(b)b.remove(); const rt=document.getElementById("right"); if(rt)rt.classList.remove("wideRealm"); }
+function positionTechPanel(){
+  const panel=document.getElementById("techPanel"), right=$("#right"), stage=$("#stage");
+  if(!panel||!right||!stage)return;
+  const rr=right.getBoundingClientRect(), ss=stage.getBoundingClientRect();
+  panel.style.left="auto";
+  panel.style.right=Math.max(8,(ss.right - rr.left + 10))+"px";
+  panel.style.top=Math.max(8,(rr.top - ss.top))+"px";
+  panel.style.maxHeight=(ss.height - 24)+"px";
+}
+function wireTechPanel(r, editable, root){
+  const rr2=()=>{ editable?renderRealmEditor():renderRealmView(); };   // rebuilds the panel
+  if(!editable) return;
+  { const b=root.querySelector("#rTechInit"); if(b)b.onclick=()=>{ beginEdit(); initRealmTech(r); markDirty(); rr2(); renderMap(); }; }
+  root.querySelectorAll(".rTechTL").forEach(el=>el.addEventListener("change",e=>{ r.tech[el.dataset.f]=tlClamp(e.target.value); markDirty(); rr2(); renderMap(); }));
+  root.querySelectorAll(".rTechDesc").forEach(el=>el.addEventListener("input",e=>{ const f=el.dataset.f, t=tlClamp(r.tech[f]); r.techDesc=r.techDesc||{}; r.techDesc[f]=r.techDesc[f]||{}; if(e.target.value.trim())r.techDesc[f][t]=e.target.value; else delete r.techDesc[f][t]; markDirty(); }));
+  root.querySelectorAll(".rTechDel").forEach(el=>el.onclick=()=>{ delete r.tech[el.dataset.f]; if(r.techDesc)delete r.techDesc[el.dataset.f]; markDirty(); rr2(); renderMap(); });
+  { const s=root.querySelector("#rTechAdd"); if(s)s.onchange=()=>{ let f=s.value; if(!f)return; if(f==="__new"){ f=(prompt("New Tech Field name:")||"").trim(); if(!f){rr2();return;} if(!(world.techFields||[]).includes(f)){world.techFields.push(f); world.techFieldDefault=world.techFieldDefault||{}; world.techFieldDefault[f]=true;}} r.tech=r.tech||{}; if(r.tech[f]==null)r.tech[f]=0; markDirty(); rr2(); renderMap(); }; }
+  root.querySelectorAll(".rTechDiscAdd").forEach(el=>el.onchange=()=>{ const id=el.value; if(!id)return; toggleRealmDiscovery(r,id); rr2(); });
+  root.querySelectorAll(".rTechDiscDel").forEach(el=>el.onclick=()=>{ toggleRealmDiscovery(r,el.dataset.id); rr2(); });
+}
 // Click a province on the Regions map: editor toggles it in the active region; viewer opens its region.
 function regionProvinceClick(p){
   if(VIEWER){ const regs=regionsOfProvince(p.id); if(regs.length) selectRegion(regs[0].id); else flash("This province isn't in any region."); return; }
   if(!state.selRegion){ flash("Pick or create a region in the legend first, then click provinces to add them."); return; }
   toggleRegionMember(state.selRegion, p.id); renderMap(); buildMapLegend(); renderRegionEditor();
+}
+function renderTechLegend(box){
+  let maxUsed=0; (world.realms||[]).forEach(r=>{ const t=realmTL(r); if(!t.unset) maxUsed=Math.max(maxUsed, Math.round(t.avg)); });
+  const hi=Math.min(TL_MAX, Math.max(5, maxUsed+1));
+  for(let tl=0; tl<=hi; tl++){
+    const row=div("mlRow");
+    row.innerHTML=`<span class="sw" style="background:${tlColor(tl)}"></span><b>TL${tl}</b> <span class="note" style="margin-left:6px">${esc(tlName(tl))}</span>`;
+    box.appendChild(row);
+  }
+  { const st=div("mlRow"); st.innerHTML=`<span class="sw" style="background:${TL_STAR_COLOR}"></span><span class="note">★ field above the realm's average</span>`; box.appendChild(st); }
+  const note=div("note"); note.style.marginTop="4px"; note.textContent="Realms are coloured by their average TL. Click a realm for its full breakdown.";
+  box.appendChild(note);
 }
 function renderRegionLegend(box){
   const regs=world.regions||[];
@@ -322,7 +557,7 @@ function renderRegionLegend(box){
 function selectRegion(id){
   state.selRegion=id; state.selProvince=null;state.selRealm=null;state.selReligion=null;state.selWater=null;state.selLabel=null;state.selForce=null;state.selBattle=null;state.selMonster=null;
   document.body.classList.add("has-sel");
-  renderMap(); renderRegionEditor(); renderWonderPanel();
+  hideTechPanel();renderMap(); renderRegionEditor(); renderWonderPanel();
 }
 function renderRegionEditor(){
   if(VIEWER) return renderRegionView();
@@ -654,6 +889,7 @@ function sampleWorld(){
 function markDirty(){if(VIEWER)return;clearTimeout(saveTimer);saveTimer=setTimeout(saveWorld,900);}
 async function saveWorld(silent=true){
   if(VIEWER)return;
+  syncCompendiumToWorld();
   try{
     const res=await fetch("/api/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({world})});
     const j=await res.json();
@@ -665,7 +901,7 @@ async function loadWorld(name){
   const r=await fetch("/api/load?name="+encodeURIComponent(name));
   if(!r.ok) return false;
   const j=await r.json();
-  if(j.ok){ world=normalize(j.world); afterLoad(); return true; }
+  if(j.ok){ _compendium=null; world=normalize(j.world); afterLoad(); return true; }   // switching worlds → rebuild the global compendium
   return false;
 }
 function normalize(w){
@@ -679,6 +915,21 @@ function normalize(w){
   w.rivers=w.rivers||[]; w.lakes=w.lakes||[]; w.colors=w.colors||{};
   w.rivers.forEach(rv=>{ if(+rv.width>10) rv.width=10; });   // cap river width to the new maximum
   w.labels=w.labels||[];   // custom map annotations
+  // Technology Levels: global field list + default per-field-per-TL descriptions. Existing
+  // realms without r.tech are left untouched (treated as "no TLs set up" → TL0) for back-compat.
+  w.techFields = Array.isArray(w.techFields)&&w.techFields.length ? w.techFields : DEFAULT_TECH_FIELDS.slice();
+  w.techDesc = (w.techDesc&&typeof w.techDesc==="object") ? w.techDesc : {};
+  w.techFieldDefault = (w.techFieldDefault&&typeof w.techFieldDefault==="object") ? w.techFieldDefault : {};   // per-field: appear on new realms?
+  w.techFields.forEach(f=>{ if(w.techFieldDefault[f]===undefined) w.techFieldDefault[f]=true; });               // existing fields default ON
+  w.techColors = (w.techColors&&typeof w.techColors==="object") ? w.techColors : {};                          // per-TL colour overrides
+  w.discoveries = Array.isArray(w.discoveries) ? w.discoveries : [];                                          // significant techs, assigned to a field + TL
+  w.discoveries.forEach(d=>{ if(!d.id)d.id=uid(); if(typeof d.name!=="string")d.name="Discovery"; if(typeof d.field!=="string")d.field=(w.techFields[0]||""); d.tl=tlClamp(d.tl); if(typeof d.description!=="string")d.description=""; if(!d.color)d.color="#e0a020"; if(typeof d.realmId!=="string")d.realmId=""; });
+  w.powers = Array.isArray(w.powers) ? w.powers : [];   // realm powers (Druidic, Magic, Demonic…) with type + origin
+  w.powers.forEach(pw=>{ if(!pw.id)pw.id=uid(); if(typeof pw.name!=="string")pw.name="Power"; if(typeof pw.type!=="string")pw.type=""; if(typeof pw.origin!=="string")pw.origin=""; if(typeof pw.description!=="string")pw.description=""; if(!pw.color)pw.color="#7c5cff"; });
+  w.compendium = (w.compendium && typeof w.compendium==="object") ? w.compendium : {};   // legacy lore store (migrated into the global compendium)
+  // The Compendium (characters, role tags, ruler timelines, lore) is GLOBAL — it lives outside
+  // per-turn snapshots in `_compendium` and is carried on w.compendiumStore for persistence.
+  if(w.compendiumStore && typeof w.compendiumStore==="object"){ /* kept as-is; loaded by ensureCompendium */ }
   w.regions=Array.isArray(w.regions)?w.regions:[];   // named groupings of provinces (Regions map)
   w.regions.forEach(rg=>{ if(!rg.id)rg.id=uid(); if(typeof rg.name!=="string")rg.name="Region"; if(typeof rg.description!=="string")rg.description=""; rg.provinceIds=Array.isArray(rg.provinceIds)?rg.provinceIds:[]; if(!rg.color)rg.color=hashColor(rg.id); });
   if(!w.milesPerUnit)w.milesPerUnit=10;   // map scale: miles per world unit
@@ -744,7 +995,7 @@ function normalize(w){
     r.dominantRace = r.adminRaces[0] || "";   // keep the single field in sync for pop defaults/state-group logic
   });
   w.forces=w.forces||[];   // military units
-  w.forces.forEach(f=>{ if(f.scale==null)f.scale=1; if(typeof f.description!=="string")f.description=""; (f.elements||[]).forEach(migrateElement); });
+  w.forces.forEach(f=>{ if(f.scale==null)f.scale=1; if(typeof f.description!=="string")f.description=""; if(typeof f.commanderCharId!=="string")f.commanderCharId=""; (f.elements||[]).forEach(migrateElement); });
   // army element-type library (editable in the GM screen)
   w.elementTypes = (Array.isArray(w.elementTypes)&&w.elementTypes.length) ? w.elementTypes : DEFAULT_ELEMENT_TYPES.map(t=>({id:uid(),...t}));
   w.elementTypes.forEach(t=>{ if(!t.id)t.id=uid(); migrateElement(t); });
@@ -1024,6 +1275,7 @@ function renderMap(){ _geoDirty=true; _labelsDirty=true; requestRender(); }
 function labelKeyer(mode){
   switch(mode){
     case "political": return p=>p.realmId;
+    case "tech": return p=>p.realmId;   // show realm names on the Tech Level map too
     case "religion": return p=>axisLabelName(p,"religion");
     case "culture": return p=>axisLabelName(p,"culture");
     case "race": return p=>axisLabelName(p,"race");
@@ -1038,7 +1290,7 @@ function labelKeyer(mode){
 function economyOf(p){   // dominant Mode of Production across this province's pops
   return dominant(p.economy) || ((p.population>0) ? "Primitive" : "Uninhabited");
 }
-function labelText(mode,val){ if(mode==="political"){const r=world.realms.find(r=>r.id===val);return r?r.name:"";} return val; }
+function labelText(mode,val){ if(mode==="political"||mode==="tech"){const r=world.realms.find(r=>r.id===val);return r?r.name:"";} return val; }
 function clamp01(x){return x<0?0:x>1?1:x;}
 // draw uppercase text along a gentle arc (EU4-style), with halo
 function drawArcText(ctx,text,cx,cy,fontPx,ls,bow,angle){
@@ -1094,7 +1346,7 @@ function computeLabelGroups(mode){
   for(let i=0;i<n;i++){const it=items[i];
     // Political: one label per realm across ALL its land (so a realm spanning landmasses
     // gets a single name that floats over the void between them). Other modes: contiguous pockets.
-    const key = (mode==="political") ? ("R:"+it.val) : find(i);
+    const key = (mode==="political"||mode==="tech") ? ("R:"+it.val) : find(i);
     let g=groups[key]; if(!g){g={val:it.val,sx:0,sy:0,sxx:0,syy:0,sxy:0,a:0,members:[]};groups[key]=g;}
     g.sx+=it.cx*it.area; g.sy+=it.cy*it.area; g.a+=it.area;
     g.sxx+=it.cx*it.cx*it.area; g.syy+=it.cy*it.cy*it.area; g.sxy+=it.cx*it.cy*it.area;
@@ -1120,7 +1372,7 @@ function computeLabelGroups(mode){
       }
     }
     let axisLen, minorLen;
-    if(mode==="political"){
+    if(mode==="political"||mode==="tech"){
       // realm names span their whole territory (and float over the void when it crosses landmasses)
       axisLen=Math.max(8,(uRmax+uLmax))*0.95;
       minorLen=Math.max(6,(vTmax+vBmax));
@@ -1795,8 +2047,9 @@ function drawFrame(){
   // lakes & rivers on top of land
   drawWater(ctx,s);
 
-  // realm-border overlay — Realms toggle, on any mapmode except political
-  if(state.mapmode!=="political" && state.realmOverlay) drawRealmBorders(ctx);
+  // realm-border overlay — Realms toggle, on any mapmode except political (always on for Tech Level,
+  // where realms share TL colours and need their boundaries + names to stay legible)
+  if(state.mapmode!=="political" && (state.realmOverlay || state.mapmode==="tech")) drawRealmBorders(ctx);
   // terrain-region outline overlay — Terrain toggle, on any mapmode except terrain
   if(state.mapmode!=="terrain" && state.terrainOverlay) drawTerrainBorders(ctx);
 
@@ -1854,7 +2107,7 @@ function drawFrame(){
 
   // realm / region names — fade out as we zoom in.
   // When a legend item is highlighted, only that value's region label is shown.
-  const _lf = (state.legendFilter && state.legendFilter.mode===state.mapmode) ? state.legendFilter : null;
+  const _lf = (state.legendFilter && state.legendFilter.mode===state.mapmode && state.mapmode!=="tech") ? state.legendFilter : null;   // tech spotlight is by TL, not realm id — keep realm names visible
   if(regionAlpha>0.02){
     ctx.globalAlpha=regionAlpha;
     for(const lg of _labelGroups){
@@ -2017,6 +2270,12 @@ function provinceFill(p){
       return catColor("resources",p.resource);
     }
     case "economy":return catColor("economies",economyOf(p));
+    case "tech":{
+      const r=world.realms.find(x=>x.id===p.realmId);
+      if(r) return tlColor(realmTL(r).avg);                 // realm land → coloured by its overall TL
+      if((p.population||0)>0) return tlColor(0);             // inhabited but not in a realm → assume TL0
+      return "#2b3348";                                     // uninhabited → neutral (assume nothing)
+    }
     case "monster":return catColor("terrains",p.terrain);                 // terrain backdrop for context
     case "military":return catColor("terrains",p.terrain);   // terrain backdrop + realm outlines; tokens on top
     case "imported":return p.importColor||"#39415e";
@@ -2100,6 +2359,7 @@ function autoLog(p,field,oldVal){
 function beginEdit(){ if(VIEWER)return; try{_undo.push(JSON.stringify(world));}catch(e){return;} if(_undo.length>30)_undo.shift(); _redo.length=0; }
 function restoreSnapshot(json){
   world=normalize(JSON.parse(json));
+  syncCompendiumToWorld();   // compendium is global — never reverted by map undo/redo
   state.selProvince=null; state.draft=null; _labelsDirty=true;
   rebuildGeo(); renderMap(); renderLeft();
   $("#inspector").innerHTML='<div class="empty">Select a province, realm, or continent to edit.</div>';
@@ -2749,6 +3009,8 @@ function onProvinceClick(p){
   if(convertSelectActive()||state.convertPickCenter){ if(convertAxis()){ convertHandleClick(p); return; } }
   // Regions map: editor toggles province membership in the active region; viewer opens the region it's in
   if(state.mapmode==="region"){ regionProvinceClick(p); return; }
+  // Tech map: click a realm to spotlight all realms of the same TL and open its breakdown
+  if(state.mapmode==="tech"){ if(p.realmId){ const rr=world.realms.find(x=>x.id===p.realmId); state.legendFilter={mode:"tech",value:Math.round(realmTL(rr).avg)}; selectRealm(p.realmId); renderMap(); } else selectProvince(p.id); return; }
   if(state.tool==="paint"){
     if(!paintReady()){flash(paintHint());return;}
     if(paintProvince(p)){ _labelsDirty=true; renderMap(); renderLeft(); markDirty(); }
@@ -2827,6 +3089,7 @@ function provinceMatchesLegend(p, value){
     case "race":       return has(p.race);
     case "language":   return has(p.language);
     case "economy":    return economyOf(p)===value;
+    case "tech":{ const rr=world.realms.find(x=>x.id===p.realmId); const tl = rr ? Math.round(realmTL(rr).avg) : ((p.population||0)>0?0:null); return tl!==null && tl===value; }
     default:           return true;
   }
 }
@@ -2860,6 +3123,7 @@ function selectProvince(id){
   const p=world.provinces.find(p=>p.id===id);
   if(p) state.focusedContinent=p.continentId;
   document.body.classList.add("has-sel");
+  hideTechPanel();
   renderMap();renderLeft();renderProvinceEditor();renderWonderPanel();
 }
 function selectRealm(id){
@@ -2872,13 +3136,13 @@ function selectReligion(name){
   if(state.selProvince) commitProvincePops(state.selProvince);
   state.selReligion=name;state.selProvince=null;state.selRealm=null;state.selWater=null;state.selLabel=null;state.selForce=null;state.selBattle=null;state.selMonster=null;
   document.body.classList.add("has-sel");
-  renderMap();renderReligionEditor();renderWonderPanel();
+  hideTechPanel();renderMap();renderReligionEditor();renderWonderPanel();
 }
 function selectContinent(id){
   if(state.selProvince) commitProvincePops(state.selProvince);
   state.focusedContinent=id;state.selProvince=null;state.selRealm=null;state.selReligion=null;state.selWater=null;state.selLabel=null;
   document.body.classList.add("has-sel");
-  renderMap();renderLeft();renderContinentEditor();renderWonderPanel();
+  hideTechPanel();renderMap();renderLeft();renderContinentEditor();renderWonderPanel();
 }
 function selectCustomLabel(id){
   if(state.selProvince) commitProvincePops(state.selProvince);
@@ -2893,12 +3157,12 @@ function clearSelection(){   // click on empty void: deselect and hide the inspe
   state.selRegion=null;
   document.body.classList.remove("has-sel");
   updateResSpot();
-  renderMap();renderLegend();renderWonderPanel();
+  hideTechPanel();renderMap();renderLegend();renderWonderPanel();
 }
 function selectForce(id){
   state.selForce=id;state.selBattle=null;state.selMonster=null;state.selProvince=null;state.selRealm=null;state.selReligion=null;state.selWater=null;state.selLabel=null;
   document.body.classList.add("has-sel");
-  renderMap();renderForceEditor();renderLegend();renderWonderPanel();
+  hideTechPanel();renderMap();renderForceEditor();renderLegend();renderWonderPanel();
 }
 function selectBattle(aId,bId){
   state.selBattle=[aId,bId];state.selForce=null;state.selMonster=null;state.moveMode=null;state.selProvince=null;state.selRealm=null;state.selReligion=null;state.selWater=null;state.selLabel=null;
@@ -2908,7 +3172,7 @@ function selectBattle(aId,bId){
 function selectMonster(id){
   state.selMonster=id;state.selForce=null;state.selBattle=null;state.selProvince=null;state.selRealm=null;state.selReligion=null;state.selWater=null;state.selLabel=null;
   document.body.classList.add("has-sel");
-  renderMap();renderMonsterEditor();renderLegend();renderWonderPanel();
+  hideTechPanel();renderMap();renderMonsterEditor();renderLegend();renderWonderPanel();
 }
 function renderLabelEditor(){
   const ins=$("#inspector"),lb=world.labels.find(x=>x.id===state.selLabel);
@@ -3091,11 +3355,13 @@ function renderForceView(){
       ${els||'<div class="note">None</div>'}
       <div class="sectionH">Command</div>
       <div class="rvBlock rvSociety">
-        ${leaderRow("Commander", f.commander, f.commander?`Strategy ${f.commander.strategy}, Leadership ${f.commander.leadership}`:"")}
+        ${(function(){ const ch=f.commanderCharId?characterById(f.commanderCharId):null; const stats=f.commander?`Strategy ${f.commander.strategy}, Leadership ${f.commander.leadership}`:"";
+          return ch ? row("Commander", `${compChip("character",ch.id,{label:ch.name,color:ch.color})} <span class="note">(${stats})</span>`) : leaderRow("Commander", f.commander, stats); })()}
         ${leaderRow("Intelligence Chief", f.intel, f.intel?`Intelligence Analysis ${f.intel.skill}`:"")}
         ${leaderRow("Quartermaster", f.quartermaster, f.quartermaster?`Administration ${f.quartermaster.skill}`:"")}
       </div>
     </div>`;
+  ins.querySelectorAll(".compChip").forEach(el=>el.onclick=()=>openCompendium(el.dataset.cat, el.dataset.val));
 }
 function renderForceEditor(){
   if(VIEWER)return renderForceView();
@@ -3135,7 +3401,9 @@ function renderForceEditor(){
     <div class="note">Split moves half the elements into a new force placed alongside. Leaders stay with this force; the detachment starts without a commander until you assign one.</div>`}
 
     <div class="sectionH">Commander (optional)</div>
-    <div class="field"><label>Name</label><input id="fcname" value="${esc(f.commander?.name||"")}" placeholder="—" ${ro?"disabled":""}/></div>
+    <div class="field"><label>Character <span class="note">(from the Compendium — a ruler can also command)</span></label>
+      <select id="fcchar" ${ro?"disabled":""}><option value="">— none / custom name —</option>${allCharacters().map(c=>`<option value="${c.id}" ${f.commanderCharId===c.id?"selected":""}>${esc(c.name)}${c.isRuler?" 👑":""}</option>`).join("")}<option value="__new">＋ New character…</option></select></div>
+    <div class="field"><label>Name ${f.commanderCharId?'<span class="note">(from character)</span>':""}</label><input id="fcname" value="${esc(f.commanderCharId?charName(f.commanderCharId):(f.commander?.name||""))}" placeholder="—" ${(ro||f.commanderCharId)?"disabled":""}/></div>
     <div class="field2">
       <div class="field"><label>Strategy</label><input id="fcstr" type="number" value="${f.commander?.strategy??12}" ${ro?"disabled":""}/></div>
       <div class="field"><label>Leadership</label><input id="fclead" type="number" value="${f.commander?.leadership??12}" ${ro?"disabled":""}/></div>
@@ -3163,7 +3431,14 @@ function renderForceEditor(){
   $("#fdel").addEventListener("click",()=>{ if(!confirm("Delete this force?"))return; beginEdit(); world.forces=world.forces.filter(x=>x.id!==f.id); state.selForce=null; state.moveMode=null; clearSelection(); ins.innerHTML='<div class="empty">Force deleted.</div>'; markDirty(); });
   f.commander=f.commander||{name:"",strategy:12,leadership:12};
   f.intel=f.intel||{name:"",skill:12}; f.quartermaster=f.quartermaster||{name:"",skill:12};
-  $("#fcname").addEventListener("input",e=>{f.commander.name=e.target.value;markDirty();});
+  { const cc=$("#fcchar"); if(cc)cc.onchange=()=>{
+      const v=cc.value;
+      if(v==="__new"){ const name=(prompt("New character name:")||"").trim(); if(name){ const ch=newCharacter({name,tags:["Commander"]}); allCharacters().push(ch); f.commanderCharId=ch.id; f.commander.name=ch.name; } markDirty(); renderForceEditor(); return; }
+      f.commanderCharId=v||"";
+      if(v){ const ch=characterById(v); if(ch){ f.commander.name=ch.name; if(!charHasTag(ch,"Commander")&&(world&&_compendium&&_compendium.charTags.includes("Commander")))ch.tags.push("Commander"); } }
+      markDirty(); renderForceEditor();
+    }; }
+  { const fn=$("#fcname"); if(fn)fn.addEventListener("input",e=>{ if(f.commanderCharId)return; f.commander.name=e.target.value;markDirty();}); }
   $("#fcstr").addEventListener("input",e=>{f.commander.strategy=+e.target.value||0;markDirty();});
   $("#fclead").addEventListener("input",e=>{f.commander.leadership=+e.target.value||0;markDirty();});
   $("#finame").addEventListener("input",e=>{f.intel.name=e.target.value;markDirty();});
@@ -3346,7 +3621,7 @@ function renderLeft(){
   else if(!shown){rl.innerHTML='<div class="note" style="padding:8px 10px">No realms match your search.</div>';}
   renderLegend();
 }
-const MODE_TITLES={political:"Political",provincemap:"Province Map",terrain:"Terrain",settlement:"Settlements",religion:"Religions",culture:"Cultures",race:"Races",language:"Languages",population:"Population",resource:"Resources",economy:"Modes of Production",monster:"Monsters",military:"Military",region:"Regions",imported:"Imported colors"};
+const MODE_TITLES={political:"Political",provincemap:"Province Map",terrain:"Terrain",settlement:"Settlements",religion:"Religions",culture:"Cultures",race:"Races",language:"Languages",population:"Population",resource:"Resources",economy:"Modes of Production",monster:"Monsters",military:"Military",region:"Regions",tech:"Tech Level",imported:"Imported colors"};
 function legendEntries(mode){           // [color, label, paintValue]
   const L=world.lists, e=[];
   if(mode==="political"){e.push(["#39415e","Unclaimed","__none__"]);world.realms.forEach(r=>e.push([r.color,r.name,r.id]));}
@@ -3374,7 +3649,7 @@ const PAINTABLE_MODES=["political","terrain","settlement","religion","culture","
 function buildMapLegend(){
   const box=$("#mapLegend"); if(!box)return;
   if(typeof world==="undefined" || !world || state.mapmode==="imported"){ box.classList.add("hidden"); return; }
-  if(state.mapmode==="monster" || state.mapmode==="military" || state.mapmode==="resource" || state.mapmode==="race" || state.mapmode==="region"){   // custom legends rendered right on the map
+  if(state.mapmode==="monster" || state.mapmode==="military" || state.mapmode==="resource" || state.mapmode==="race" || state.mapmode==="region" || state.mapmode==="tech"){   // custom legends rendered right on the map
     box.classList.remove("hidden");
     box.innerHTML=`<button class="mlHead">${esc(MODE_TITLES[state.mapmode]||"Legend")}</button><div class="mlList" id="mlCustomBody"></div>`;
     box.querySelector(".mlHead").onclick=()=>box.classList.toggle("open");
@@ -3383,6 +3658,7 @@ function buildMapLegend(){
     else if(state.mapmode==="military") renderForceLegend(body);
     else if(state.mapmode==="race") renderRaceLegend(body);
     else if(state.mapmode==="region") renderRegionLegend(body);
+    else if(state.mapmode==="tech") renderTechLegend(body);
     else renderResourceLegend(body);
     return;
   }
@@ -3724,6 +4000,10 @@ function showFeatureBubble(name, anchor, editable){
   if(editable){ const ta=b.querySelector(".fbDesc"); ta.addEventListener("input",e=>{meta.description=e.target.value;markDirty();}); ta.focus(); }
   setTimeout(()=>document.addEventListener("mousedown",_featBubbleOutside,true),0);
 }
+// A clickable Compendium chip (opens the relevant Compendium entry).
+function compChip(cat, val, opts){ opts=opts||{}; const label=opts.label!=null?opts.label:val;
+  const sw=opts.color?`<span class="rvDot" style="background:${opts.color}"></span>`:"";
+  return `<button class="rvChip compChip" data-cat="${esc(cat)}" data-val="${esc(String(val))}">${sw}${esc(label)}</button>`; }
 function renderRealmView(){
   const r=world.realms.find(x=>x.id===state.selRealm); const ins=$("#inspector");
   if(!r){ins.innerHTML='<div class="empty">No realm selected.</div>';return;}
@@ -3731,41 +4011,45 @@ function renderRealmView(){
   const pop=provs.reduce((a,p)=>a+(p.population||0),0);
   const cap=r.capitalId&&world.provinces.find(p=>p.id===r.capitalId);
   const admins=(r.adminCenters||[]).map(id=>world.provinces.find(p=>p.id===id)).filter(Boolean);
-  const leader=[r.leaderTitle,r.leaderName].filter(Boolean).join(" ");
+  const curReign=realmCurrentReign(r), curRuler=realmCurrentRuler(r);
+  const rulerChip = curRuler ? compChip("character", curRuler.id, {label:(curReign&&curReign.title?curReign.title+" ":"")+curRuler.name, color:curRuler.color}) : "—";
   const row=(l,v)=>`<div class="rvRow"><span class="rvLbl">${l}</span><span class="rvVal">${v||"—"}</span></div>`;
-  const raceTags=(arr)=>(arr&&arr.length)
-    ? arr.map(x=>`<span class="rvRace"><span class="sw" style="background:${raceGroupColor(x)}"></span>${esc(x)}</span>`).join("")
-    : `<span class="rvVal">—</span>`;
-  const chip=(v,cls)=>`<span class="rvChip ${cls||''}">${esc(v)}</span>`;
+  const raceTags=(arr)=>(arr&&arr.length) ? arr.map(x=>compChip("race",x,{color:raceGroupColor(x)})).join("") : `<span class="rvVal">—</span>`;
+  const powers=realmPowers(r);
   ins.innerHTML=`
-    <div class="realmCard" style="--rc:${r.color}">
-      <div class="realmName">${esc(r.name)}</div>
-      <div class="rvSub">${provs.length} provinces · ${pop.toLocaleString()} people</div>
-
-      <div class="rvBlock rvGov">
-        ${row("Government", r.government?chip(r.government):"—")}
-        ${row("Mode of Production", r.economy?chip(r.economy):"—")}
-        ${row("Current leader", leader?esc(leader):"—")}
+    <div class="realmCard realmView2" style="--rc:${r.color}">
+      <div class="realmName rvBig">${esc(r.name)}</div>
+      <div class="rvStatRow"><span class="rvStatPop">👥 ${pop.toLocaleString()}</span><span class="rvStatProv">🗺 ${provs.length} province${provs.length===1?"":"s"}</span></div>
+      <div class="rvCols">
+        <div class="rvColL">
+          <div class="rvBlock rvGov">
+            ${row("Government", r.government?compChip("government",r.government):"—")}
+            ${row("Mode of Production", r.economy?compChip("economy",r.economy,{color:catColor('economies',r.economy)}):"—")}
+            ${row("Current ruler", rulerChip)}
+          </div>
+          <div class="rvBlock rvSociety">
+            ${row("Religion", r.stateReligion?compChip("religion",r.stateReligion,{color:catColor('religions',r.stateReligion)}):"—")}
+            ${row("Culture", r.dominantCulture?compChip("culture",r.dominantCulture,{color:catColor('cultures',r.dominantCulture)}):"—")}
+            ${row("Language", r.dominantLanguage?compChip("language",r.dominantLanguage,{color:catColor('languages',r.dominantLanguage)}):"—")}
+          </div>
+          <div class="rvBlock rvRacial">
+            <div class="rvRow"><span class="rvLbl">Racial Admin</span><span class="rvVal rvRaces">${raceTags(r.adminRaces)}</span></div>
+            <div class="rvRow"><span class="rvLbl">Racial Mil.</span><span class="rvVal rvRaces">${raceTags(r.militaryRaces)}</span></div>
+          </div>
+          <div class="rvBlock rvPowers">
+            <div class="rvBlockH">✨ Powers</div>
+            <div class="rvPowerChips">${powers.length?powers.map(pw=>compChip("power",pw.id,{label:pw.name+(pw.type?` · ${pw.type}`:""),color:pw.color})).join(""):'<span class="rvVal">—</span>'}</div>
+          </div>
+          <div class="rvBlock rvGeo">
+            ${row("Capital", cap?`⭐ ${esc(cap.name)}`:"—")}
+            <div class="rvRow"><span class="rvLbl">Admin centres</span><span class="rvVal">${admins.length?admins.map(p=>`<span class="rvChip">◆ ${esc(p.name)}</span>`).join(""):"—"}</span></div>
+          </div>
+          ${r.description?`<div class="rvBlock rvDesc">${esc(r.description).replace(/\n/g,"<br>")}</div>`:""}
+        </div>
+        <div class="rvColR">
+          <div class="rvBlock rvTechBlock"><div class="rvBlockH">🔬 Tech Level</div>${techBreakdownBody(r,false)}</div>
+        </div>
       </div>
-
-      <div class="rvBlock rvSociety">
-        ${row("Religion", r.stateReligion?`<span class="rvDot" style="background:${catColor('religions',r.stateReligion)}"></span>${esc(r.stateReligion)}`:"—")}
-        ${row("Culture", r.dominantCulture?`<span class="rvDot" style="background:${catColor('cultures',r.dominantCulture)}"></span>${esc(r.dominantCulture)}`:"—")}
-        ${row("Language", r.dominantLanguage?`<span class="rvDot" style="background:${catColor('languages',r.dominantLanguage)}"></span>${esc(r.dominantLanguage)}`:"—")}
-      </div>
-
-      <div class="rvBlock rvRacial">
-        <div class="rvRow"><span class="rvLbl">Racial Admin</span><span class="rvVal rvRaces">${raceTags(r.adminRaces)}</span></div>
-        <div class="rvRow"><span class="rvLbl">Racial Mil.</span><span class="rvVal rvRaces">${raceTags(r.militaryRaces)}</span></div>
-      </div>
-
-      <div class="rvBlock rvGeo">
-        ${row("Capital", cap?`⭐ ${esc(cap.name)}`:"—")}
-        <div class="rvRow"><span class="rvLbl">Admin centres</span><span class="rvVal">${admins.length?admins.map(p=>`<span class="rvChip">◆ ${esc(p.name)}</span>`).join(""):"—"}</span></div>
-      </div>
-
-      ${r.description?`<div class="rvBlock rvDesc">${esc(r.description).replace(/\n/g,"<br>")}</div>`:""}
-
       <details class="rvProvinces">
         <summary>Provinces (${provs.length})</summary>
         <input id="rvProvSearch" class="rvSearch" type="text" placeholder="🔍 Search provinces…" autocomplete="off"/>
@@ -3773,10 +4057,328 @@ function renderRealmView(){
       </details>
     </div>
   `;
+  { const rt=$("#right"); if(rt)rt.classList.add("wideRealm"); }
+  ins.querySelectorAll(".compChip").forEach(el=>el.onclick=()=>openCompendium(el.dataset.cat, el.dataset.val));
   $$(".pvp").forEach(el=>el.onclick=()=>selectProvince(el.dataset.pid));
   const srch=$("#rvProvSearch");
   if(srch)srch.addEventListener("input",e=>{const q=e.target.value.trim().toLowerCase();
     $$("#rvProvList .pvp").forEach(el=>{ el.style.display = (!q||el.dataset.name.includes(q))?"flex":"none"; });});
+}
+
+/* ============================================================
+   COMPENDIUM — a manually-opened reference of powers, leaders,
+   religions, cultures, discoveries, etc. across the world.
+   Chips in the realm view open it focused on a given entry.
+   ============================================================ */
+function comp_realmNames(pred){ return world.realms.filter(pred).map(r=>r.name); }
+function comp_usedBlock(names){ return names.length?`<div class="cmpUsed"><span class="cmpUsedL">Realms</span> ${names.map(esc).join(", ")}</div>`:""; }
+function compendiumCats(){
+  const cats=[];
+  const subCount=(u)=>u.length?`${u.length} realm${u.length===1?"":"s"}`:"";
+  // Powers
+  cats.push({ cat:"power", label:"✨ Powers", entries:(world.powers||[]).map(pw=>{
+    const used=comp_realmNames(r=>realmHasPower(r,pw.id));
+    return { id:pw.id, name:pw.name, color:pw.color||"#7c5cff", sub:pw.type||"", used,
+      ref:`${pw.type?`<div class="cmpRow"><b>Type</b> ${esc(pw.type)}</div>`:""}${pw.origin?`<div class="cmpRow"><b>Origin</b> ${esc(pw.origin).replace(/\n/g,"<br>")}</div>`:""}`,
+      desc:pw.description };
+  }) });
+  // Discoveries
+  cats.push({ cat:"discovery", label:"🔬 Discoveries", entries:(world.discoveries||[]).map(d=>{
+    const mk=discoveryMaker(d), used=comp_realmNames(r=>realmHasDiscovery(r,d.id));
+    return { id:d.id, name:d.name, color:discoveryColor(d), sub:`${esc(d.field||"")} · TL${tlClamp(d.tl)}`, used,
+      ref:`<div class="cmpRow"><b>Field</b> ${esc(d.field||"—")} &nbsp; <b>TL</b> ${tlClamp(d.tl)}</div>${mk?`<div class="cmpRow"><b>Discovered by</b> ${esc(mk.name)}</div>`:""}`,
+      desc:d.description };
+  }) });
+  // Characters (people — rulers, commanders, other roles)
+  cats.push({ cat:"character", label:"👤 Characters", entries:allCharacters().map(c=>{
+    const roles=[]; if(c.isRuler)roles.push("Ruler"); charTagsOf(c).forEach(t=>roles.push(t));
+    return { id:c.id, name:c.name, color:c.color||"#c9a86f", sub:roles.join(" · "), used:[], ref:"", desc:c.description||"" };
+  }) });
+  // Realms (with their ruler timeline)
+  cats.push({ cat:"realm", label:"🏰 Realms", entries:(world.realms||[]).map(r=>{
+    const cur=realmCurrentRuler(r);
+    return { id:r.id, name:r.name, color:r.color, sub:cur?`Ruler: ${cur.name}`:"", used:[], ref:"", desc:"" };
+  }) });
+  // Religions
+  cats.push({ cat:"religion", label:"🕮 Religions", entries:(world.lists&&world.lists.religions||[]).map(n=>{
+    const meta=(world.religionInfo&&world.religionInfo[n])||{}, used=comp_realmNames(r=>r.stateReligion===n);
+    return { id:n, name:n, color:catColor("religions",n), sub:subCount(used), used, ref:"", desc:meta.description||"" };
+  }) });
+  // Cultures
+  cats.push({ cat:"culture", label:"🎭 Cultures", entries:(world.lists&&world.lists.cultures||[]).map(n=>{
+    const used=comp_realmNames(r=>r.dominantCulture===n);
+    return { id:n, name:n, color:catColor("cultures",n), sub:subCount(used), used, ref:"", desc:"" };
+  }) });
+  // Languages
+  cats.push({ cat:"language", label:"🗣 Languages", entries:(world.lists&&world.lists.languages||[]).map(n=>{
+    const used=comp_realmNames(r=>r.dominantLanguage===n);
+    return { id:n, name:n, color:catColor("languages",n), sub:subCount(used), used, ref:"", desc:"" };
+  }) });
+  // Governments
+  cats.push({ cat:"government", label:"🏛 Governments", entries:Array.from(new Set(world.realms.map(r=>r.government).filter(Boolean))).map(n=>{
+    const used=comp_realmNames(r=>r.government===n);
+    return { id:n, name:n, color:"#7c8698", sub:subCount(used), used, ref:"", desc:"" };
+  }) });
+  // Modes of production
+  cats.push({ cat:"economy", label:"⚒ Modes of Production", entries:Array.from(new Set(world.realms.map(r=>r.economy).filter(Boolean))).map(n=>{
+    const used=comp_realmNames(r=>r.economy===n);
+    return { id:n, name:n, color:catColor("economies",n), sub:subCount(used), used, ref:"", desc:"" };
+  }) });
+  // Races
+  cats.push({ cat:"race", label:"🧬 Races", entries:(world.lists&&world.lists.races||[]).map(n=>{
+    const used=comp_realmNames(r=>(r.adminRaces||[]).includes(n)||(r.militaryRaces||[]).includes(n));
+    return { id:n, name:n, color:raceGroupColor(n), sub:subCount(used), used, ref:"", desc:"" };
+  }) });
+  return cats.filter(c=>c.entries.length);
+}
+// resolve the underlying object whose canonical description is edited (or null → lore-only)
+function compTargetObj(cat,id){
+  if(cat==="power")return (world.powers||[]).find(x=>x.id===id)||null;
+  if(cat==="discovery")return (world.discoveries||[]).find(x=>x.id===id)||null;
+  if(cat==="religion")return religionMeta(id);
+  if(cat==="character")return characterById(id);
+  return null;
+}
+let _compState={cat:null,val:null,open:null};
+function compEntryFind(cat,id){ const cats=compendiumCats(); const c=cats.find(x=>x.cat===cat); if(!c)return null; return c.entries.find(e=>String(e.id)===String(id))||null; }
+function compLoreKey(cat,id){ return cat+"::"+id; }
+function compLore(cat,id){ ensureCompendium(world); const e=_compendium.lore[compLoreKey(cat,id)]; return (e&&typeof e.lore==="string")?e.lore:""; }
+function setCompLore(cat,id,text){ ensureCompendium(world); const k=compLoreKey(cat,id); const t=(text||"").replace(/\s+$/,""); if(t){ _compendium.lore[k]=_compendium.lore[k]||{}; _compendium.lore[k].lore=text; } else if(_compendium.lore[k]){ delete _compendium.lore[k]; } markDirty(); }
+function openCompendium(focusCat, focusVal){
+  const cats=compendiumCats();
+  if(!cats.length){ openModal(`<div class="cmpWrap"><div class="cmpHead"><span class="cmpTitle">📖 Compendium</span><button class="btn ghost" onclick="closeModal()">✕</button></div><div class="note" style="padding:20px">Nothing recorded yet — add powers, discoveries, leaders and more, then check back.</div></div>`); return; }
+  // pick active category
+  let active=cats.find(c=>c.cat===focusCat)||cats[0];
+  _compState={cat:active.cat, val:focusVal||null, open:null};
+  // a chip click (focusVal) jumps straight to that entry's full page
+  if(focusVal!=null && active.entries.some(e=>String(e.id)===String(focusVal))) _compState.open=String(focusVal);
+  const tabs=cats.map(c=>`<button class="cmpTab${c.cat===active.cat?" on":""}" data-cat="${c.cat}">${c.label} <span class="cmpN">${c.entries.length}</span></button>`).join("");
+  openModal(`<div class="cmpWrap">
+    <div class="cmpHead"><span class="cmpTitle">📖 Compendium</span><input id="cmpSearch" class="txt" placeholder="🔍 Search…" autocomplete="off"/><button class="btn ghost" onclick="closeModal()">✕</button></div>
+    <div class="cmpBody"><div class="cmpTabs" id="cmpTabs">${tabs}</div><div class="cmpMain" id="cmpMain"></div></div>
+  </div>`);
+  $$("#cmpTabs .cmpTab").forEach(b=>b.onclick=()=>{ _compState={cat:b.dataset.cat,val:null,open:null}; renderCompMain(); $$("#cmpTabs .cmpTab").forEach(x=>x.classList.toggle("on",x.dataset.cat===b.dataset.cat)); });
+  const s=$("#cmpSearch"); if(s)s.addEventListener("input",renderCompMain);
+  renderCompMain();
+}
+function renderCompMain(){
+  const wrap=$(".cmpWrap"); const main=$("#cmpMain"); if(!main)return;
+  const editable=!VIEWER;
+  // ---- DETAIL PAGE ----
+  if(_compState.open!=null){
+    if(wrap)wrap.classList.add("cmpDetailMode");
+    const e=compEntryFind(_compState.cat,_compState.open);
+    main.innerHTML=renderCompDetail(_compState.cat,e,editable);
+    const back=$("#cmpBack"); if(back)back.onclick=()=>{ _compState.open=null; renderCompMain(); };
+    main.querySelectorAll(".cmpProvLink").forEach(el=>el.onclick=()=>{ const p=world.provinces.find(x=>x.id===el.dataset.pid); if(p){ closeModal(); zoomToProvince(p); selectProvince(p.id); } });
+    main.querySelectorAll(".cmpWonderLink").forEach(el=>el.onclick=()=>{ const w=(world.wonders||[]).find(x=>x.id===el.dataset.wid); if(w&&w.provinceId){ const p=world.provinces.find(x=>x.id===w.provinceId); if(p){ closeModal(); zoomToProvince(p); selectProvince(p.id); } } });
+    main.querySelectorAll(".cmpRealmLink").forEach(el=>el.onclick=()=>{ const r=world.realms.find(x=>x.id===el.dataset.rid); if(r){ closeModal(); selectRealm(r.id); } });
+    main.querySelectorAll(".cmpForceLink").forEach(el=>el.onclick=()=>{ const f=(world.forces||[]).find(x=>x.id===el.dataset.fid); if(f){ closeModal(); if(typeof selectForce==="function")selectForce(f.id); } });
+    // cross-reference: jump to another compendium entry's page
+    main.querySelectorAll(".cmpXref").forEach(el=>el.onclick=()=>{ const cat=el.dataset.cat; _compState={cat,val:null,open:el.dataset.id}; $$("#cmpTabs .cmpTab").forEach(x=>x.classList.toggle("on",x.dataset.cat===cat)); renderCompMain(); });
+    if(editable){
+      const obj=compTargetObj(_compState.cat,_compState.open);
+      // structured field inputs (bound to the underlying object)
+      main.querySelectorAll(".cmpFld").forEach(el=>{
+        if(!obj)return; const k=el.dataset.k;
+        el.value = (el.type==="color") ? toHex(obj[k]||"#7c5cff") : (obj[k]!=null?obj[k]:"");
+        el.addEventListener("input",()=>{ let v=el.value; if(k==="tl")v=tlClamp(v); obj[k]=v; markDirty(); if(el.dataset.live)renderCompDetailHeader(); });
+        el.addEventListener("change",()=>{ if(el.dataset.reload)renderCompMain(); });
+      });
+      // universal lore article
+      const lore=main.querySelector(".cmpLoreEdit");
+      if(lore){ lore.value=compLore(_compState.cat,_compState.open); lore.addEventListener("input",()=>setCompLore(_compState.cat,_compState.open,lore.value)); }
+      if(_compState.cat==="character")wireCharacterEdit(main,_compState.open);
+      if(_compState.cat==="realm")wireRealmRulerEdit(main,_compState.open);
+    }
+    main.scrollTop=0;
+    return;
+  }
+  // ---- LIST ----
+  if(wrap)wrap.classList.remove("cmpDetailMode");
+  const cats=compendiumCats(); const c=cats.find(x=>x.cat===_compState.cat)||cats[0]; if(!c)return;
+  const q=($("#cmpSearch")?.value||"").trim().toLowerCase();
+  const list=c.entries.filter(e=>!q||(e.name||"").toLowerCase().includes(q)||(e.sub||"").toLowerCase().includes(q));
+  const addBtn = (editable && c.cat==="character") ? `<button class="btn primary cmpAddNew" id="cmpAddChar" style="margin-bottom:10px">＋ New character</button>` : "";
+  main.innerHTML=addBtn+(list.length?list.map(e=>`
+    <div class="cmpEntry" data-id="${esc(String(e.id))}" tabindex="0">
+      <div class="cmpEntryH"><span class="rvDot" style="background:${e.color||"#7c8698"}"></span><span class="cmpEntryName">${esc(e.name||"—")}</span>${e.sub?`<span class="cmpEntrySub">${esc(e.sub)}</span>`:""}<span class="cmpEntryGo">›</span></div>
+    </div>`).join(""):'<div class="note" style="padding:20px">Nothing here yet.</div>');
+  main.querySelectorAll(".cmpEntry").forEach(el=>el.onclick=()=>{ _compState.open=el.dataset.id; renderCompMain(); });
+  const addC=main.querySelector("#cmpAddChar"); if(addC)addC.onclick=()=>{ const ch=newCharacter({name:"New Character"}); allCharacters().push(ch); markDirty(); _compState.open=ch.id; renderCompMain(); };
+}
+// Character page wiring (ruler toggle + role tags)
+function wireCharacterEdit(main, id){
+  const c=characterById(id); if(!c)return;
+  const rul=main.querySelector("#chIsRuler"); if(rul){ rul.checked=!!c.isRuler; rul.addEventListener("change",()=>{ c.isRuler=rul.checked; markDirty(); renderCompMain(); }); }
+  main.querySelectorAll(".chTagX").forEach(el=>el.onclick=()=>{ toggleCharTag(c,el.dataset.tag); renderCompMain(); });
+  const addSel=main.querySelector("#chTagAdd"); if(addSel)addSel.onchange=()=>{ const v=addSel.value; if(v){ if(!charHasTag(c,v))c.tags.push(v); markDirty(); renderCompMain(); } };
+  const newT=main.querySelector("#chNewTag"); if(newT)newT.addEventListener("keydown",ev=>{ if(ev.key==="Enter"){ ev.preventDefault(); const v=newT.value.trim(); if(v){ const tags=allCharTags(); if(!tags.includes(v))tags.push(v); if(!charHasTag(c,v))c.tags.push(v); markDirty(); renderCompMain(); } } });
+  const del=main.querySelector("#chDelete"); if(del)del.onclick=()=>{ if(!confirm("Delete this character? They'll be removed from any realm timelines and army commands."))return;
+    _compendium.characters=_compendium.characters.filter(x=>x.id!==id);
+    Object.keys(_compendium.realmRulers).forEach(rid=>{ _compendium.realmRulers[rid]=_compendium.realmRulers[rid].filter(rg=>rg.charId!==id); });
+    (world.forces||[]).forEach(f=>{ if(f.commanderCharId===id)f.commanderCharId=""; });
+    markDirty(); _compState.open=null; renderCompMain(); };
+}
+// Realm page wiring (ruler timeline editor)
+function wireRealmRulerEdit(main, id){
+  const r=world.realms.find(x=>x.id===id); if(!r)return; const rulers=realmRulers(r);
+  const rr=()=>renderCompMain();
+  main.querySelectorAll(".rulerChar").forEach(el=>el.addEventListener("change",()=>{ rulers[+el.dataset.i].charId=el.value; markDirty(); rr(); }));
+  main.querySelectorAll(".rulerTitle").forEach(el=>el.addEventListener("input",()=>{ rulers[+el.dataset.i].title=el.value; markDirty(); }));
+  main.querySelectorAll(".rulerFrom").forEach(el=>el.addEventListener("input",()=>{ rulers[+el.dataset.i].from=el.value; markDirty(); }));
+  main.querySelectorAll(".rulerTo").forEach(el=>el.addEventListener("input",()=>{ rulers[+el.dataset.i].to=el.value; markDirty(); }));
+  main.querySelectorAll(".rulerNote").forEach(el=>el.addEventListener("input",()=>{ rulers[+el.dataset.i].note=el.value; markDirty(); }));
+  main.querySelectorAll(".rulerDel").forEach(el=>el.onclick=()=>{ rulers.splice(+el.dataset.i,1); markDirty(); rr(); });
+  main.querySelectorAll(".rulerUp").forEach(el=>el.onclick=()=>{ const i=+el.dataset.i; if(i>0){ const t=rulers[i-1]; rulers[i-1]=rulers[i]; rulers[i]=t; markDirty(); rr(); } });
+  main.querySelectorAll(".rulerDn").forEach(el=>el.onclick=()=>{ const i=+el.dataset.i; if(i<rulers.length-1){ const t=rulers[i+1]; rulers[i+1]=rulers[i]; rulers[i]=t; markDirty(); rr(); } });
+  const add=main.querySelector("#rulerAdd"); if(add)add.onclick=()=>{ const first=allCharacters().find(c=>c.isRuler); rulers.push({charId:first?first.id:"",title:"",from:"",to:"",note:""}); markDirty(); rr(); };
+  const nc=main.querySelector("#rulerNewChar"); if(nc)nc.onclick=()=>{ const name=(prompt("New ruler character name:")||"").trim(); if(!name)return; const ch=newCharacter({name,isRuler:true}); allCharacters().push(ch); rulers.push({charId:ch.id,title:"",from:"",to:"",note:""}); markDirty(); rr(); };
+}
+// live-update just the detail header name/color while typing (no full re-render → keeps focus)
+function renderCompDetailHeader(){
+  const e=compEntryFind(_compState.cat,_compState.open); if(!e)return;
+  const nm=$("#cmpMain .cmpDetName"); if(nm)nm.textContent=e.name||"—";
+  const dot=$("#cmpMain .cmpDetHead .rvDot"); if(dot)dot.style.background=e.color||"#7c8698";
+}
+// editable structured fields per category (editor only)
+function compEditFields(cat, e){
+  if(cat==="power")return `<div class="cmpEditGrid">
+      <label class="cmpF"><span>Name</span><input class="txt cmpFld" data-k="name" data-live="1"/></label>
+      <label class="cmpF"><span>Type</span><input class="txt cmpFld" data-k="type"/></label>
+      <label class="cmpF"><span>Colour</span><input type="color" class="cmpFld" data-k="color" data-live="1"/></label>
+      <label class="cmpF cmpFWide"><span>Origin (where &amp; how it began)</span><textarea class="txt cmpFld" data-k="origin" rows="3"></textarea></label>
+      <label class="cmpF cmpFWide"><span>Description</span><textarea class="txt cmpFld" data-k="description" rows="4"></textarea></label>
+    </div>`;
+  if(cat==="discovery")return `<div class="cmpEditGrid">
+      <label class="cmpF"><span>Name</span><input class="txt cmpFld" data-k="name" data-live="1"/></label>
+      <label class="cmpF"><span>TL</span><input type="number" min="0" max="12" class="txt cmpFld" data-k="tl" data-reload="1"/></label>
+      <label class="cmpF cmpFWide"><span>Description</span><textarea class="txt cmpFld" data-k="description" rows="4"></textarea></label>
+    </div>`;
+  if(cat==="religion")return `<div class="cmpEditGrid">
+      <label class="cmpF cmpFWide"><span>Description</span><textarea class="txt cmpFld" data-k="description" rows="5"></textarea></label>
+    </div>`;
+  return "";
+}
+// ---- Character page (rulers/commanders/etc.) ----
+function renderCharacterPage(e, editable){
+  const c=characterById(e.id); if(!c)return '<div class="cmpDetail"><button class="btn ghost cmpBack" id="cmpBack">← Compendium</button><div class="note" style="padding:20px">Not found.</div></div>';
+  const tags=charTagsOf(c);
+  const roles=[]; if(c.isRuler)roles.push("👑 Ruler"); tags.forEach(t=>roles.push(t));
+  const reigns=charRealmReigns(c.id), forces=charForces(c.id);
+  const reignRows = reigns.length ? reigns.map(({realm,reign})=>`<div class="li cmpXref" data-cat="realm" data-id="${realm.id}" style="cursor:pointer">🏰 <b>${esc(realm.name)}</b>${reign.title?` — ${esc(reign.title)}`:""}${(reign.from||reign.to)?` <span class="note">(${esc(reign.from||"?")}–${esc(reign.to||"present")})</span>`:""}</div>`).join("") : '<div class="note">Not recorded as a ruler of any realm.</div>';
+  const forceRows = forces.length ? forces.map(f=>{ const r=world.realms.find(x=>x.id===f.realmId); return `<div class="li cmpForceLink" data-fid="${f.id}" style="cursor:pointer">⚔ <b>${esc(f.name)}</b>${r?` <span class="note">— ${esc(r.name)}</span>`:""}</div>`; }).join("") : '<div class="note">Not commanding any army.</div>';
+  let body;
+  if(editable){
+    const tagChips = tags.length?tags.map(t=>`<span class="tag">${esc(t)} <span class="x chTagX" data-tag="${esc(t)}">✕</span></span>`).join(""):'<span class="note">No role tags yet.</span>';
+    const tagOpts = allCharTags().filter(t=>!tags.includes(t)).map(t=>`<option value="${esc(t)}">${esc(t)}</option>`).join("");
+    body=`<div class="cmpEditGrid">
+        <label class="cmpF"><span>Name</span><input class="txt cmpFld" data-k="name" data-live="1"/></label>
+        <label class="cmpF"><span>Colour</span><input type="color" class="cmpFld" data-k="color" data-live="1"/></label>
+        <label class="cmpF cmpFWide cmpCheck"><input type="checkbox" id="chIsRuler"/> <span>Is a ruler <span class="note">(can be placed on realm reign timelines)</span></span></label>
+        <label class="cmpF cmpFWide"><span>Description</span><textarea class="txt cmpFld" data-k="description" rows="5"></textarea></label>
+      </div>
+      <div class="cmpSecH">🏷 Role tags <span class="note">(Commander, Diplomat, …)</span></div>
+      <div class="cmpTagChips" id="chTags">${tagChips}</div>
+      <div class="cmpTagAddRow"><select id="chTagAdd"><option value="">＋ add role tag…</option>${tagOpts}</select><input id="chNewTag" class="txt" placeholder="or type a new role + Enter"/></div>`;
+  } else {
+    body=c.description?`<div class="cmpDesc">${esc(c.description).replace(/\n/g,"<br>")}</div>`:'<span class="note">No description yet.</span>';
+  }
+  return `<div class="cmpDetail">
+    <button class="btn ghost cmpBack" id="cmpBack">← Compendium</button>
+    <div class="cmpDetHead"><span class="rvDot" style="background:${c.color};width:20px;height:20px"></span><span class="cmpDetName">${esc(c.name)}</span></div>
+    <div class="cmpDetSub">${roles.length?roles.map(esc).join(" · "):"Character"}</div>
+    <div class="cmpDetBody">${body}
+      <div class="cmpSecH">👑 Reigns</div><div class="list">${reignRows}</div>
+      <div class="cmpSecH">⚔ Commands</div><div class="list">${forceRows}</div>
+      ${editable?'<div style="margin-top:16px"><button class="btn danger" id="chDelete">🗑 Delete character</button></div>':""}
+    </div>
+  </div>`;
+}
+// ---- Realm page (ruler timeline) ----
+function renderRealmPage(e, editable){
+  const r=world.realms.find(x=>x.id===e.id); if(!r)return '<div class="cmpDetail"><button class="btn ghost cmpBack" id="cmpBack">← Compendium</button><div class="note" style="padding:20px">Not found.</div></div>';
+  const rulers=realmRulers(r);
+  const cur=realmCurrentRuler(r);
+  let timeline;
+  if(editable){
+    const opts=(sel)=>`<option value="">— pick a ruler —</option>`+allCharacters().filter(c=>c.isRuler).map(c=>`<option value="${c.id}" ${c.id===sel?"selected":""}>${esc(c.name)}</option>`).join("");
+    timeline = (rulers.length?rulers.map((rg,i)=>`
+      <div class="rulerRow" data-i="${i}">
+        <div class="rulerRowTop"><span class="rulerOrd">${i+1}</span>
+          <select class="rulerChar" data-i="${i}">${opts(rg.charId)}</select>
+          <button class="btn tiny rulerUp" data-i="${i}" title="Earlier">▲</button>
+          <button class="btn tiny rulerDn" data-i="${i}" title="Later">▼</button>
+          <button class="btn tiny danger rulerDel" data-i="${i}" title="Remove">✕</button></div>
+        <div class="rulerRowFields">
+          <input class="rulerTitle" data-i="${i}" placeholder="Title (e.g. King)" value="${esc(rg.title||"")}"/>
+          <input class="rulerFrom" data-i="${i}" placeholder="From" value="${esc(rg.from||"")}"/>
+          <input class="rulerTo" data-i="${i}" placeholder="To" value="${esc(rg.to||"")}"/></div>
+        <textarea class="rulerNote" data-i="${i}" rows="2" placeholder="Short description of this reign…">${esc(rg.note||"")}</textarea>
+      </div>`).join(""):'<div class="note">No rulers yet — add the first below.</div>')
+      + `<div class="rulerAddRow"><button class="btn tiny" id="rulerAdd">＋ Add reign</button><button class="btn tiny" id="rulerNewChar">＋ New ruler character</button></div>
+         <div class="note">Order runs earliest → latest; the last entry is the realm's current ruler.</div>`;
+  } else {
+    timeline = rulers.length?rulers.map((rg,i)=>{ const c=characterById(rg.charId); return `
+      <div class="rulerViewRow cmpXref" data-cat="character" data-id="${esc(rg.charId)}" style="cursor:pointer">
+        <span class="rulerOrd">${i+1}</span>
+        <div class="rulerViewMain"><span class="rulerViewName">${c?esc(c.name):"(unknown)"}</span>${rg.title?` <span class="rulerViewTitle">${esc(rg.title)}</span>`:""}${(rg.from||rg.to)?`<span class="note"> (${esc(rg.from||"?")}–${esc(rg.to||"present")})</span>`:""}${i===rulers.length-1?' <span class="rulerCurrent">current</span>':""}${rg.note?`<div class="rulerViewNote">${esc(rg.note).replace(/\n/g,"<br>")}</div>`:""}</div>
+      </div>`; }).join("") : '<div class="note">No rulers recorded.</div>';
+  }
+  const lore=compLore("realm", r.id);
+  const loreBlock = editable
+    ? `<div class="cmpSecH">📜 Compendium article</div><textarea class="cmpLoreEdit" rows="7" placeholder="Write about ${esc(r.name)}…"></textarea>`
+    : (lore?`<div class="cmpSecH">📜 About</div><div class="cmpLoreView">${esc(lore).replace(/\n/g,"<br>")}</div>`:"");
+  return `<div class="cmpDetail">
+    <button class="btn ghost cmpBack" id="cmpBack">← Compendium</button>
+    <div class="cmpDetHead"><span class="rvDot" style="background:${r.color};width:20px;height:20px"></span><span class="cmpDetName">${esc(r.name)}</span></div>
+    <div class="cmpDetSub">${cur?`Current ruler: ${esc(cur.name)}`:"No current ruler"} · <span class="li cmpRealmLink" data-rid="${r.id}" style="display:inline;cursor:pointer;padding:0">🗺 open on map</span></div>
+    <div class="cmpDetBody">
+      <div class="cmpSecH">👑 Rulers timeline</div>
+      <div class="rulerTimeline">${timeline}</div>
+      ${loreBlock}
+    </div>
+  </div>`;
+}
+// A full "page" for a single compendium entry, with a Back button to the list.
+function renderCompDetail(cat, e, editable){
+  if(!e) return '<div class="cmpDetail"><button class="btn ghost cmpBack" id="cmpBack">← Compendium</button><div class="note" style="padding:20px">Not found.</div></div>';
+  if(cat==="character")return renderCharacterPage(e, editable);
+  if(cat==="realm")return renderRealmPage(e, editable);
+  const used=e.used||[];
+  const usedBlock=used.length?`<div class="cmpUsed"><span class="cmpUsedL">Realms</span> ${used.map(esc).join(", ")}</div>`:"";
+  let extra="";
+  if(cat==="religion"){
+    const holyP=holySiteProvincesOf(e.id), holyW=holyWondersOf(e.id);
+    extra=`<div class="cmpSecH">⛪ Holy sites (${holyP.length})</div>
+      <div class="list">${holyP.length?holyP.map(p=>`<div class="li cmpProvLink" data-pid="${p.id}" style="cursor:pointer">⛪ ${esc(p.name)}</div>`).join(""):'<div class="note">None</div>'}</div>
+      <div class="cmpSecH">🏛️ Holy wonders (${holyW.length})</div>
+      <div class="list">${holyW.length?holyW.map(w=>`<div class="li cmpWonderLink" data-wid="${w.id}" style="cursor:pointer">🏛️ ${esc(w.name)}</div>`).join(""):'<div class="note">None</div>'}</div>`;
+  }
+  let bodyHTML;
+  if(editable){
+    const editFields=compEditFields(cat,e);
+    const canDesc=(cat==="power"||cat==="discovery"||cat==="religion");   // desc lives on the object, edited in editFields
+    const loreSection = canDesc ? "" : `<div class="cmpSecH">📜 Compendium article</div>
+      <textarea class="cmpLoreEdit" rows="9" placeholder="Write the encyclopedia article for ${esc(e.name)}…"></textarea>`;
+    bodyHTML=`${e.ref?`<div class="cmpRefBox">${e.ref}</div>`:""}
+      ${editFields}
+      ${loreSection}
+      ${usedBlock}`;
+  } else {
+    const lore=compLore(cat,e.id);
+    const descHTML=e.desc?`<div class="cmpDesc">${esc(e.desc).replace(/\n/g,"<br>")}</div>`:"";
+    const loreHTML=lore?`<div class="cmpSecH">📜 About</div><div class="cmpLoreView">${esc(lore).replace(/\n/g,"<br>")}</div>`:"";
+    const hasAny=e.ref||descHTML||loreHTML||usedBlock;
+    bodyHTML=hasAny?`${e.ref||""}${descHTML}${loreHTML}${usedBlock}`:'<span class="note">No details recorded yet.</span>';
+  }
+  return `<div class="cmpDetail">
+    <button class="btn ghost cmpBack" id="cmpBack">← Compendium</button>
+    <div class="cmpDetHead"><span class="rvDot" style="background:${e.color||'#7c8698'};width:20px;height:20px"></span><span class="cmpDetName">${esc(e.name||'—')}</span></div>
+    ${e.sub?`<div class="cmpDetSub">${e.sub}</div>`:""}
+    <div class="cmpDetBody">${bodyHTML}</div>
+    ${extra}
+  </div>`;
 }
 function renderContinentView(){
   const c=world.continents.find(x=>x.id===state.focusedContinent); const ins=$("#inspector");
@@ -4108,6 +4710,7 @@ function provPopWeight(p,r){
 }
 function renderRealmEditor(){
   if(VIEWER)return renderRealmView();
+  { const rt=$("#right"); if(rt)rt.classList.remove("wideRealm"); }
   const r=world.realms.find(r=>r.id===state.selRealm);
   const ins=$("#inspector");
   if(!r){ins.innerHTML='<div class="empty">No realm selected.</div>';return;}
@@ -4139,12 +4742,19 @@ function renderRealmEditor(){
         <div id="rmilRaces" class="raceMulti"></div>
         <select id="rmilSelRace"><option value="">＋ add race…</option>${world.lists.races.map(x=>`<option>${esc(x)}</option>`).join("")}</select></div>
     </div>
+    <div class="sectionH">👑 Ruler</div>
     <div class="field2">
-      <div class="field"><label>Leader title</label><input id="rltitle" value="${esc(r.leaderTitle||"")}"/></div>
-      <div class="field"><label>Leader name</label><input id="rlname" value="${esc(r.leaderName||"")}"/></div>
+      <div class="field"><label>Current ruler <span class="note">(a Compendium character)</span></label>
+        <select id="rRuler"><option value="">— none —</option>${allCharacters().filter(c=>c.isRuler).map(c=>`<option value="${c.id}" ${realmCurrentReign(r)&&realmCurrentReign(r).charId===c.id?"selected":""}>${esc(c.name)}</option>`).join("")}<option value="__new">＋ New ruler character…</option></select></div>
+      <div class="field" style="display:flex;align-items:flex-end"><button class="btn" id="rRulerTimeline" title="Edit the full succession timeline in the Compendium">🕑 Ruler timeline…</button></div>
     </div>
+    <div class="note" style="margin:-2px 0 6px">${(function(){const cur=realmCurrentReign(r); if(!cur)return "No current ruler set."; const c=characterById(cur.charId); return "Current: "+(c?esc(c.name):"(unknown)")+(cur.title?` — ${esc(cur.title)}`:"")+". Full succession &amp; dates in the Compendium.";})()}</div>
     <div class="field"><label>Description <span class="note">(shown in the viewer, below Capital/Admin)</span></label><textarea id="rdesc" rows="3">${esc(r.description||"")}</textarea></div>
     <div class="field"><label>Notes <span class="note">(private — not shown in the viewer)</span></label><textarea id="rnote">${esc(r.note||"")}</textarea></div>
+
+    <div class="sectionH">✨ Powers</div>
+    <div class="raceMulti" id="rPowerChips">${realmPowers(r).map(pw=>`<span class="tag" style="border-color:${pw.color}"><span class="swatch" style="background:${pw.color}"></span>${esc(pw.name)}${pw.type?` <span class="note">(${esc(pw.type)})</span>`:""} <span class="x" data-pid="${pw.id}">✕</span></span>`).join("")||'<span class="note">None — add powers below (define them in the GM Screen).</span>'}</div>
+    <select id="rPowerAdd" style="margin-top:4px"><option value="">＋ add a power…</option>${(world.powers||[]).filter(pw=>!realmHasPower(r,pw.id)).map(pw=>`<option value="${pw.id}">${esc(pw.name)}${pw.type?` (${esc(pw.type)})`:""}</option>`).join("")}</select>
 
     <div class="sectionH">Population</div>
     <div class="field2">
@@ -4211,9 +4821,22 @@ function renderRealmEditor(){
   const b=(id,fn)=>{const e=$("#"+id); if(e)e.addEventListener("input",ev=>{fn(ev.target.value);renderMap();renderLeft();markDirty();});};
   $("#rname").addEventListener("input",e=>{r.name=e.target.value;renderLeft();renderMap();markDirty();});
   $("#rcolor").addEventListener("input",e=>{r.color=e.target.value;renderMap();renderLeft();markDirty();});
+  { const s=$("#rPowerAdd"); if(s)s.onchange=()=>{ if(s.value){ toggleRealmPower(r,s.value); renderRealmEditor(); } }; }
+  $$("#rPowerChips .x[data-pid]").forEach(x=>x.onclick=()=>{ toggleRealmPower(r,x.dataset.pid); renderRealmEditor(); });
+  wireTechRealmUI(r,true);
   b("rgov",v=>r.government=v);b("recon",v=>r.economy=v);b("rrel",v=>r.stateReligion=v);
   b("rcul",v=>r.dominantCulture=v);b("rlang",v=>r.dominantLanguage=v);
-  b("rltitle",v=>r.leaderTitle=v);b("rlname",v=>r.leaderName=v);
+  // Ruler: set the current ruler (appends a reign so they become current) or open the full timeline
+  { const sel=$("#rRuler"); if(sel)sel.onchange=()=>{
+      const v=sel.value; const rulers=realmRulers(r);
+      if(v==="__new"){ const name=(prompt("New ruler character name:")||"").trim(); if(name){ const ch=newCharacter({name,isRuler:true}); allCharacters().push(ch); rulers.push({charId:ch.id,title:"",from:"",to:"",note:""}); markDirty(); } renderRealmEditor(); renderMap(); return; }
+      if(!v){ /* leave timeline intact; just note no change */ renderRealmEditor(); return; }
+      const cur=rulers[rulers.length-1];
+      if(!cur){ rulers.push({charId:v,title:"",from:"",to:"",note:""}); }
+      else if(cur.charId!==v){ rulers.push({charId:v,title:"",from:"",to:"",note:""}); }   // new succession entry → becomes current
+      markDirty(); renderRealmEditor(); renderMap();
+    }; }
+  { const b2=$("#rRulerTimeline"); if(b2)b2.onclick=()=>openCompendium("realm", r.id); }
   // multi-race pickers: Racial Administration (keeps dominantRace in sync) + Racial Military
   const renderRaceMulti=(key,listId)=>{
     const wrap=$("#"+listId); if(!wrap)return; const arr=r[key]||(r[key]=[]);
@@ -4659,13 +5282,14 @@ function setupMapInteraction(){
     if(ev.key==="o"||ev.key==="O"){setMapmode("monster");return;}
     if(ev.key==="p"||ev.key==="P"){setMapmode("military");return;}
     if(ev.key==="r"||ev.key==="R"){setMapmode("region");return;}
+    if(ev.key==="t"||ev.key==="T"){setMapmode("tech");return;}
     if(ev.key==="v")setTool("select");
     if(ev.key==="d")setTool("draw");
     if(ev.key==="b")setTool("paint");
     if(ev.key==="e")setTool("nodes");
   });
   window.addEventListener("resize",requestRender);
-  window.addEventListener("resize",positionWonderPanel);
+  window.addEventListener("resize",()=>{ positionWonderPanel(); positionTechPanel(); });
   setupTouch(cv);
 }
 // ---- touch controls (mobile): one-finger pan, pinch zoom, tap to select ----
@@ -4744,6 +5368,7 @@ function handleTapWorld(wx,wy){
   }
   if(p && (convertSelectActive()||state.convertPickCenter) && convertAxis()){ convertHandleClick(p); return; }
   if(p && state.mapmode==="region"){ regionProvinceClick(p); return; }
+  if(p && state.mapmode==="tech"){ if(p.realmId){ const rr=world.realms.find(x=>x.id===p.realmId); state.legendFilter={mode:"tech",value:Math.round(realmTL(rr).avg)}; selectRealm(p.realmId); renderMap(); } else selectProvince(p.id); return; }
   if(p && state.tool==="paint" && paintReady()){ beginEdit(); beginExpandStroke(); _mixStrokeSet=new Set(); if(paintProvince(p)){_labelsDirty=true;renderMap();renderLeft();markDirty();} return; }
   if(p && state.mapmode==="resource"){ spotlightResource(p); selectProvince(p.id); return; }
   if(p && state.mapmode==="race"){ const d=dominant(p.race); if(d)setRaceGroup(subraceGroup(d)); selectProvince(p.id); return; }
@@ -4871,7 +5496,7 @@ function exportRender(rect,outW,mode,legend,legendPos,provNames=true){
       ctx.beginPath(); ctx.moveTo(pts[0][0],pts[0][1]); for(let i=1;i<pts.length;i++)ctx.lineTo(pts[i][0],pts[i][1]); ctx.closePath(); ctx.stroke(); }
   }
   drawWater(ctx,s);
-  if(renderMode!=="political" && state.realmOverlay) drawRealmBorders(ctx);
+  if(renderMode!=="political" && (state.realmOverlay || renderMode==="tech")) drawRealmBorders(ctx);
   ctx.setTransform(1,0,0,1,0,0);ctx.textAlign="center";ctx.textBaseline="middle";
   const keySz=Math.max(5,Math.round(mapW/360));   // capital/admin marker size (shared) — small so it doesn't crowd labels
   // markers first, so names/labels render on top of the capital stars & admin diamonds
@@ -5292,6 +5917,126 @@ function renderMonsterPresets(){
   });
   if(!world.monsterPresets.length){ const n=div("note"); n.textContent="No presets yet."; box.appendChild(n); }
 }
+function renderGmPowers(){
+  const box=$("#gmPowers"); if(!box)return; box.innerHTML="";
+  world.powers=world.powers||[];
+  world.powers.forEach((pw,i)=>{
+    const det=document.createElement("details"); det.className="elTypeDet";
+    const sum=document.createElement("summary");
+    sum.innerHTML=`<span class="etSw" style="background:${pw.color||'#7c5cff'}"></span><b style="flex:1;min-width:0">${esc(pw.name||"Power")}</b>
+      <span class="note" style="margin:0 6px;white-space:nowrap">${esc(pw.type||"—")}</span>
+      <span class="etBtns"><button class="btn tiny gmPwrUp" ${i===0?"disabled":""}>↑</button><button class="btn tiny gmPwrDn" ${i===world.powers.length-1?"disabled":""}>↓</button><button class="btn tiny gmPwrDel" style="color:var(--bad)">✕</button></span>`;
+    det.appendChild(sum);
+    const body=div(""); body.style.padding="6px 6px 2px";
+    body.innerHTML=`
+      <div class="field2">
+        <div class="field"><label>Name</label><input class="gmPwrName" value="${esc(pw.name||"")}"/></div>
+        <div class="field"><label>Type <span class="note">(Druidic, Magic…)</span></label><input class="gmPwrType" value="${esc(pw.type||"")}"/></div>
+      </div>
+      <div class="field2">
+        <div class="field"><label>Colour</label><input class="gmPwrCol" type="color" value="${toHex(pw.color||'#7c5cff')}" style="width:100%;height:30px;padding:2px"/></div>
+        <div class="field"></div>
+      </div>
+      <div class="field"><label>Origin <span class="note">(where & how it began)</span></label><textarea class="gmPwrOrigin" rows="2">${esc(pw.origin||"")}</textarea></div>
+      <div class="field"><label>Description</label><textarea class="gmPwrDesc" rows="3">${esc(pw.description||"")}</textarea></div>`;
+    det.appendChild(body);
+    const stop=(sel,fn)=>{ const b=sum.querySelector(sel); if(b)b.addEventListener("click",ev=>{ ev.preventDefault(); ev.stopPropagation(); fn(); }); };
+    stop(".gmPwrUp",()=>{ if(i>0){ const a=world.powers; [a[i-1],a[i]]=[a[i],a[i-1]]; markDirty(); renderGmPowers(); } });
+    stop(".gmPwrDn",()=>{ const a=world.powers; if(i<a.length-1){ [a[i+1],a[i]]=[a[i],a[i+1]]; markDirty(); renderGmPowers(); } });
+    stop(".gmPwrDel",()=>{ if(!confirm(`Delete power "${pw.name}"? It will be removed from all realms.`))return; world.powers.splice(i,1); (world.realms||[]).forEach(r=>{ if(r.powers)r.powers=r.powers.filter(x=>x!==pw.id); }); markDirty(); renderGmPowers(); });
+    body.querySelector(".gmPwrName").addEventListener("input",e=>{ pw.name=e.target.value; markDirty(); });
+    body.querySelector(".gmPwrType").addEventListener("input",e=>{ pw.type=e.target.value; markDirty(); });
+    body.querySelector(".gmPwrCol").addEventListener("input",e=>{ pw.color=e.target.value; markDirty(); });
+    body.querySelector(".gmPwrOrigin").addEventListener("input",e=>{ pw.origin=e.target.value; markDirty(); });
+    body.querySelector(".gmPwrDesc").addEventListener("input",e=>{ pw.description=e.target.value; markDirty(); });
+    box.appendChild(det);
+  });
+  if(!world.powers.length){ const n=div("note"); n.textContent="No powers yet."; box.appendChild(n); }
+}
+function renderGmTech(){
+  const box=$("#gmTech"); if(!box)return; box.innerHTML="";
+  world.techFields=world.techFields||[]; world.techFieldDefault=world.techFieldDefault||{}; world.techDesc=world.techDesc||{}; world.techColors=world.techColors||{};
+  // TL colour swatches
+  const ch=document.createElement("div"); ch.className="gmBlockH"; ch.style.fontSize="12px"; ch.textContent="TL map colours";
+  box.appendChild(ch);
+  const grid=div("techColGrid");
+  for(let tl=0;tl<=TL_MAX;tl++){ const cell=div("techColCell");
+    cell.innerHTML=`<input type="color" class="gmTLCol" data-tl="${tl}" value="${toHex(tlColor(tl))}"/><span class="note">TL${tl} ${esc(TL_NAMES[tl])}</span>`;
+    grid.appendChild(cell); }
+  box.appendChild(grid);
+  { const rb=document.createElement("button"); rb.className="btn tiny"; rb.style.margin="6px 0 2px"; rb.textContent="↺ Reset TL colours";
+    rb.onclick=()=>{ world.techColors={}; markDirty(); renderGmTech(); renderMap(); renderLegend(); }; box.appendChild(rb); }
+  // Tech Fields
+  const fh=document.createElement("div"); fh.className="gmBlockH"; fh.style.cssText="font-size:12px;margin-top:10px"; fh.textContent="Tech Fields";
+  box.appendChild(fh);
+  { const n=div("note"); n.textContent="Toggle “new realms” to control whether a field is added to realms created from now on. Existing realms are unaffected. Expand a field to edit its default description at each TL."; box.appendChild(n); }
+  world.techFields.forEach((f,i)=>{
+    const det=document.createElement("details"); det.className="elTypeDet";
+    const sum=document.createElement("summary");
+    sum.innerHTML=`<input class="gmTFName" value="${esc(f)}" style="flex:1;min-width:0;background:#fff;border:1px solid var(--line);color:var(--ink);padding:2px 5px;border-radius:5px" onclick="event.stopPropagation()"/>
+      <label class="note" style="display:inline-flex;align-items:center;gap:4px;margin:0 6px;white-space:nowrap" onclick="event.stopPropagation()"><input type="checkbox" class="gmTFDef" ${techFieldIsDefault(f)?"checked":""}/> new realms</label>
+      <span class="etBtns"><button class="btn tiny gmTFUp" ${i===0?"disabled":""} title="Move up">↑</button><button class="btn tiny gmTFDn" ${i===world.techFields.length-1?"disabled":""} title="Move down">↓</button><button class="btn tiny gmTFDel" style="color:var(--bad)" title="Delete field (from all realms)">✕</button></span>`;
+    det.appendChild(sum);
+    const body=div(""); body.style.padding="6px 6px 2px";
+    let rows="";
+    for(let tl=0;tl<=TL_MAX;tl++){ const cur=(world.techDesc[f]&&typeof world.techDesc[f][tl]==="string")?world.techDesc[f][tl]:"";
+      rows+=`<div class="field" style="margin:2px 0"><label style="font-size:11px;display:flex;align-items:center;gap:5px"><span style="background:${tlColor(tl)};width:10px;height:10px;border-radius:2px;display:inline-block"></span>TL${tl} · ${esc(TL_NAMES[tl])}</label>
+        <textarea class="gmTFDesc" data-tl="${tl}" rows="1" placeholder="${esc(TL_DEFAULT_DESC[tl]||"")}">${esc(cur)}</textarea></div>`; }
+    body.innerHTML=rows; det.appendChild(body);
+    // wiring
+    const stop=(sel,fn)=>{ const b=sum.querySelector(sel); if(b)b.addEventListener("click",ev=>{ ev.preventDefault(); ev.stopPropagation(); fn(); }); };
+    stop(".gmTFUp",()=>{ if(i>0){ const a=world.techFields; [a[i-1],a[i]]=[a[i],a[i-1]]; markDirty(); renderGmTech(); } });
+    stop(".gmTFDn",()=>{ const a=world.techFields; if(i<a.length-1){ [a[i+1],a[i]]=[a[i],a[i+1]]; markDirty(); renderGmTech(); } });
+    stop(".gmTFDel",()=>{ if(world.techFields.length<=1){flash("Keep at least one Tech Field.");return;} if(!confirm(`Delete Tech Field "${f}" from the world and every realm?`))return; deleteTechFieldGlobal(f); markDirty(); renderGmTech(); renderMap(); });
+    sum.querySelector(".gmTFName").addEventListener("change",e=>{ const nv=e.target.value.trim(); if(!nv||nv===f){e.target.value=f;return;} if(!renameTechField(f,nv)){flash("A field named “"+nv+"” already exists.");e.target.value=f;return;} markDirty(); renderGmTech(); renderMap(); });
+    sum.querySelector(".gmTFDef").addEventListener("change",e=>{ world.techFieldDefault[f]=e.target.checked; markDirty(); });
+    det.querySelectorAll(".gmTFDesc").forEach(el=>el.addEventListener("input",e=>{ const tl=+el.dataset.tl; world.techDesc[f]=world.techDesc[f]||{}; if(e.target.value.trim())world.techDesc[f][tl]=e.target.value; else delete world.techDesc[f][tl]; markDirty(); }));
+    box.appendChild(det);
+  });
+  { const ab=document.createElement("button"); ab.className="btn tiny"; ab.style.marginTop="6px"; ab.textContent="＋ Add Tech Field";
+    ab.onclick=()=>{ let base="New Field",n=base,k=2; while(world.techFields.includes(n))n=base+" "+(k++); world.techFields.push(n); world.techFieldDefault[n]=true; markDirty(); renderGmTech(); }; box.appendChild(ab); }
+  box.querySelectorAll(".gmTLCol").forEach(el=>el.addEventListener("input",e=>{ world.techColors[+el.dataset.tl]=e.target.value; markDirty(); renderMap(); renderLegend(); }));
+  // ---- Discoveries ----
+  world.discoveries=world.discoveries||[];
+  const dh=document.createElement("div"); dh.className="gmBlockH"; dh.style.cssText="font-size:12px;margin-top:12px"; dh.textContent="✦ Discoveries";
+  box.appendChild(dh);
+  { const n=div("note"); n.textContent="Notable techs, each assigned to a Tech Field and a TL. Assign them to realms from a realm's Tech Level panel; they appear coloured under that field."; box.appendChild(n); }
+  world.discoveries.forEach((d,i)=>{
+    const det=document.createElement("details"); det.className="elTypeDet";
+    const sum=document.createElement("summary");
+    sum.innerHTML=`<span class="etSw" style="background:${discoveryColor(d)}"></span><b style="flex:1;min-width:0">${esc(d.name||"Discovery")}</b>
+      <span class="note" style="margin:0 6px;white-space:nowrap">${esc(d.field||"—")} · TL${tlClamp(d.tl)}</span>
+      <span class="etBtns"><button class="btn tiny gmDiscDel" style="color:var(--bad)" title="Delete">✕</button></span>`;
+    det.appendChild(sum);
+    const body=div(""); body.style.padding="6px 6px 2px";
+    const fieldOpts=(world.techFields||[]).map(f=>`<option ${f===d.field?"selected":""}>${esc(f)}</option>`).join("");
+    const realmOpts=(world.realms||[]).map(rm=>`<option value="${rm.id}" ${d.realmId===rm.id?"selected":""}>${esc(rm.name)}</option>`).join("");
+    body.innerHTML=`
+      <div class="field2">
+        <div class="field"><label>Name</label><input class="gmDiscName" value="${esc(d.name||"")}"/></div>
+        <div class="field"><label>Colour</label><input class="gmDiscCol" type="color" value="${toHex(discoveryColor(d))}" ${d.realmId?"disabled":""} style="width:100%;height:30px;padding:2px"/></div>
+      </div>
+      <div class="field"><label>Discovered by <span class="note">(uses that realm's colour + shows its name in the tech panel)</span></label>
+        <select class="gmDiscRealm"><option value="">— none / custom colour —</option>${realmOpts}</select></div>
+      <div class="field2">
+        <div class="field"><label>Tech Field</label><select class="gmDiscField">${fieldOpts}</select></div>
+        <div class="field"><label>TL</label><input class="gmDiscTL" type="number" min="0" max="12" value="${tlClamp(d.tl)}"/></div>
+      </div>
+      <div class="field"><label>Description</label><textarea class="gmDiscDesc" rows="2">${esc(d.description||"")}</textarea></div>`;
+    det.appendChild(body);
+    sum.querySelector(".gmDiscDel").addEventListener("click",ev=>{ ev.preventDefault(); ev.stopPropagation(); if(!confirm(`Delete discovery "${d.name}"? It will be removed from all realms.`))return; world.discoveries.splice(i,1); (world.realms||[]).forEach(r=>{ if(r.discoveries)r.discoveries=r.discoveries.filter(x=>x!==d.id); }); markDirty(); renderGmTech(); });
+    body.querySelector(".gmDiscName").addEventListener("input",e=>{ d.name=e.target.value; markDirty(); });
+    body.querySelector(".gmDiscCol").addEventListener("input",e=>{ d.color=e.target.value; markDirty(); });
+    body.querySelector(".gmDiscRealm").addEventListener("change",e=>{ d.realmId=e.target.value; const rm=discoveryMaker(d); if(rm)d.color=rm.color; markDirty(); renderGmTech(); });
+    body.querySelector(".gmDiscField").addEventListener("change",e=>{ d.field=e.target.value; markDirty(); renderGmTech(); });
+    body.querySelector(".gmDiscTL").addEventListener("change",e=>{ d.tl=tlClamp(e.target.value); markDirty(); renderGmTech(); });
+    body.querySelector(".gmDiscDesc").addEventListener("input",e=>{ d.description=e.target.value; markDirty(); });
+    box.appendChild(det);
+  });
+  if(!world.discoveries.length){ const n=div("note"); n.textContent="No discoveries yet."; box.appendChild(n); }
+  { const ab=document.createElement("button"); ab.className="btn tiny"; ab.style.marginTop="6px"; ab.textContent="＋ Add Discovery";
+    ab.onclick=()=>{ world.discoveries.push(newDiscovery()); markDirty(); renderGmTech(); }; box.appendChild(ab); }
+}
 function renderElementTypes(){
   const box=$("#elemTypes"); if(!box)return; box.innerHTML="";
   world.elementTypes=world.elementTypes||[];
@@ -5428,6 +6173,17 @@ function renderGM2(){
         <div id="elemTypes"></div>
         <div class="btnrow" style="margin-top:8px"><button class="btn tiny" id="elemAdd">＋ Add element type</button></div>
       </section>
+      <section class="gmBlock gmSpanAll">
+        <div class="gmBlockH">🔬 Technology Levels</div>
+        <p class="note">Set the Tech Level map colours, manage the Tech Fields (rename, reorder, whether each appears on <b>new</b> realms, delete), and edit the default description shown for each field at each TL. Realm-specific overrides live on each realm's panel.</p>
+        <div id="gmTech"></div>
+      </section>
+      <section class="gmBlock gmSpanAll">
+        <div class="gmBlockH">✨ Powers</div>
+        <p class="note">Distinctive traditions realms wield (Druidic, Magic, Demonic…). Each has a Type, an Origin (where/how it began), a description and a colour. Assign them to realms from a realm's editor panel; they show as a Powers bloc and in the Compendium.</p>
+        <div id="gmPowers"></div>
+        <div class="btnrow" style="margin-top:8px"><button class="btn tiny" id="gmPowerAdd">＋ Add Power</button></div>
+      </section>
     </div>
     <div class="btnrow" style="margin-top:12px"><button class="btn" id="gmResetPop">↺ Reset growth tunables</button></div>`;
   // ---- global pop tunables ----
@@ -5512,6 +6268,9 @@ function renderGM2(){
   // ---- army element types ----
   renderElementTypes();
   { const ea=$("#elemAdd"); if(ea)ea.addEventListener("click",()=>{ world.elementTypes=world.elementTypes||[]; world.elementTypes.push(migrateElement({id:uid(),name:"New Element",cls:"Fire (F)",ts:5,pts:0,wt:0,mob:"Foot",tl:1,features:[],equip:"Basic",troop:"Average"})); renderElementTypes(); markDirty(); }); }
+  renderGmTech();
+  renderGmPowers();
+  { const pa=$("#gmPowerAdd"); if(pa)pa.onclick=()=>{ world.powers=world.powers||[]; world.powers.push(newPower()); markDirty(); renderGmPowers(); }; }
 }
 function openGMScreen(){
   syncTuneKeys();   // add mods for new terrains/races, prune deleted ones
@@ -5672,7 +6431,7 @@ async function openMenu(){
   $("#mScale").addEventListener("change",e=>{const val=+e.target.value; const cw=contentBounds().w||1; if(val>0){const miles=world.distanceUnit==="km"?val/KM_PER_MI:val; world.milesPerUnit=miles/cw; renderMap(); markDirty();}});
   $$("[data-open]").forEach(b=>b.onclick=async()=>{await loadWorld(b.dataset.open);closeModal();});
   $("#mNew").onclick=()=>{if(confirm("Start a fresh world? Unsaved changes to the current one are lost unless saved."))
-    {world=normalize(sampleWorld());world.name="New World";world.continents=[];world.provinces=[];world.realms=[];afterLoad();closeModal();}};
+    {_compendium=null;world=normalize(sampleWorld());world.name="New World";world.continents=[];world.provinces=[];world.realms=[];afterLoad();closeModal();}};
   $("#mSaveAs").onclick=()=>saveWorld(false);
   $("#mExport").onclick=async()=>{
     const name=world.name+" "+tstamp()+".json";
@@ -5691,7 +6450,7 @@ async function openMenu(){
   $("#mExportSvg").onclick=()=>{closeModal();openExport();};
   $("#mExportAll").onclick=()=>{closeModal();openExportAll();};
   $("#mImport").onclick=()=>$("#fileInput").click();
-  $("#fileInput").onchange=ev=>{const f=ev.target.files[0];if(!f)return;const rd=new FileReader();rd.onload=()=>{try{world=normalize(JSON.parse(rd.result));afterLoad();saveWorld(true);closeModal();}catch(e){alert("Invalid JSON: "+e.message);}};rd.readAsText(f);};
+  $("#fileInput").onchange=ev=>{const f=ev.target.files[0];if(!f)return;const rd=new FileReader();rd.onload=()=>{try{_compendium=null;world=normalize(JSON.parse(rd.result));afterLoad();saveWorld(true);closeModal();}catch(e){alert("Invalid JSON: "+e.message);}};rd.readAsText(f);};
   { const ts=$("#mTimelineSave"); if(ts)ts.onclick=()=>{ closeModal(); openTimelineSave(); }; }
 }
 // ===== Timeline: viewer-only turn snapshots ("Phase X - Turn Y"), organised by Age =====
@@ -5714,6 +6473,7 @@ function openTimelineSave(){
     const phase=Math.max(0,Math.round(+$("#tlPhase").value||0)), turn=Math.max(0,Math.round(+$("#tlTurn").value||0));
     _lastPhase=phase; _lastTurn=turn;
     const msg=$("#tlSaveMsg"); msg.textContent="Saving…";
+    syncCompendiumToWorld();
     try{
       const res=await fetch("/api/timeline_save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({age,phase,turn,world})});
       const j=await res.json();
@@ -5827,6 +6587,7 @@ let _exportDir="Z:\\herald\\data";
 async function publishViewer(){
   const folder=prompt("Publish the player viewer & push it live into this folder:",_viewerPublishDir);
   if(!folder)return; _viewerPublishDir=folder.trim();
+  syncCompendiumToWorld();
   try{
     flash("Publishing…");
     const res=await fetch("/api/publish",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({folder:_viewerPublishDir,world})});
@@ -5882,6 +6643,7 @@ function rebuildEraSelect(){
    BOOT
    ============================================================ */
 function afterLoad(){
+  ensureCompendium(world); syncCompendiumToWorld();   // global compendium: build once, keep across snapshot loads
   $("#worldName").value=world.name;
   loadPings();
   rebuildEraSelect();
@@ -5916,6 +6678,7 @@ const MM_ICON={
   monster:`<svg viewBox="0 0 24 24" class="mmi"><path fill="currentColor" fill-rule="evenodd" d="M4 3c2 1 3.1 2.5 3.5 4.4C8.8 6.6 10.3 6.1 12 6.1s3.2.5 4.5 1.3C16.9 5.5 18 4 20 3c-.3 2.4-1 3.8-2 4.9 1.2 1.2 2 3 2 4.8 0 4.5-4 8.6-8 8.6s-8-4.1-8-8.6c0-1.8.8-3.6 2-4.8C5 6.8 4.3 5.4 4 3zm5.6 8.2a1.5 1.5 0 100 3 1.5 1.5 0 000-3zm4.8 0a1.5 1.5 0 100 3 1.5 1.5 0 000-3z"/></svg>`,
   military:`<svg viewBox="0 0 24 24" class="mmi"><path fill="currentColor" d="M3 3h2.3l9 9-2.3 2.3-9-9V3zm18 0v2.3l-9 9-2.3-2.3 9-9H21zM3 18.9l4.2-4.2 1.6 1.6-4.2 4.2H3v-1.6zm18 0v1.6h-1.6l-4.2-4.2 1.6-1.6 4.2 4.2z"/></svg>`,
   region:`<svg viewBox="0 0 24 24" class="mmi"><path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" d="M4 6.5 9 4l6 2.5L20 4v13.5L15 20 9 17.5 4 20z"/><path fill="none" stroke="currentColor" stroke-width="1.3" d="M9 4v13.5M15 6.5V20"/></svg>`,
+  tech:`<svg viewBox="0 0 24 24" class="mmi"><path fill="currentColor" d="M9.2 2h5.6l-.5 4.2a6 6 0 0 1 1.6.9L19 5.4l2.6 2.6-1.7 3.1c.4.5.7 1 .9 1.6L25 13v-.02l-.02 5.6h-.02l-4.2-.5a6 6 0 0 1-.9 1.6L20 22l-2.6 2.6" opacity="0"/><path fill="currentColor" d="M12 8.2a3.8 3.8 0 100 7.6 3.8 3.8 0 000-7.6zm0 2a1.8 1.8 0 110 3.6 1.8 1.8 0 010-3.6z"/><path fill="currentColor" d="M11 1.5h2v3h-2zM11 19.5h2v3h-2zM1.5 11h3v2h-3zM19.5 11h3v2h-3zM4.2 5.6 5.6 4.2 7.8 6.4 6.4 7.8zM16.2 17.6l1.4-1.4 2.2 2.2-1.4 1.4zM17.6 6.4l-1.4-1.4 2.2-2.2 1.4 1.4zM6.4 16.2l-1.4 1.4 2.2 2.2 1.4-1.4z"/></svg>`,
 };
 // 5th field = EU4 button-art basename in /img (uses mm_<name>.png / mm_<name>_a.png
 // for the normal + active/pressed states). null → fall back to the custom SVG glyph.
@@ -5931,6 +6694,7 @@ const MAPMODE_BAR=[
   ["settlement",MM_ICON.settlement,"Settlements","9","settlement"],
   ["economy",MM_ICON.economy,"Modes of Production","0","economy"],
   ["region",MM_ICON.region,"Regions","R",null],
+  ["tech",MM_ICON.tech,"Tech Level","T",null],
   ["monster",MM_ICON.monster,"Monsters","O","monster"],
   ["military",MM_ICON.military,"Military","P","military"],
 ];
@@ -6030,7 +6794,7 @@ function _popPanelDismiss(ev){
   if(panel.contains(ev.target)||ev.target.id==="worldPop")return;
   panel.remove(); document.removeEventListener("click",_popPanelDismiss,true);
 }
-function updateMobile(){ document.body.classList.toggle("mobile", window.innerWidth<=760); if(!document.body.classList.contains("mobile"))_mmOpen=false; refreshMapmodeBar(); buildMapLegend(); }
+function updateMobile(){ document.body.classList.toggle("mobile", window.innerWidth<=760); if(!document.body.classList.contains("mobile"))_mmOpen=false; refreshMapmodeBar(); buildMapLegend(); if(state.selRealm)renderTechPanel(); }
 function wireTopbar(){
   $("#worldName").addEventListener("input",e=>{world.name=e.target.value;markDirty();});
   $("#eraSelect").addEventListener("change",e=>{world.currentEraId=e.target.value;markDirty();});
@@ -6069,6 +6833,7 @@ function wireTopbar(){
   }
   const bv=$("#btnView"); if(bv)bv.onclick=togglePreviewViewer;
   { const bt=$("#btnTimeline"); if(bt)bt.onclick=openTimeline; }
+  { const bc=$("#btnCompendium"); if(bc)bc.onclick=()=>openCompendium(); }
   $("#worldView").onclick=()=>{worldView();};
   $("#btnPanels").onclick=()=>{
     if(document.body.classList.contains("mobile")){ const open=document.body.classList.toggle("m-drawer"); $("#btnPanels").classList.toggle("on",open); return; }
@@ -6088,6 +6853,7 @@ function wireTopbar(){
   $("#addRealm").onclick=()=>{
     beginEdit();
     const r={id:uid(),name:"New Realm "+(world.realms.length+1),color:autoPastelHex(),government:world.lists.governments[0],economy:world.lists.economies[0],stateReligion:"",dominantCulture:"",dominantRace:"",leaderName:"",leaderTitle:"",capitalId:null,note:""};
+    initRealmTech(r);   // give new realms the current Tech Fields at TL0 (older realms are unaffected)
     world.realms.push(r);
     if(state.mapmode==="imported"){state.mapmode="political";const ms=$("#mapmode");if(ms)ms.value="political";}
     renderLeft();selectRealm(r.id);
