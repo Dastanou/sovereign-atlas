@@ -380,14 +380,54 @@ function toggleRealmDiscovery(r,id){ r.discoveries=r.discoveries||[]; const i=r.
 // timeline phase you view. Persisted on world.compendiumStore (kept in sync).
 // ============================================================
 let _compendium=null;
-function blankCompendium(){ return {characters:[], charTags:["Commander","Diplomat","Hero"], lore:{}, realmRulers:{}}; }
+function blankCompendium(){ return {characters:[], charTags:["Commander","Diplomat","Hero"], dynasties:[], lore:{}, realmRulers:{}, realmNames:{}}; }
+function normCharacter(c){
+  c=c||{};
+  return {
+    id:c.id||uid(),
+    name:typeof c.name==="string"?c.name:"Character",
+    isRuler:!!c.isRuler,
+    tags:Array.isArray(c.tags)?c.tags.slice():[],
+    description:typeof c.description==="string"?c.description:"",   // legacy plain text
+    descHtml:typeof c.descHtml==="string"?c.descHtml:"",           // rich-text (preferred if set)
+    dynastyId:typeof c.dynastyId==="string"?c.dynastyId:"",
+    parentId:typeof c.parentId==="string"?c.parentId:"",           // family-tree parent (character or placeholder id)
+    parentGap:!!c.parentGap,                                       // dashed "generations skipped" link
+    race:typeof c.race==="string"?c.race:"",
+    culture:typeof c.culture==="string"?c.culture:"",
+    religion:typeof c.religion==="string"?c.religion:"",
+    languages:Array.isArray(c.languages)?c.languages.slice():[],
+    portrait:typeof c.portrait==="string"?c.portrait:"",
+    color:c.color||"",                                             // explicit override; else derived from realm
+    useDynastyAccent:!!c.useDynastyAccent,
+    embroidery:typeof c.embroidery==="string"?c.embroidery:"",     // emblem for important members on the dynasty tree
+    goldFrame:!!c.goldFrame,                                        // manually marked → gold shield (over copper/silver)
+    treeX:(typeof c.treeX==="number")?c.treeX:null,                // manual family-tree position overrides
+    treeY:(typeof c.treeY==="number")?c.treeY:null
+  };
+}
+function normDynasty(d){
+  d=d||{};
+  return {
+    id:d.id||uid(),
+    name:typeof d.name==="string"?d.name:"Dynasty",
+    description:typeof d.description==="string"?d.description:"",
+    descHtml:typeof d.descHtml==="string"?d.descHtml:"",
+    color:d.color||"#9a6a3a",
+    accentColor:typeof d.accentColor==="string"?d.accentColor:"",
+    crest:typeof d.crest==="string"?d.crest:"",
+    placeholders:Array.isArray(d.placeholders)?d.placeholders.filter(p=>p&&p.id).map(p=>({id:p.id,name:typeof p.name==="string"?p.name:"…",parentId:typeof p.parentId==="string"?p.parentId:"",parentGap:!!p.parentGap,treeX:(typeof p.treeX==="number")?p.treeX:null,treeY:(typeof p.treeY==="number")?p.treeY:null})):[]
+  };
+}
 function normalizeCompendium(src){
   const cp=(src&&typeof src==="object")?src:{}; const out=blankCompendium();
   if(Array.isArray(cp.charTags)&&cp.charTags.length)out.charTags=cp.charTags.slice();
-  if(Array.isArray(cp.characters))out.characters=cp.characters.map(c=>({id:c.id||uid(), name:typeof c.name==="string"?c.name:"Character", isRuler:!!c.isRuler, tags:Array.isArray(c.tags)?c.tags.slice():[], description:typeof c.description==="string"?c.description:"", color:c.color||"#c9a86f"}));
+  if(Array.isArray(cp.characters))out.characters=cp.characters.map(normCharacter);
+  if(Array.isArray(cp.dynasties))out.dynasties=cp.dynasties.map(normDynasty);
   if(cp.lore&&typeof cp.lore==="object")out.lore=JSON.parse(JSON.stringify(cp.lore));
   if(cp.realmRulers&&typeof cp.realmRulers==="object"){ Object.keys(cp.realmRulers).forEach(rid=>{ const arr=cp.realmRulers[rid]; if(Array.isArray(arr))out.realmRulers[rid]=arr.filter(x=>x&&x.charId).map(x=>({charId:x.charId, title:x.title||"", from:x.from||"", to:x.to||"", note:x.note||""})); }); }
-  out.characters.forEach(c=>{ c.tags=c.tags.filter(t=>out.charTags.includes(t)); });
+  if(cp.realmNames&&typeof cp.realmNames==="object")out.realmNames=Object.assign({},cp.realmNames);   // remembered names for realms not in the loaded turn
+  out.characters.forEach(c=>{ c.tags=c.tags.filter(t=>out.charTags.includes(t)); if(c.dynastyId&&!out.dynasties.some(d=>d.id===c.dynastyId))c.dynastyId=""; });
   return out;
 }
 // Build _compendium once per world (from its stored compendium, or migrate legacy fields).
@@ -408,22 +448,54 @@ function ensureCompendium(w){
   }
 }
 // keep the persisted copy on the live world pointing at the global store
-function syncCompendiumToWorld(){ if(typeof world!=="undefined"&&world)world.compendiumStore=_compendium; }
+function syncCompendiumToWorld(){
+  if(typeof world==="undefined"||!world)return;
+  if(_compendium){ _compendium.realmNames=_compendium.realmNames||{}; (world.realms||[]).forEach(r=>{ if(r&&r.id&&r.name)_compendium.realmNames[r.id]=r.name; }); }
+  world.compendiumStore=_compendium;
+}
 // ---- Characters: named people (rulers / commanders / other tagged roles) ----
 function allCharacters(){ ensureCompendium(world); return _compendium.characters; }
 function allCharTags(){ ensureCompendium(world); return _compendium.charTags; }
 function characterById(id){ return allCharacters().find(c=>c.id===id)||null; }
 function charName(id){ const c=characterById(id); return c?c.name:""; }
-function newCharacter(opts){ opts=opts||{}; return {id:uid(), name:opts.name||"New Character", isRuler:!!opts.isRuler, tags:opts.tags?opts.tags.slice():[], description:"", color:opts.color||"#c9a86f"}; }
+function newCharacter(opts){ opts=opts||{}; return normCharacter({name:opts.name||"New Character", isRuler:!!opts.isRuler, tags:opts.tags?opts.tags.slice():[], color:opts.color||""}); }
+// ---- Dynasties ----
+function allDynasties(){ ensureCompendium(world); return _compendium.dynasties; }
+function dynastyById(id){ return allDynasties().find(d=>d.id===id)||null; }
+function newDynasty(name){ return normDynasty({name:name||"New Dynasty"}); }
+function dynastyMembers(id){ return allCharacters().filter(c=>c.dynastyId===id); }
+// character's theme colour: explicit override → their (most recent) realm → dynasty → neutral
+function charRealm(c){ const rs=charRealmReigns(c.id); if(rs.length)return rs[rs.length-1].realm; const f=charForces(c.id)[0]; if(f&&f.realmId)return world.realms.find(x=>x.id===f.realmId)||null; return null; }
+function charThemeColor(c){ if(!c)return "#c9a86f"; if(c.color)return c.color; const r=charRealm(c); if(r)return r.color; const d=c.dynastyId&&dynastyById(c.dynastyId); if(d)return d.color; return "#c9a86f"; }
+function charAccentColor(c){ if(!c||!c.useDynastyAccent||!c.dynastyId)return ""; const d=dynastyById(c.dynastyId); return d?(d.accentColor||d.color):""; }
+// rich text: prefer descHtml; fall back to escaping legacy plain description
+function charDescHtml(c){ if(!c)return ""; if(c.descHtml)return c.descHtml; return c.description?esc(c.description).replace(/\n/g,"<br>"):""; }
 function charTagsOf(c){ return (c&&Array.isArray(c.tags))?c.tags.filter(t=>allCharTags().includes(t)):[]; }
 function charHasTag(c,t){ return !!(c&&Array.isArray(c.tags)&&c.tags.includes(t)); }
 function toggleCharTag(c,t){ c.tags=c.tags||[]; const i=c.tags.indexOf(t); if(i>=0)c.tags.splice(i,1); else c.tags.push(t); markDirty(); }
 // a realm's ruler timeline (ordered reigns), stored globally by realm id
 function realmRulers(r){ ensureCompendium(world); const id=r&&r.id; if(!id)return []; if(!Array.isArray(_compendium.realmRulers[id]))_compendium.realmRulers[id]=[]; return _compendium.realmRulers[id]; }
-// realms this character has ruled (with their reign entry)
-function charRealmReigns(charId){ const out=[]; (world.realms||[]).forEach(r=>{ realmRulers(r).forEach((reign,i)=>{ if(reign.charId===charId)out.push({realm:r,reign,index:i}); }); }); return out; }
+// realms this character has ruled (with their reign entry).
+// Scans the GLOBAL ruler store, not just the loaded snapshot's realms — a reign still counts
+// when its realm doesn't exist in the currently-viewed turn (or was later removed).
+function charRealmReigns(charId){
+  ensureCompendium(world); const out=[];
+  Object.keys(_compendium.realmRulers||{}).forEach(rid=>{
+    const arr=_compendium.realmRulers[rid]; if(!Array.isArray(arr))return;
+    const realm=(world.realms||[]).find(x=>x.id===rid) || {id:rid, name:(_compendium.realmNames&&_compendium.realmNames[rid])||"(former realm)", color:"#7c8698", _missing:true};
+    arr.forEach((reign,i)=>{ if(reign.charId===charId)out.push({realm,reign,index:i}); });
+  });
+  return out;
+}
 // forces this character commands (forces are per-snapshot)
 function charForces(charId){ return (world.forces||[]).filter(f=>f.commanderCharId===charId); }
+// realms this character currently leads in the LOADED world/snapshot (timeline current ruler)
+function charCurrentRealms(c){ const out=[]; (world.realms||[]).forEach(r=>{ const cur=realmCurrentRuler(r); if(cur&&c&&cur.id===c.id)out.push(r); }); return out; }
+// total provinces across the realms a character currently leads (used to pin/sort in the Compendium)
+function charLeadScore(c){ return charCurrentRealms(c).reduce((a,r)=>a+(world.provinces||[]).filter(p=>p.realmId===r.id).length,0); }
+// was this character ever a ruler? — flagged as a ruler, or holding a reign on any realm timeline
+// (the flag counts too, so a ruler shows silver before their reign has been slotted into a timeline)
+function charWasRuler(c){ return !!c && (!!c.isRuler || charRealmReigns(c.id).length>0); }
 // the realm's current ruler = the last reign in the ordered timeline
 function realmCurrentReign(r){ const rs=realmRulers(r); return rs.length?rs[rs.length-1]:null; }
 function realmCurrentRuler(r){ const reign=realmCurrentReign(r); return reign?characterById(reign.charId):null; }
@@ -1265,6 +1337,20 @@ function autoPastelHex(){   // distinct, fully-saturated default color for a new
   _hueSeed=(_hueSeed+137)%360;
   const c=toRGB(`hsl(${_hueSeed} 64% 53%)`);
   return "#"+c.map(v=>v.toString(16).padStart(2,"0")).join("");
+}
+// Create a new realm, select it, and switch to paint so provinces can be added.
+function createNewRealm(){
+  if(VIEWER)return null;
+  beginEdit();
+  const r={id:uid(),name:"New Realm "+(world.realms.length+1),color:autoPastelHex(),government:world.lists.governments[0],economy:"Primitive",stateReligion:"No Religion",dominantCulture:"No Culture",dominantRace:"",adminRaces:[],militaryRaces:[],dominantLanguage:"No Language",adminCenters:[],capitalId:null,description:"",note:""};
+  initRealmTech(r);   // give new realms the current Tech Fields at TL0 (older realms are unaffected)
+  world.realms.push(r);
+  if(state.mapmode!=="political"){ state.mapmode="political"; const ms=$("#mapmode"); if(ms)ms.value="political"; }
+  state.selRealm=r.id; state.paintUnclaim=false;
+  renderLeft(); selectRealm(r.id); setTool("paint");
+  renderPaintPanel(); renderMap(); markDirty();
+  flash("New realm created — click or drag across provinces to paint them into it.");
+  return r;
 }
 
 // renderMap() is the name used throughout the app; it now schedules a redraw
@@ -2543,8 +2629,9 @@ function renderPaintPanel(){
   if(!show){ if(box)box.remove(); return; }
   if(!box){ box=document.createElement("div"); box.id="paintPanel"; ($("#stage")||document.body).appendChild(box); }
   const painting = state.tool==="paint";
+  const headNewRealm = state.mapmode==="political" ? `<button class="btn tiny primary" id="ppNewRealmH" style="margin-left:auto" title="Create a new realm">＋ Realm</button>` : "";
   const head=`<div class="ppHead"><button class="ppCaret" id="ppCaret" title="Collapse / expand">${_paintCollapsed?"▸":"▾"}</button><b>🖌 Paint</b><span class="note" style="margin-left:6px">${esc(MODE_TITLES[state.mapmode]||state.mapmode)}</span>
-    <button class="btn tiny${!painting?" primary":""}" id="ppSelect" style="margin-left:auto" title="Stop painting (select / pan)">🖐</button></div>`;
+    ${headNewRealm}<button class="btn tiny${!painting?" primary":""}" id="ppSelect" style="margin-left:${headNewRealm?"6px":"auto"}" title="Stop painting (select / pan)">🖐</button></div>`;
   let html="";
   if(state.mapmode==="political"){
     const realmOpts=world.realms.map(r=>`<option value="${r.id}" ${(!state.paintUnclaim&&state.selRealm===r.id)?"selected":""}>${esc(r.name)}</option>`).join("");
@@ -2594,6 +2681,7 @@ function renderPaintPanel(){
   box.innerHTML=head+`<div class="ppBody">${html}</div>`;
   box.classList.toggle("collapsed",_paintCollapsed);
   { const cc=$("#ppCaret"); if(cc)cc.onclick=()=>{ _paintCollapsed=!_paintCollapsed; renderPaintPanel(); }; }
+  { const nrh=$("#ppNewRealmH"); if(nrh)nrh.onclick=()=>createNewRealm(); }
   $("#ppSelect").onclick=()=>{ state.paintErase=false; setTool("select"); renderPaintPanel(); };
   { const u=$("#ppUndo"); if(u)u.onclick=()=>doUndo(); }
   { const e=$("#ppErase"); if(e)e.onclick=()=>{ state.paintErase=true; state.paintValue=null; state.paintUnclaim=(state.mapmode==="political"); setTool("paint"); renderPaintPanel(); flash("Erase mode — click/drag over provinces."); }; }
@@ -3356,7 +3444,7 @@ function renderForceView(){
       <div class="sectionH">Command</div>
       <div class="rvBlock rvSociety">
         ${(function(){ const ch=f.commanderCharId?characterById(f.commanderCharId):null; const stats=f.commander?`Strategy ${f.commander.strategy}, Leadership ${f.commander.leadership}`:"";
-          return ch ? row("Commander", `${compChip("character",ch.id,{label:ch.name,color:ch.color})} <span class="note">(${stats})</span>`) : leaderRow("Commander", f.commander, stats); })()}
+          return ch ? row("Commander", `${compChip("character",ch.id,{label:ch.name,color:charThemeColor(ch)})} <span class="note">(${stats})</span>`) : leaderRow("Commander", f.commander, stats); })()}
         ${leaderRow("Intelligence Chief", f.intel, f.intel?`Intelligence Analysis ${f.intel.skill}`:"")}
         ${leaderRow("Quartermaster", f.quartermaster, f.quartermaster?`Administration ${f.quartermaster.skill}`:"")}
       </div>
@@ -3742,17 +3830,39 @@ function renderResourceLegend(box){
   // click a regular/prestige/hidden resource to spotlight it on the map
   box.querySelectorAll("[data-res]").forEach(el=>{ el.onclick=ev=>{ ev.stopPropagation(); legendClickValue(el.dataset.res); buildMapLegend(); }; });
 }
+const _forceRealmExpanded=new Set();   // military legend realm groups are collapsed by default; expand on demand
 function renderForceLegend(box){
   if(!VIEWER){ const b=document.createElement("button"); b.className="btn tiny primary"; b.style.marginBottom="6px"; b.textContent="＋ Add force";
     b.onclick=addForceAtCenter; box.appendChild(b); }
   if(!world.forces.length){ const n=div("note"); n.textContent=VIEWER?"No forces on the map.":"No forces yet. Click ＋ Add force, then use ✥ Move to place it."; box.appendChild(n); return; }
-  world.forces.forEach(f=>{
-    const r=world.realms.find(x=>x.id===f.realmId), col=r?r.color:"#5a6172";
-    const row=div("li"+(state.selForce===f.id?" sel":""));
-    row.innerHTML=`<span class="swatch" style="background:${col}"></span>${(FORCE_DOMAINS[f.domain]||FORCE_DOMAINS.land).icon} ${esc(f.name)} <span class="note" style="margin-left:auto">TS ${forceTS(f)}</span>`;
-    if(state.selForce===f.id){row.style.outline="2px solid var(--accent)";row.style.borderRadius="6px";}
-    row.style.cursor="pointer"; row.onclick=()=>{selectForce(f.id);centerOn(f.x,f.y);};
-    box.appendChild(row);
+  // group armies by owning realm (Independent last)
+  const groups=[]; const byRealm={};
+  world.forces.forEach(f=>{ const key=f.realmId||"__indep__"; if(!byRealm[key]){ byRealm[key]={key, realm:world.realms.find(x=>x.id===f.realmId)||null, forces:[]}; groups.push(byRealm[key]); } byRealm[key].forces.push(f); });
+  groups.sort((a,b)=>{ if(!a.realm)return 1; if(!b.realm)return -1; return a.realm.name.localeCompare(b.realm.name); });
+  groups.forEach(g=>{
+    const col=g.realm?g.realm.color:"#5a6172";
+    const totalTS=round2(g.forces.reduce((a,f)=>a+forceTS(f),0));
+    const totalPTS=round2(g.forces.reduce((a,f)=>a+forcePTS(f),0));
+    const collapsed=!_forceRealmExpanded.has(g.key);
+    const sec=div("forceGroup"+(collapsed?" collapsed":""));
+    const head=div("forceGroupHead"); head.style.cursor="pointer";
+    head.innerHTML=`<span class="caret">${collapsed?"▸":"▾"}</span><span class="swatch" style="background:${col}"></span>`
+      +`<span class="fgName">${esc(g.realm?g.realm.name:"Independent")}</span>`
+      +`<span class="fgTS">${g.forces.length} · TS ${totalTS}${totalPTS>0?` <span class="note">(${totalPTS})</span>`:""}</span>`;
+    head.onclick=()=>{ if(_forceRealmExpanded.has(g.key))_forceRealmExpanded.delete(g.key); else _forceRealmExpanded.add(g.key); renderLegend(); };
+    sec.appendChild(head);
+    if(!collapsed){
+      const body=div("forceGroupBody");
+      g.forces.forEach(f=>{
+        const row=div("li"+(state.selForce===f.id?" sel":""));
+        row.innerHTML=`<span style="width:14px"></span>${(FORCE_DOMAINS[f.domain]||FORCE_DOMAINS.land).icon} ${esc(f.name)} <span class="note" style="margin-left:auto">TS ${forceTS(f)}${forcePTS(f)>0?` (${forcePTS(f)})`:""}</span>`;
+        if(state.selForce===f.id){row.style.outline="2px solid var(--accent)";row.style.borderRadius="6px";}
+        row.style.cursor="pointer"; row.onclick=()=>{selectForce(f.id);centerOn(f.x,f.y);};
+        body.appendChild(row);
+      });
+      sec.appendChild(body);
+    }
+    box.appendChild(sec);
   });
 }
 const _monGroupCollapsed=new Set();
@@ -3905,15 +4015,22 @@ function pieSVG(arr,listKey,size){
 }
 function shortNum(n){ n=Math.round(n||0); if(n<1000)return String(n); if(n<1e6){const v=n/1000;return (v<10?v.toFixed(1):Math.round(v))+"k";} const v=n/1e6;return (v<10?v.toFixed(1):Math.round(v))+"M"; }
 // pie for one identity axis; shows each group's % and its actual head-count (full number on hover)
-function pieCell(label,p,key,listKey){
+// One breakdown pie + legend for a collection of pops (a province's, or every province in a realm).
+function pieCellPops(label,pops,key,listKey,legendMax){
   const m={}; let tot=0;
-  for(const q of (p.pops||[])){ const v=q[key]; if(!v||!(q.size>0))continue; m[v]=(m[v]||0)+q.size; tot+=q.size; }
+  for(const q of (pops||[])){ const v=q[key]; if(!v||!(q.size>0))continue; m[v]=(m[v]||0)+q.size; tot+=q.size; }
   const data=Object.entries(m).map(([name,size])=>({name,size,pct:tot?size/tot*100:0})).sort((a,b)=>b.size-a.size);
   const numMode=state.pvPieMode==="num";
-  const leg = data.length ? data.slice(0,5).map(e=>`<div class="pvLeg" title="${esc(e.name)}: ${e.size.toLocaleString()} people (${Math.round(e.pct)}%)"><span class="sw" style="background:${catColor(listKey,e.name)}"></span><span class="nm">${esc(e.name)}</span><span class="pvLegVal">${numMode?shortNum(e.size):Math.round(e.pct)+"%"}</span></div>`).join("")
-                          : '<div class="note">—</div>';
+  const top=data.slice(0,legendMax||5);
+  const restN=data.length-top.length, restSize=data.slice(top.length).reduce((s,e)=>s+e.size,0);
+  let leg = data.length ? top.map(e=>`<div class="pvLeg" title="${esc(e.name)}: ${e.size.toLocaleString()} people (${Math.round(e.pct)}%)"><span class="sw" style="background:${catColor(listKey,e.name)}"></span><span class="nm">${esc(e.name)}</span><span class="pvLegVal">${numMode?shortNum(e.size):Math.round(e.pct)+"%"}</span></div>`).join("")
+                        : '<div class="note">—</div>';
+  if(restN>0)leg+=`<div class="pvLeg" title="${restN} more"><span class="sw" style="background:#7c8698"></span><span class="nm">+${restN} more</span><span class="pvLegVal">${numMode?shortNum(restSize):Math.round(tot?restSize/tot*100:0)+"%"}</span></div>`;
   return `<div class="pvPie"><div class="pvPieH">${label}</div>${pieSVG(data,listKey,72)}<div class="pvLegs">${leg}</div></div>`;
 }
+function pieCell(label,p,key,listKey){ return pieCellPops(label,(p&&p.pops)||[],key,listKey,5); }
+// every pop across a realm's provinces (for the realm-wide demographics breakdown)
+function realmPops(r){ const out=[]; (world.provinces||[]).forEach(p=>{ if(p.realmId===r.id && !p.ocean)(p.pops||[]).forEach(q=>out.push(q)); }); return out; }
 function renderProvinceView(){
   const p=world.provinces.find(x=>x.id===state.selProvince); const ins=$("#inspector");
   if(!p){ins.innerHTML='<div class="empty">No province selected.</div>';return;}
@@ -4012,10 +4129,11 @@ function renderRealmView(){
   const cap=r.capitalId&&world.provinces.find(p=>p.id===r.capitalId);
   const admins=(r.adminCenters||[]).map(id=>world.provinces.find(p=>p.id===id)).filter(Boolean);
   const curReign=realmCurrentReign(r), curRuler=realmCurrentRuler(r);
-  const rulerChip = curRuler ? compChip("character", curRuler.id, {label:(curReign&&curReign.title?curReign.title+" ":"")+curRuler.name, color:curRuler.color}) : "—";
+  const rulerChip = curRuler ? compChip("character", curRuler.id, {label:(curReign&&curReign.title?curReign.title+" ":"")+curRuler.name, color:charThemeColor(curRuler)}) : "—";
   const row=(l,v)=>`<div class="rvRow"><span class="rvLbl">${l}</span><span class="rvVal">${v||"—"}</span></div>`;
   const raceTags=(arr)=>(arr&&arr.length) ? arr.map(x=>compChip("race",x,{color:raceGroupColor(x)})).join("") : `<span class="rvVal">—</span>`;
   const powers=realmPowers(r);
+  const rPops=realmPops(r);   // every pop across the realm, for the demographics pies
   ins.innerHTML=`
     <div class="realmCard realmView2" style="--rc:${r.color}">
       <div class="realmName rvBig">${esc(r.name)}</div>
@@ -4048,6 +4166,20 @@ function renderRealmView(){
         </div>
         <div class="rvColR">
           <div class="rvBlock rvTechBlock"><div class="rvBlockH">🔬 Tech Level</div>${techBreakdownBody(r,false)}</div>
+          <div class="rvBlock rvDemoBlock">
+            <div class="rvBlockH pvPopHead">📊 Demographics
+              <span class="pvPieToggle" title="Show percentages or population numbers">
+                <button class="pvTg${state.pvPieMode!=="num"?" on":""}" data-pm="pct">%</button>
+                <button class="pvTg${state.pvPieMode==="num"?" on":""}" data-pm="num"># People</button>
+              </span>
+            </div>
+            ${rPops.length?`<div class="pvPies">
+              ${pieCellPops("Religion",rPops,"religion","religions",6)}
+              ${pieCellPops("Culture",rPops,"culture","cultures",6)}
+              ${pieCellPops("Race",rPops,"race","subraces",6)}
+              ${pieCellPops("Language",rPops,"language","languages",6)}
+            </div>`:'<div class="note">No population recorded for this realm.</div>'}
+          </div>
         </div>
       </div>
       <details class="rvProvinces">
@@ -4059,6 +4191,7 @@ function renderRealmView(){
   `;
   { const rt=$("#right"); if(rt)rt.classList.add("wideRealm"); }
   ins.querySelectorAll(".compChip").forEach(el=>el.onclick=()=>openCompendium(el.dataset.cat, el.dataset.val));
+  ins.querySelectorAll(".pvTg[data-pm]").forEach(b=>b.onclick=()=>{ state.pvPieMode=b.dataset.pm; renderRealmView(); });
   $$(".pvp").forEach(el=>el.onclick=()=>selectProvince(el.dataset.pid));
   const srch=$("#rvProvSearch");
   if(srch)srch.addEventListener("input",e=>{const q=e.target.value.trim().toLowerCase();
@@ -4091,9 +4224,12 @@ function compendiumCats(){
   }) });
   // Characters (people — rulers, commanders, other roles)
   cats.push({ cat:"character", label:"👤 Characters", entries:allCharacters().map(c=>{
-    const roles=[]; if(c.isRuler)roles.push("Ruler"); charTagsOf(c).forEach(t=>roles.push(t));
-    return { id:c.id, name:c.name, color:c.color||"#c9a86f", sub:roles.join(" · "), used:[], ref:"", desc:c.description||"" };
+    const roles=[]; if(c.isRuler)roles.push("Ruler"); charTagsOf(c).forEach(t=>roles.push(t)); const dy=c.dynastyId&&dynastyById(c.dynastyId);
+    return { id:c.id, name:c.name, color:charThemeColor(c), sub:[dy?dy.name:"",roles.join(" · ")].filter(Boolean).join(" — "), used:[], ref:"", desc:c.description||"" };
   }) });
+  // Dynasties (families with trees)
+  cats.push({ cat:"dynasty", label:"🌳 Dynasties", entries:allDynasties().map(d=>({
+    id:d.id, name:d.name, color:d.color, sub:`${dynastyMembers(d.id).length} member${dynastyMembers(d.id).length===1?"":"s"}`, used:[], ref:"", desc:d.description||"" })) });
   // Realms (with their ruler timeline)
   cats.push({ cat:"realm", label:"🏰 Realms", entries:(world.realms||[]).map(r=>{
     const cur=realmCurrentRuler(r);
@@ -4129,7 +4265,10 @@ function compendiumCats(){
     const used=comp_realmNames(r=>(r.adminRaces||[]).includes(n)||(r.militaryRaces||[]).includes(n));
     return { id:n, name:n, color:raceGroupColor(n), sub:subCount(used), used, ref:"", desc:"" };
   }) });
-  return cats.filter(c=>c.entries.length);
+  // fixed sidebar order (Dynasties sits with Characters; anything unlisted falls in after)
+  const ORDER=["realm","government","economy","character","dynasty","religion","culture","language","race","discovery","power"];
+  const rank=k=>{ const i=ORDER.indexOf(k); return i<0?ORDER.length:i; };
+  return cats.filter(c=>c.entries.length).sort((a,b)=>rank(a.cat)-rank(b.cat));
 }
 // resolve the underlying object whose canonical description is edited (or null → lore-only)
 function compTargetObj(cat,id){
@@ -4137,6 +4276,7 @@ function compTargetObj(cat,id){
   if(cat==="discovery")return (world.discoveries||[]).find(x=>x.id===id)||null;
   if(cat==="religion")return religionMeta(id);
   if(cat==="character")return characterById(id);
+  if(cat==="dynasty")return dynastyById(id);
   return null;
 }
 let _compState={cat:null,val:null,open:null};
@@ -4144,38 +4284,49 @@ function compEntryFind(cat,id){ const cats=compendiumCats(); const c=cats.find(x
 function compLoreKey(cat,id){ return cat+"::"+id; }
 function compLore(cat,id){ ensureCompendium(world); const e=_compendium.lore[compLoreKey(cat,id)]; return (e&&typeof e.lore==="string")?e.lore:""; }
 function setCompLore(cat,id,text){ ensureCompendium(world); const k=compLoreKey(cat,id); const t=(text||"").replace(/\s+$/,""); if(t){ _compendium.lore[k]=_compendium.lore[k]||{}; _compendium.lore[k].lore=text; } else if(_compendium.lore[k]){ delete _compendium.lore[k]; } markDirty(); }
+// ---- Compendium navigation history (browser-style back) ----
+let _compHistory=[];
+function syncCompTabs(){ document.querySelectorAll("#cmpTabs .cmpTab").forEach(x=>x.classList.toggle("on",x.dataset.cat===_compState.cat)); }
+function compNav(next){ _compHistory.push({cat:_compState.cat,val:_compState.val,open:_compState.open}); _compState={cat:next.cat, val:next.val!=null?next.val:null, open:next.open!=null?next.open:null}; syncCompTabs(); renderCompMain(); }
+function compBack(){ if(!_compHistory.length)return; const p=_compHistory.pop(); _compState={cat:p.cat,val:p.val,open:p.open}; syncCompTabs(); renderCompMain(); }
 function openCompendium(focusCat, focusVal){
   const cats=compendiumCats();
   if(!cats.length){ openModal(`<div class="cmpWrap"><div class="cmpHead"><span class="cmpTitle">📖 Compendium</span><button class="btn ghost" onclick="closeModal()">✕</button></div><div class="note" style="padding:20px">Nothing recorded yet — add powers, discoveries, leaders and more, then check back.</div></div>`); return; }
   // pick active category
   let active=cats.find(c=>c.cat===focusCat)||cats[0];
   _compState={cat:active.cat, val:focusVal||null, open:null};
+  _compHistory=[];
   // a chip click (focusVal) jumps straight to that entry's full page
   if(focusVal!=null && active.entries.some(e=>String(e.id)===String(focusVal))) _compState.open=String(focusVal);
   const tabs=cats.map(c=>`<button class="cmpTab${c.cat===active.cat?" on":""}" data-cat="${c.cat}">${c.label} <span class="cmpN">${c.entries.length}</span></button>`).join("");
   openModal(`<div class="cmpWrap">
-    <div class="cmpHead"><span class="cmpTitle">📖 Compendium</span><input id="cmpSearch" class="txt" placeholder="🔍 Search…" autocomplete="off"/><button class="btn ghost" onclick="closeModal()">✕</button></div>
+    <div class="cmpHead"><button class="btn ghost cmpNavBack" id="cmpNavBack" title="Back to the previous page" disabled>◀</button><button class="btn ghost cmpToList" id="cmpToList" title="Back to the category list" style="display:none">☰ List</button><span class="cmpTitle">📖 Compendium</span><span style="flex:1"></span><button class="btn ghost" onclick="closeModal()">✕</button></div>
     <div class="cmpBody"><div class="cmpTabs" id="cmpTabs">${tabs}</div><div class="cmpMain" id="cmpMain"></div></div>
   </div>`);
-  $$("#cmpTabs .cmpTab").forEach(b=>b.onclick=()=>{ _compState={cat:b.dataset.cat,val:null,open:null}; renderCompMain(); $$("#cmpTabs .cmpTab").forEach(x=>x.classList.toggle("on",x.dataset.cat===b.dataset.cat)); });
-  const s=$("#cmpSearch"); if(s)s.addEventListener("input",renderCompMain);
+  $$("#cmpTabs .cmpTab").forEach(b=>b.onclick=()=>compNav({cat:b.dataset.cat,open:null}));
+  { const bb=$("#cmpNavBack"); if(bb)bb.onclick=compBack; }
+  { const tl=$("#cmpToList"); if(tl)tl.onclick=()=>compNav({cat:_compState.cat,open:null}); }
   renderCompMain();
 }
 function renderCompMain(){
   const wrap=$(".cmpWrap"); const main=$("#cmpMain"); if(!main)return;
   const editable=!VIEWER;
+  { const bb=$("#cmpNavBack"); if(bb)bb.disabled=!_compHistory.length; }
+  { const tl=$("#cmpToList"); if(tl)tl.style.display=(_compState.open!=null)?"":"none"; }
   // ---- DETAIL PAGE ----
   if(_compState.open!=null){
     if(wrap)wrap.classList.add("cmpDetailMode");
     const e=compEntryFind(_compState.cat,_compState.open);
     main.innerHTML=renderCompDetail(_compState.cat,e,editable);
-    const back=$("#cmpBack"); if(back)back.onclick=()=>{ _compState.open=null; renderCompMain(); };
+    const back=$("#cmpBack"); if(back)back.onclick=()=>compNav({cat:_compState.cat,open:null});
     main.querySelectorAll(".cmpProvLink").forEach(el=>el.onclick=()=>{ const p=world.provinces.find(x=>x.id===el.dataset.pid); if(p){ closeModal(); zoomToProvince(p); selectProvince(p.id); } });
     main.querySelectorAll(".cmpWonderLink").forEach(el=>el.onclick=()=>{ const w=(world.wonders||[]).find(x=>x.id===el.dataset.wid); if(w&&w.provinceId){ const p=world.provinces.find(x=>x.id===w.provinceId); if(p){ closeModal(); zoomToProvince(p); selectProvince(p.id); } } });
     main.querySelectorAll(".cmpRealmLink").forEach(el=>el.onclick=()=>{ const r=world.realms.find(x=>x.id===el.dataset.rid); if(r){ closeModal(); selectRealm(r.id); } });
     main.querySelectorAll(".cmpForceLink").forEach(el=>el.onclick=()=>{ const f=(world.forces||[]).find(x=>x.id===el.dataset.fid); if(f){ closeModal(); if(typeof selectForce==="function")selectForce(f.id); } });
     // cross-reference: jump to another compendium entry's page
-    main.querySelectorAll(".cmpXref").forEach(el=>el.onclick=()=>{ const cat=el.dataset.cat; _compState={cat,val:null,open:el.dataset.id}; $$("#cmpTabs .cmpTab").forEach(x=>x.classList.toggle("on",x.dataset.cat===cat)); renderCompMain(); });
+    main.querySelectorAll(".cmpXref").forEach(el=>el.onclick=()=>compGoto(el.dataset.cat, el.dataset.id));
+    // interactive family tree (both viewer and editor)
+    if(_compState.cat==="dynasty"){ const mt=main.querySelector("#dynTreeMount"); if(mt)mountDynTree(mt, dynastyById(_compState.open), editable); }
     if(editable){
       const obj=compTargetObj(_compState.cat,_compState.open);
       // structured field inputs (bound to the underlying object)
@@ -4190,6 +4341,7 @@ function renderCompMain(){
       if(lore){ lore.value=compLore(_compState.cat,_compState.open); lore.addEventListener("input",()=>setCompLore(_compState.cat,_compState.open,lore.value)); }
       if(_compState.cat==="character")wireCharacterEdit(main,_compState.open);
       if(_compState.cat==="realm")wireRealmRulerEdit(main,_compState.open);
+      if(_compState.cat==="dynasty")wireDynastyEdit(main,_compState.open);
     }
     main.scrollTop=0;
     return;
@@ -4197,23 +4349,131 @@ function renderCompMain(){
   // ---- LIST ----
   if(wrap)wrap.classList.remove("cmpDetailMode");
   const cats=compendiumCats(); const c=cats.find(x=>x.cat===_compState.cat)||cats[0]; if(!c)return;
-  const q=($("#cmpSearch")?.value||"").trim().toLowerCase();
-  const list=c.entries.filter(e=>!q||(e.name||"").toLowerCase().includes(q)||(e.sub||"").toLowerCase().includes(q));
-  const addBtn = (editable && c.cat==="character") ? `<button class="btn primary cmpAddNew" id="cmpAddChar" style="margin-bottom:10px">＋ New character</button>` : "";
-  main.innerHTML=addBtn+(list.length?list.map(e=>`
-    <div class="cmpEntry" data-id="${esc(String(e.id))}" tabindex="0">
-      <div class="cmpEntryH"><span class="rvDot" style="background:${e.color||"#7c8698"}"></span><span class="cmpEntryName">${esc(e.name||"—")}</span>${e.sub?`<span class="cmpEntrySub">${esc(e.sub)}</span>`:""}<span class="cmpEntryGo">›</span></div>
-    </div>`).join(""):'<div class="note" style="padding:20px">Nothing here yet.</div>');
-  main.querySelectorAll(".cmpEntry").forEach(el=>el.onclick=()=>{ _compState.open=el.dataset.id; renderCompMain(); });
-  const addC=main.querySelector("#cmpAddChar"); if(addC)addC.onclick=()=>{ const ch=newCharacter({name:"New Character"}); allCharacters().push(ch); markDirty(); _compState.open=ch.id; renderCompMain(); };
+  renderCompList(c, main, editable);
 }
-// Character page wiring (ruler toggle + role tags)
+// ---- Compendium list sorting: alphabetical by default, plus per-section extras ----
+const COMP_SORTS={
+  character:[["az","Name A–Z"],["za","Name Z–A"],["dynasty","Dynasty"],["reigns","Most reigns"]],
+  dynasty:[["az","Name A–Z"],["za","Name Z–A"],["members","Most members"],["realms","Most realms ruled"]],
+  realm:[["az","Name A–Z"],["za","Name Z–A"],["provinces","Largest (provinces)"],["population","Most populous"]],
+  discovery:[["az","Name A–Z"],["za","Name Z–A"],["tlAsc","TL (low→high)"],["tlDesc","TL (high→low)"],["field","Tech field"]],
+  power:[["az","Name A–Z"],["za","Name Z–A"],["type","Type"]],
+  religion:[["az","Name A–Z"],["za","Name Z–A"],["usage","Most realms"]],
+  culture:[["az","Name A–Z"],["za","Name Z–A"],["usage","Most realms"]],
+  language:[["az","Name A–Z"],["za","Name Z–A"],["usage","Most realms"]],
+  government:[["az","Name A–Z"],["za","Name Z–A"],["usage","Most realms"]],
+  economy:[["az","Name A–Z"],["za","Name Z–A"],["usage","Most realms"]],
+  race:[["az","Name A–Z"],["za","Name Z–A"],["usage","Most realms"]]
+};
+function compSortsFor(cat){ return COMP_SORTS[cat]||[["az","Name A–Z"],["za","Name Z–A"]]; }
+function compSortComparator(cat, key){
+  const az=(a,b)=>(a.name||"").localeCompare(b.name||"");
+  const provCount=id=>(world.provinces||[]).filter(p=>p.realmId===id).length;
+  const popOf=id=>(world.provinces||[]).filter(p=>p.realmId===id).reduce((s,p)=>s+(p.population||0),0);
+  switch(key){
+    case "za": return (a,b)=>-az(a,b);
+    case "usage": return (a,b)=>((b.used||[]).length-(a.used||[]).length)||az(a,b);
+    case "dynasty": return (a,b)=>{ const da=(dynastyById((characterById(a.id)||{}).dynastyId)||{}).name||"~"; const db=(dynastyById((characterById(b.id)||{}).dynastyId)||{}).name||"~"; return da.localeCompare(db)||az(a,b); };
+    case "reigns": return (a,b)=>(charRealmReigns(b.id).length-charRealmReigns(a.id).length)||az(a,b);
+    case "members": return (a,b)=>(dynastyMembers(b.id).length-dynastyMembers(a.id).length)||az(a,b);
+    case "realms": return (a,b)=>{ const da=dynastyById(a.id), db=dynastyById(b.id); return ((db?dynastyRealmsRuled(db).length:0)-(da?dynastyRealmsRuled(da).length:0))||az(a,b); };
+    case "provinces": return (a,b)=>(provCount(b.id)-provCount(a.id))||az(a,b);
+    case "population": return (a,b)=>(popOf(b.id)-popOf(a.id))||az(a,b);
+    case "tlAsc": return (a,b)=>{ const ta=(world.discoveries||[]).find(x=>x.id===a.id), tb=(world.discoveries||[]).find(x=>x.id===b.id); return (tlClamp(ta&&ta.tl)-tlClamp(tb&&tb.tl))||az(a,b); };
+    case "tlDesc": return (a,b)=>{ const ta=(world.discoveries||[]).find(x=>x.id===a.id), tb=(world.discoveries||[]).find(x=>x.id===b.id); return (tlClamp(tb&&tb.tl)-tlClamp(ta&&ta.tl))||az(a,b); };
+    case "field": return (a,b)=>{ const fa=((world.discoveries||[]).find(x=>x.id===a.id)||{}).field||""; const fb=((world.discoveries||[]).find(x=>x.id===b.id)||{}).field||""; return fa.localeCompare(fb)||az(a,b); };
+    case "type": return (a,b)=>{ const ta=((world.powers||[]).find(x=>x.id===a.id)||{}).type||""; const tb=((world.powers||[]).find(x=>x.id===b.id)||{}).type||""; return ta.localeCompare(tb)||az(a,b); };
+    default: return az;   // "az"
+  }
+}
+let _compListUI={};   // per-category search/filter/sort state {q,filter,sort}
+function renderCompList(c, main, editable){
+  const ui=_compListUI[c.cat]||(_compListUI[c.cat]={q:"",filter:"all",sort:"az"});
+  if(!ui.sort)ui.sort="az";
+  let addBtn="";
+  if(editable&&c.cat==="character")addBtn=`<button class="btn primary cmpAddNew" id="cmpAddChar">＋ New</button>`;
+  if(editable&&c.cat==="dynasty")addBtn=`<button class="btn primary cmpAddNew" id="cmpAddDyn">＋ New</button>`;
+  let filterSel="";
+  if(c.cat==="character"){
+    const dynOpts=allDynasties().map(d=>`<option value="dyn:${d.id}" ${ui.filter==="dyn:"+d.id?"selected":""}>${esc(d.name)}</option>`).join("");
+    filterSel=`<select id="cmpFilter" class="cmpFilterSel"><option value="all" ${ui.filter==="all"?"selected":""}>All</option><option value="current" ${ui.filter==="current"?"selected":""}>Current leaders</option><option value="ruler" ${ui.filter==="ruler"?"selected":""}>Ever ruled</option><option value="commander" ${ui.filter==="commander"?"selected":""}>Commanders</option>${dynOpts}</select>`;
+  }
+  const sortSel=`<select id="cmpSort" class="cmpFilterSel" title="Sort">${compSortsFor(c.cat).map(([v,l])=>`<option value="${v}" ${ui.sort===v?"selected":""}>${esc(l)}</option>`).join("")}</select>`;
+  const label=c.label.replace(/^[^\sA-Za-z]+\s*/,"").toLowerCase();
+  main.innerHTML=`<div class="cmpListBar"><input id="cmpListSearch" class="txt cmpListSearch" placeholder="🔍 Search ${esc(label)}…" autocomplete="off"/>${filterSel}${sortSel}${addBtn}</div><div id="cmpListItems"></div>`;
+  const si=main.querySelector("#cmpListSearch"); if(si){ si.value=ui.q; si.addEventListener("input",()=>{ ui.q=si.value; renderCompListItems(c); }); }
+  const fi=main.querySelector("#cmpFilter"); if(fi)fi.addEventListener("change",()=>{ ui.filter=fi.value; renderCompListItems(c); });
+  const so=main.querySelector("#cmpSort"); if(so)so.addEventListener("change",()=>{ ui.sort=so.value; renderCompListItems(c); });
+  const addC=main.querySelector("#cmpAddChar"); if(addC)addC.onclick=()=>{ const ch=newCharacter({name:"New Character"}); allCharacters().push(ch); markDirty(); compNav({cat:"character",open:ch.id}); };
+  const addD=main.querySelector("#cmpAddDyn"); if(addD)addD.onclick=()=>{ const d=newDynasty(); allDynasties().push(d); markDirty(); compNav({cat:"dynasty",open:d.id}); };
+  renderCompListItems(c);
+}
+function renderCompListItems(c){
+  const box=document.getElementById("cmpListItems"); if(!box)return;
+  const ui=_compListUI[c.cat]||{q:"",filter:"all",sort:"az"};
+  const q=(ui.q||"").trim().toLowerCase();
+  const cmp=compSortComparator(c.cat, ui.sort||"az");
+  let list=c.entries.filter(e=>!q||(e.name||"").toLowerCase().includes(q)||(e.sub||"").toLowerCase().includes(q));
+  if(c.cat==="character"){
+    const f=ui.filter||"all";
+    list=list.filter(e=>{ const cc=characterById(e.id); if(!cc)return false;
+      if(f==="current")return charCurrentRealms(cc).length>0;
+      if(f==="ruler")return charWasRuler(cc);
+      if(f==="commander")return charHasTag(cc,"Commander")||charForces(cc.id).length>0;
+      if(f.slice(0,4)==="dyn:")return cc.dynastyId===f.slice(4);
+      return true; });
+    // current leaders are pinned above the sorted list (by realm size), never mixed into the sort
+    const pinned=[], rest=[];
+    list.forEach(e=>{ const cc=characterById(e.id); const rr=cc?charCurrentRealms(cc):[]; if(rr.length){ e._lead=charLeadScore(cc); e._realms=rr; pinned.push(e); } else { delete e._realms; rest.push(e); } });
+    pinned.sort((a,b)=>(b._lead-a._lead)||(a.name||"").localeCompare(b.name||""));
+    rest.sort(cmp);
+    list=pinned.concat(rest);
+  } else {
+    list=list.slice().sort(cmp);
+  }
+  if(!list.length){ box.innerHTML='<div class="note" style="padding:18px">No matches.</div>'; return; }
+  box.innerHTML=list.map(e=>{
+    const pin=e._realms?`<span class="cmpPin" title="Currently leading ${e._realms.map(r=>esc(r.name)).join(', ')}">👑 ${e._lead}</span>`:"";
+    return `<div class="cmpEntry${e._realms?' pinned':''}" data-id="${esc(String(e.id))}" tabindex="0">
+      <div class="cmpEntryH"><span class="rvDot" style="background:${e.color||"#7c8698"}"></span><span class="cmpEntryName">${esc(e.name||"—")}</span>${e.sub?`<span class="cmpEntrySub">${esc(e.sub)}</span>`:""}${pin}<span class="cmpEntryGo">›</span></div>
+    </div>`; }).join("");
+  box.querySelectorAll(".cmpEntry").forEach(el=>el.onclick=()=>compNav({cat:c.cat,open:el.dataset.id}));
+}
+// Rich-text editing (bold/italic/underline/font size) for long descriptions.
+function richToolbarHTML(){
+  return `<div class="richTb">
+    <button type="button" class="richB" data-cmd="bold" title="Bold"><b>B</b></button>
+    <button type="button" class="richB" data-cmd="italic" title="Italic"><i>I</i></button>
+    <button type="button" class="richB" data-cmd="underline" title="Underline"><u>U</u></button>
+    <span class="richSep"></span>
+    <select class="richSize" title="Font size"><option value="">Size…</option><option value="1">XS</option><option value="2">Small</option><option value="3">Normal</option><option value="4">Medium</option><option value="5">Large</option><option value="6">XL</option><option value="7">Huge</option></select>
+    <span class="richSep"></span>
+    <button type="button" class="richB" data-cmd="insertUnorderedList" title="Bullet list">•</button>
+    <button type="button" class="richB" data-cmd="removeFormat" title="Clear formatting">✕ᶠ</button>
+  </div>`;
+}
+function wireRichEditor(wrap, onChange){
+  const area=wrap.querySelector(".richArea"); if(!area)return;
+  wrap.querySelectorAll(".richB").forEach(b=>b.addEventListener("mousedown",e=>{ e.preventDefault(); document.execCommand(b.dataset.cmd,false,null); area.focus(); onChange(area.innerHTML); }));
+  const sz=wrap.querySelector(".richSize"); if(sz)sz.addEventListener("change",()=>{ if(sz.value){ document.execCommand("fontSize",false,sz.value); } sz.value=""; area.focus(); onChange(area.innerHTML); });
+  area.addEventListener("input",()=>onChange(area.innerHTML));
+}
+// Character page wiring (all infobox fields, portrait, tags, dynasty, rich description)
 function wireCharacterEdit(main, id){
   const c=characterById(id); if(!c)return;
-  const rul=main.querySelector("#chIsRuler"); if(rul){ rul.checked=!!c.isRuler; rul.addEventListener("change",()=>{ c.isRuler=rul.checked; markDirty(); renderCompMain(); }); }
+  const pf=main.querySelector("#chPortrait"); if(pf)pf.onchange=()=>{ const file=pf.files&&pf.files[0]; if(!file)return; const rd=new FileReader(); rd.onload=()=>{ c.portrait=rd.result; markDirty(); renderCompMain(); }; rd.readAsDataURL(file); };
+  const pc=main.querySelector("#chPortraitClear"); if(pc)pc.onclick=()=>{ c.portrait=""; markDirty(); renderCompMain(); };
+  const dy=main.querySelector("#chDynasty"); if(dy)dy.onchange=()=>{ if(dy.value==="__new"){ const nm=(prompt("New dynasty name:")||"").trim(); if(nm){ const d=newDynasty(nm); d.color=charThemeColor(c); allDynasties().push(d); c.dynastyId=d.id; } markDirty(); renderCompMain(); return; } c.dynastyId=dy.value||""; markDirty(); renderCompMain(); };
+  const da=main.querySelector("#chDynAccent"); if(da){ da.checked=!!c.useDynastyAccent; da.onchange=()=>{ c.useDynastyAccent=da.checked; markDirty(); renderCompMain(); }; }
+  const gf=main.querySelector("#chGoldFrame"); if(gf){ gf.checked=!!c.goldFrame; gf.onchange=()=>{ c.goldFrame=gf.checked; markDirty(); }; }
+  const cr=main.querySelector("#chColorReset"); if(cr)cr.onclick=()=>{ c.color=""; markDirty(); renderCompMain(); };
+  main.querySelectorAll(".chLangX").forEach(el=>el.onclick=()=>{ c.languages=(c.languages||[]).filter(l=>l!==el.dataset.lang); markDirty(); renderCompMain(); });
+  const la=main.querySelector("#chLangAdd"); if(la)la.onchange=()=>{ const v=la.value; if(v){ c.languages=c.languages||[]; if(!c.languages.includes(v))c.languages.push(v); markDirty(); renderCompMain(); } };
+  const rul=main.querySelector("#chIsRuler"); if(rul){ rul.checked=!!c.isRuler; rul.onchange=()=>{ c.isRuler=rul.checked; markDirty(); renderCompMain(); }; }
   main.querySelectorAll(".chTagX").forEach(el=>el.onclick=()=>{ toggleCharTag(c,el.dataset.tag); renderCompMain(); });
   const addSel=main.querySelector("#chTagAdd"); if(addSel)addSel.onchange=()=>{ const v=addSel.value; if(v){ if(!charHasTag(c,v))c.tags.push(v); markDirty(); renderCompMain(); } };
   const newT=main.querySelector("#chNewTag"); if(newT)newT.addEventListener("keydown",ev=>{ if(ev.key==="Enter"){ ev.preventDefault(); const v=newT.value.trim(); if(v){ const tags=allCharTags(); if(!tags.includes(v))tags.push(v); if(!charHasTag(c,v))c.tags.push(v); markDirty(); renderCompMain(); } } });
+  const rich=main.querySelector(".richWrap"); if(rich)wireRichEditor(rich,(html)=>{ c.descHtml=html; markDirty(); });
   const del=main.querySelector("#chDelete"); if(del)del.onclick=()=>{ if(!confirm("Delete this character? They'll be removed from any realm timelines and army commands."))return;
     _compendium.characters=_compendium.characters.filter(x=>x.id!==id);
     Object.keys(_compendium.realmRulers).forEach(rid=>{ _compendium.realmRulers[rid]=_compendium.realmRulers[rid].filter(rg=>rg.charId!==id); });
@@ -4260,44 +4520,93 @@ function compEditFields(cat, e){
     </div>`;
   return "";
 }
-// ---- Character page (rulers/commanders/etc.) ----
-function renderCharacterPage(e, editable){
-  const c=characterById(e.id); if(!c)return '<div class="cmpDetail"><button class="btn ghost cmpBack" id="cmpBack">← Compendium</button><div class="note" style="padding:20px">Not found.</div></div>';
+// ---- Character page (wiki-style: title, infobox, rich description) ----
+function ibRow(l,v){ return `<div class="ibRow"><span class="ibL">${esc(l)}</span><span class="ibV">${v}</span></div>`; }
+// colour for a cross-reference target, so links can be coloured chips matching that thing
+function compRefColor(cat,id){
+  switch(cat){
+    case "religion": return catColor("religions",id);
+    case "culture": return catColor("cultures",id);
+    case "language": return catColor("languages",id);
+    case "economy": return catColor("economies",id);
+    case "government": return "#7c8698";
+    case "race": return raceGroupColor(id);
+    case "realm": { const r=(world.realms||[]).find(x=>x.id===id); return r?r.color:"#7c8698"; }
+    case "character": { const c=characterById(id); return c?charThemeColor(c):"#7c8698"; }
+    case "dynasty": { const d=dynastyById(id); return d?d.color:"#7c8698"; }
+    case "power": { const p=(world.powers||[]).find(x=>x.id===id); return p?(p.color||"#7c5cff"):"#7c5cff"; }
+    case "discovery": { const d=(world.discoveries||[]).find(x=>x.id===id); return d?discoveryColor(d):"#e0a020"; }
+    default: return "#7c8698";
+  }
+}
+// a clickable, colour-themed cross-reference chip to another Compendium page
+function compRefChip(cat,id,label){ const col=compRefColor(cat,id); return `<button class="cmpRefChip cmpXref" data-cat="${esc(cat)}" data-id="${esc(String(id))}" style="--cc:${col}"><span class="rvDot" style="background:${col}"></span>${esc(label!=null?label:id)}</button>`; }
+function charInfoboxView(c){
+  const rows=[]; const dy=c.dynastyId&&dynastyById(c.dynastyId);
+  if(dy)rows.push(ibRow("Dynasty", compRefChip("dynasty",dy.id,dy.name)));
+  if(c.race)rows.push(ibRow("Race", compRefChip("race",c.race)));
+  if(c.culture)rows.push(ibRow("Culture", compRefChip("culture",c.culture)));
+  if(c.religion)rows.push(ibRow("Religion", compRefChip("religion",c.religion)));
+  if(c.languages&&c.languages.length)rows.push(ibRow("Language"+(c.languages.length>1?"s":""), c.languages.map(l=>compRefChip("language",l)).join(" ")));
+  const roles=[]; if(c.isRuler)roles.push("Ruler"); charTagsOf(c).forEach(t=>roles.push(t));
+  if(roles.length)rows.push(ibRow("Role"+(roles.length>1?"s":""), roles.map(esc).join(", ")));
+  const reigns=charRealmReigns(c.id);
+  if(reigns.length)rows.push(ibRow("Ruler of", reigns.map(({realm,reign})=>`${compRefChip("realm",realm.id,realm.name)}${reign.title?` <span class="note">${esc(reign.title)}</span>`:""}${(reign.from||reign.to)?` <span class="note">${esc(reign.from||"?")}–${esc(reign.to||"present")}</span>`:""}`).join("<br>")));
+  return rows.join("")||'<div class="note">No details recorded.</div>';
+}
+function charInfoboxEdit(c){
+  const langs=c.languages||[];
+  const langOpts=(world.lists.languages||[]).filter(l=>l!=="No Language"&&!langs.includes(l)).map(l=>`<option value="${esc(l)}">${esc(l)}</option>`).join("");
+  const selOpts=(list,v)=>`<option value="">—</option>`+(list||[]).map(o=>`<option value="${esc(o)}" ${o===v?"selected":""}>${esc(o)}</option>`).join("");
+  const dynOpts=`<option value="">— none —</option>`+allDynasties().map(d=>`<option value="${d.id}" ${c.dynastyId===d.id?"selected":""}>${esc(d.name)}</option>`).join("")+`<option value="__new">＋ New dynasty…</option>`;
+  const portrait=c.portrait?`<img class="wikiPortrait" src="${esc(c.portrait)}" alt=""/>`:'<div class="wikiPortraitEmpty">No portrait</div>';
+  const langChips=langs.length?langs.map(l=>`<span class="tag">${esc(l)} <span class="x chLangX" data-lang="${esc(l)}">✕</span></span>`).join(""):'<span class="note">None</span>';
   const tags=charTagsOf(c);
-  const roles=[]; if(c.isRuler)roles.push("👑 Ruler"); tags.forEach(t=>roles.push(t));
+  const tagChips=tags.length?tags.map(t=>`<span class="tag">${esc(t)} <span class="x chTagX" data-tag="${esc(t)}">✕</span></span>`).join(""):'<span class="note">None</span>';
+  const tagOpts=allCharTags().filter(t=>!tags.includes(t)).map(t=>`<option value="${esc(t)}">${esc(t)}</option>`).join("");
+  return `${portrait}
+    <div class="ibEditRow"><label class="btn tiny ibUpload">📷 Portrait<input type="file" id="chPortrait" accept="image/*" hidden/></label>${c.portrait?'<button class="btn tiny" id="chPortraitClear">Clear</button>':""}</div>
+    <label class="ibField"><span>Name</span><input class="txt cmpFld" data-k="name" data-live="1"/></label>
+    <label class="ibField"><span>Dynasty</span><select id="chDynasty">${dynOpts}</select></label>
+    <label class="ibField"><span>Race</span><select class="cmpFld" data-k="race">${selOpts(world.lists.races,c.race)}</select></label>
+    <label class="ibField"><span>Culture</span><select class="cmpFld" data-k="culture">${selOpts(world.lists.cultures,c.culture)}</select></label>
+    <label class="ibField"><span>Religion</span><select class="cmpFld" data-k="religion">${selOpts(world.lists.religions,c.religion)}</select></label>
+    <div class="ibField"><span>Languages</span><div class="cmpTagChips">${langChips}</div><select id="chLangAdd"><option value="">＋ add language…</option>${langOpts}</select></div>
+    <label class="ibField cmpCheck"><input type="checkbox" id="chIsRuler"/> <span>Ruler <span class="note">(place them on a realm's timeline via the Realms tab)</span></span></label>
+    <div class="ibField"><span>Role tags</span><div class="cmpTagChips">${tagChips}</div><div class="cmpTagAddRow"><select id="chTagAdd"><option value="">＋ tag…</option>${tagOpts}</select><input id="chNewTag" class="txt" placeholder="new + Enter"/></div></div>
+    <div class="ibField"><span>Theme colour <span class="note">(defaults to realm)</span></span><div class="ibColorRow"><span class="sw" style="background:${charThemeColor(c)}"></span><input type="color" class="cmpFld" data-k="color" data-live="1"/><button class="btn tiny" id="chColorReset" title="Use realm colour">↺</button></div></div>
+    <label class="ibField cmpCheck"><input type="checkbox" id="chDynAccent"/> <span>Use dynasty accent colour</span></label>
+    <label class="ibField"><span>Tree emblem <span class="note">(emoji/symbol for important members)</span></span><input class="txt cmpFld" data-k="embroidery" placeholder="e.g. ♔ ⚔ ✦ 🦅"/></label>
+    <label class="ibField cmpCheck"><input type="checkbox" id="chGoldFrame"/> <span>Gold shield <span class="note">(mark as specially important)</span></span></label>`;
+}
+function renderCharacterPage(e, editable){
+  const c=characterById(e.id); if(!c)return '<div class="cmpDetail"><div class="note" style="padding:20px">Not found.</div></div>';
+  const theme=charThemeColor(c), accent=charAccentColor(c)||theme;
+  const roles=[]; if(c.isRuler)roles.push("👑 Ruler"); charTagsOf(c).forEach(t=>roles.push(t));
+  const dy=c.dynastyId&&dynastyById(c.dynastyId);
+  const subtitle=[dy?dy.name:"",roles.join(" · ")].filter(Boolean).join(" — ");
   const reigns=charRealmReigns(c.id), forces=charForces(c.id);
   const reignRows = reigns.length ? reigns.map(({realm,reign})=>`<div class="li cmpXref" data-cat="realm" data-id="${realm.id}" style="cursor:pointer">🏰 <b>${esc(realm.name)}</b>${reign.title?` — ${esc(reign.title)}`:""}${(reign.from||reign.to)?` <span class="note">(${esc(reign.from||"?")}–${esc(reign.to||"present")})</span>`:""}</div>`).join("") : '<div class="note">Not recorded as a ruler of any realm.</div>';
   const forceRows = forces.length ? forces.map(f=>{ const r=world.realms.find(x=>x.id===f.realmId); return `<div class="li cmpForceLink" data-fid="${f.id}" style="cursor:pointer">⚔ <b>${esc(f.name)}</b>${r?` <span class="note">— ${esc(r.name)}</span>`:""}</div>`; }).join("") : '<div class="note">Not commanding any army.</div>';
-  let body;
-  if(editable){
-    const tagChips = tags.length?tags.map(t=>`<span class="tag">${esc(t)} <span class="x chTagX" data-tag="${esc(t)}">✕</span></span>`).join(""):'<span class="note">No role tags yet.</span>';
-    const tagOpts = allCharTags().filter(t=>!tags.includes(t)).map(t=>`<option value="${esc(t)}">${esc(t)}</option>`).join("");
-    body=`<div class="cmpEditGrid">
-        <label class="cmpF"><span>Name</span><input class="txt cmpFld" data-k="name" data-live="1"/></label>
-        <label class="cmpF"><span>Colour</span><input type="color" class="cmpFld" data-k="color" data-live="1"/></label>
-        <label class="cmpF cmpFWide cmpCheck"><input type="checkbox" id="chIsRuler"/> <span>Is a ruler <span class="note">(can be placed on realm reign timelines)</span></span></label>
-        <label class="cmpF cmpFWide"><span>Description</span><textarea class="txt cmpFld" data-k="description" rows="5"></textarea></label>
+  const infobox = editable ? charInfoboxEdit(c) : `${c.portrait?`<img class="wikiPortrait" src="${esc(c.portrait)}" alt=""/>`:""}<div class="wikiBoxName">${esc(c.name)}</div>${charInfoboxView(c)}`;
+  const mainCol = editable
+    ? `<div class="cmpSecH">📜 Description</div><div class="richWrap">${richToolbarHTML()}<div class="richArea" contenteditable="true">${charDescHtml(c)}</div></div>`
+    : (charDescHtml(c)?`<div class="wikiDesc">${charDescHtml(c)}</div>`:'<span class="note">No description yet.</span>');
+  return `<div class="cmpDetail wikiPage" style="--th:${theme}; --ac:${accent}">    <div class="wikiHead"><div class="wikiTitle cmpDetName">${esc(c.name)}</div>${subtitle?`<div class="wikiSubtitle">${esc(subtitle)}</div>`:""}</div>
+    <div class="wikiCols">
+      <div class="wikiMain">
+        ${mainCol}
+        <div class="cmpSecH">👑 Reigns</div><div class="list">${reignRows}</div>
+        <div class="cmpSecH">⚔ Commands</div><div class="list">${forceRows}</div>
+        ${editable?'<div style="margin-top:16px"><button class="btn danger" id="chDelete">🗑 Delete character</button></div>':""}
       </div>
-      <div class="cmpSecH">🏷 Role tags <span class="note">(Commander, Diplomat, …)</span></div>
-      <div class="cmpTagChips" id="chTags">${tagChips}</div>
-      <div class="cmpTagAddRow"><select id="chTagAdd"><option value="">＋ add role tag…</option>${tagOpts}</select><input id="chNewTag" class="txt" placeholder="or type a new role + Enter"/></div>`;
-  } else {
-    body=c.description?`<div class="cmpDesc">${esc(c.description).replace(/\n/g,"<br>")}</div>`:'<span class="note">No description yet.</span>';
-  }
-  return `<div class="cmpDetail">
-    <button class="btn ghost cmpBack" id="cmpBack">← Compendium</button>
-    <div class="cmpDetHead"><span class="rvDot" style="background:${c.color};width:20px;height:20px"></span><span class="cmpDetName">${esc(c.name)}</span></div>
-    <div class="cmpDetSub">${roles.length?roles.map(esc).join(" · "):"Character"}</div>
-    <div class="cmpDetBody">${body}
-      <div class="cmpSecH">👑 Reigns</div><div class="list">${reignRows}</div>
-      <div class="cmpSecH">⚔ Commands</div><div class="list">${forceRows}</div>
-      ${editable?'<div style="margin-top:16px"><button class="btn danger" id="chDelete">🗑 Delete character</button></div>':""}
+      <aside class="wikiBox">${infobox}</aside>
     </div>
   </div>`;
 }
 // ---- Realm page (ruler timeline) ----
 function renderRealmPage(e, editable){
-  const r=world.realms.find(x=>x.id===e.id); if(!r)return '<div class="cmpDetail"><button class="btn ghost cmpBack" id="cmpBack">← Compendium</button><div class="note" style="padding:20px">Not found.</div></div>';
+  const r=world.realms.find(x=>x.id===e.id); if(!r)return '<div class="cmpDetail"><div class="note" style="padding:20px">Not found.</div></div>';
   const rulers=realmRulers(r);
   const cur=realmCurrentRuler(r);
   let timeline;
@@ -4329,9 +4638,7 @@ function renderRealmPage(e, editable){
   const loreBlock = editable
     ? `<div class="cmpSecH">📜 Compendium article</div><textarea class="cmpLoreEdit" rows="7" placeholder="Write about ${esc(r.name)}…"></textarea>`
     : (lore?`<div class="cmpSecH">📜 About</div><div class="cmpLoreView">${esc(lore).replace(/\n/g,"<br>")}</div>`:"");
-  return `<div class="cmpDetail">
-    <button class="btn ghost cmpBack" id="cmpBack">← Compendium</button>
-    <div class="cmpDetHead"><span class="rvDot" style="background:${r.color};width:20px;height:20px"></span><span class="cmpDetName">${esc(r.name)}</span></div>
+  return `<div class="cmpDetail">    <div class="cmpDetHead"><span class="rvDot" style="background:${r.color};width:20px;height:20px"></span><span class="cmpDetName">${esc(r.name)}</span></div>
     <div class="cmpDetSub">${cur?`Current ruler: ${esc(cur.name)}`:"No current ruler"} · <span class="li cmpRealmLink" data-rid="${r.id}" style="display:inline;cursor:pointer;padding:0">🗺 open on map</span></div>
     <div class="cmpDetBody">
       <div class="cmpSecH">👑 Rulers timeline</div>
@@ -4340,11 +4647,198 @@ function renderRealmPage(e, editable){
     </div>
   </div>`;
 }
+// ---- Dynasty page (family tree, crest, realms ruled) ----
+function reignYears(reign){ const f=parseInt(reign.from,10), t=parseInt(reign.to,10); if(isFinite(f)&&isFinite(t))return Math.max(0,t-f); return 0; }
+function dynastyRealmsRuled(d){
+  const agg={};
+  dynastyMembers(d.id).forEach(m=>{
+    charRealmReigns(m.id).forEach(({realm,reign})=>{ const a=agg[realm.id]=agg[realm.id]||{realm,years:0,count:0}; a.count++; a.years+=reignYears(reign); });
+  });
+  return Object.values(agg).sort((x,y)=>(y.years-x.years)||(y.count-x.count));
+}
+// build the family-tree node graph from members + placeholders
+function dynastyTreeNodes(d){
+  const members=dynastyMembers(d.id), phs=d.placeholders||[];
+  const nodes=[
+    ...members.map(m=>({id:m.id,name:m.name,parentId:m.parentId||"",gap:!!m.parentGap,ph:false})),
+    ...phs.map(p=>({id:p.id,name:p.name||"…",parentId:p.parentId||"",gap:!!p.parentGap,ph:true}))
+  ];
+  const byId={}; nodes.forEach(n=>byId[n.id]=n);
+  const kids={}, roots=[];
+  nodes.forEach(n=>{ if(n.parentId&&byId[n.parentId]){ (kids[n.parentId]=kids[n.parentId]||[]).push(n); } else roots.push(n); });
+  return {nodes,byId,kids,roots};
+}
+function dynastyTreeHTML(d){
+  const {kids,roots}=dynastyTreeNodes(d);
+  if(!roots.length)return '<div class="note">No members yet. Add characters to this dynasty, then set their parents below.</div>';
+  const nodeHTML=(n)=>{
+    const label = n.ph ? `<span class="dynPh">${esc(n.name||"…")}</span>` : `<span class="cmpXref dynMember" data-cat="character" data-id="${n.id}">${esc(n.name)}</span>`;
+    const ch=kids[n.id]||[];
+    const sub = ch.length?`<ul>${ch.map(k=>`<li class="${k.gap?"dynGap":""}">${nodeHTML(k)}</li>`).join("")}</ul>`:"";
+    return label+sub;
+  };
+  return `<ul class="dynTree">${roots.map(n=>`<li class="${n.gap?"dynGap":""}">${nodeHTML(n)}</li>`).join("")}</ul>`;
+}
+// navigate the open Compendium to another entry's page (records history)
+function compGoto(cat, id){ compNav({cat, open:id}); }
+// which node the tree auto-centres on: current ruler of the largest existing realm, else the founder (a root)
+function dynastyFocusNode(d){
+  let best=null,bestSize=-1;
+  dynastyMembers(d.id).forEach(m=>{ (world.realms||[]).forEach(r=>{ const cur=realmCurrentRuler(r); if(cur&&cur.id===m.id){ const size=(world.provinces||[]).filter(p=>p.realmId===r.id).length; if(size>bestSize){bestSize=size;best=m.id;} } }); });
+  if(best)return best;
+  const {roots}=dynastyTreeNodes(d); return roots.length?roots[0].id:(dynastyMembers(d.id)[0]||{}).id||null;
+}
+// node card contents: shield frame for portraits (gold if ever a ruler), emblem/embroidery for important members
+// shield metal tier: gold = specially marked; silver = was ever a ruler; copper = never a ruler
+function charMetalTier(c){ if(c.goldFrame)return "gold"; return charWasRuler(c)?"silver":"copper"; }
+function nameInitials(name){ return (name||"?").trim().split(/\s+/).map(w=>w[0]).slice(0,2).join("").toUpperCase()||"?"; }
+function dynNodeInner(n){
+  if(n.ph)return `<div class="dynPhCard">${esc(n.name||"…")}</div>`;
+  const c=characterById(n.id); if(!c)return `<div class="dynPhCard">?</div>`;
+  const tier=charMetalTier(c);
+  const emb=c.embroidery?`<span class="dynEmb">${esc(c.embroidery)}</span>`:"";
+  const inner=c.portrait?`<img src="${esc(c.portrait)}" draggable="false"/>`:`<span class="dynInit">${esc(nameInitials(c.name))}</span>`;
+  return `<div class="dynShield ${tier}${c.embroidery?' emb':''}"><div class="dynShieldInner">${inner}</div>${emb}</div><div class="dynNodeName">${esc(c.name)}</div>`;
+}
+let _dynView={};   // per-dynasty pan/zoom {tx,ty,scale}
+function mountDynTree(container, d, editable){
+  if(!container||!d)return;
+  const g=dynastyTreeNodes(d); const {kids,roots}=g; const nodes=g.nodes;
+  if(!nodes.length){ container.innerHTML='<div class="note">No members yet — set a character\'s Dynasty to this house, then arrange the tree here.</div>'; return; }
+  const NX=155, NY=150, PAD=90;
+  // depth (generation)
+  const depth={}, dseen=new Set(), stack=roots.map(r=>[r,0]);
+  while(stack.length){ const [n,dep]=stack.pop(); if(dseen.has(n.id))continue; dseen.add(n.id); depth[n.id]=dep; (kids[n.id]||[]).forEach(k=>stack.push([k,dep+1])); }
+  nodes.forEach(n=>{ if(depth[n.id]==null)depth[n.id]=0; });
+  // x via leaf counter (children centred over their span)
+  const pos={}; let leaf=0; const done=new Set();
+  function place(n){ if(done.has(n.id))return pos[n.id].x; done.add(n.id); const ch=kids[n.id]||[]; let x; if(!ch.length){ x=leaf*NX; leaf++; } else { const xs=ch.map(place); x=(xs[0]+xs[xs.length-1])/2; } pos[n.id]={x,y:depth[n.id]*NY}; return x; }
+  roots.forEach(r=>{ place(r); leaf++; });
+  nodes.forEach(n=>{ if(!pos[n.id]){ place(n); leaf++; } });   // orphans / cycle-safety
+  // manual position overrides
+  nodes.forEach(n=>{ const src=n.ph?(d.placeholders||[]).find(p=>p.id===n.id):characterById(n.id); if(src&&typeof src.treeX==="number"&&typeof src.treeY==="number")pos[n.id]={x:src.treeX,y:src.treeY}; });
+  const xs=nodes.map(n=>pos[n.id].x), ys=nodes.map(n=>pos[n.id].y);
+  const offX=-Math.min(...xs)+PAD, offY=-Math.min(...ys)+PAD;
+  const w=Math.max(...xs)-Math.min(...xs)+PAD*2, h=Math.max(...ys)-Math.min(...ys)+PAD*2;
+  container.innerHTML=`<div class="dynTreeView${editable?' canEdit':''}"><div class="dynCanvas"><svg class="dynEdges" width="${w}" height="${h}" style="width:${w}px;height:${h}px"></svg></div>
+    <div class="dynTreeCtrls"><button class="btn tiny" data-z="in" title="Zoom in">＋</button><button class="btn tiny" data-z="out" title="Zoom out">－</button><button class="btn tiny" data-z="fit" title="Recentre">⊙</button>${editable?'<button class="btn tiny" data-z="reset" title="Reset auto-layout">↺</button>':""}</div>
+    <div class="dynTreeHint">Drag to pan · scroll to zoom${editable?" · drag a card to move it":""}</div></div>`;
+  const view=container.querySelector(".dynTreeView"), canvas=container.querySelector(".dynCanvas"), svg=container.querySelector(".dynEdges");
+  const elMap={};
+  nodes.forEach(n=>{ const el=document.createElement("div"); el.className="dynNode"+(n.ph?" ph":""); el.dataset.id=n.id; el.dataset.ph=n.ph?"1":"0"; el.style.left=(pos[n.id].x+offX)+"px"; el.style.top=(pos[n.id].y+offY)+"px"; el.innerHTML=dynNodeInner(n); canvas.appendChild(el); elMap[n.id]=el; });
+  function drawEdges(){ let s=""; nodes.forEach(n=>{ (kids[n.id]||[]).forEach(k=>{ const a=elMap[n.id],b=elMap[k.id]; if(!a||!b)return; const ax=parseFloat(a.style.left),ay=parseFloat(a.style.top),bx=parseFloat(b.style.left),by=parseFloat(b.style.top); const my=(ay+by)/2; s+=`<path d="M ${ax} ${ay} C ${ax} ${my}, ${bx} ${my}, ${bx} ${by}" class="dynEdge${k.gap?' gap':''}"/>`; }); }); svg.innerHTML=s; }
+  drawEdges();
+  let vs=_dynView[d.id];
+  const applyT=()=>{ canvas.style.transform=`translate(${vs.tx}px,${vs.ty}px) scale(${vs.scale})`; };
+  const centre=()=>{ const fid=dynastyFocusNode(d), fe=elMap[fid]; const fx=fe?parseFloat(fe.style.left):offX, fy=fe?parseFloat(fe.style.top):offY; const vw=view.clientWidth||600, vh=view.clientHeight||440; vs={scale:1, tx:vw/2-fx, ty:vh/2-fy}; _dynView[d.id]=vs; };
+  if(!vs){ centre(); vs=_dynView[d.id]; }
+  applyT();
+  view.querySelectorAll("[data-z]").forEach(b=>b.onclick=ev=>{ ev.stopPropagation(); const z=b.dataset.z;
+    if(z==="in")vs.scale=Math.min(2.5,vs.scale*1.2);
+    else if(z==="out")vs.scale=Math.max(0.3,vs.scale/1.2);
+    else if(z==="fit"){ centre(); vs=_dynView[d.id]; }
+    else if(z==="reset"){ nodes.forEach(n=>{ const src=n.ph?(d.placeholders||[]).find(p=>p.id===n.id):characterById(n.id); if(src){src.treeX=null;src.treeY=null;} }); markDirty(); delete _dynView[d.id]; mountDynTree(container,d,editable); return; }
+    applyT(); });
+  view.addEventListener("wheel",ev=>{ ev.preventDefault(); vs.scale=Math.max(0.3,Math.min(2.5,vs.scale*(ev.deltaY<0?1.1:1/1.1))); applyT(); },{passive:false});
+  view.addEventListener("pointerdown",ev=>{
+    if(ev.target.closest("[data-z]"))return;
+    const nodeEl=ev.target.closest(".dynNode");
+    const sx=ev.clientX, sy=ev.clientY, sTx=vs.tx, sTy=vs.ty; let moved=false;
+    const nStart=nodeEl?{x:parseFloat(nodeEl.style.left),y:parseFloat(nodeEl.style.top)}:null;
+    const nodeDrag=nodeEl&&editable;
+    try{ view.setPointerCapture(ev.pointerId); }catch(_){}
+    const mv=e2=>{ const dx=e2.clientX-sx, dy=e2.clientY-sy; if(Math.abs(dx)+Math.abs(dy)>4)moved=true;
+      if(nodeDrag){ nodeEl.style.left=(nStart.x+dx/vs.scale)+"px"; nodeEl.style.top=(nStart.y+dy/vs.scale)+"px"; drawEdges(); }
+      else { vs.tx=sTx+dx; vs.ty=sTy+dy; applyT(); } };
+    const up=()=>{ try{ view.releasePointerCapture(ev.pointerId); }catch(_){}
+      view.removeEventListener("pointermove",mv); view.removeEventListener("pointerup",up);
+      if(!moved && nodeEl){ if(nodeEl.dataset.ph!=="1")compGoto("character", nodeEl.dataset.id); }
+      else if(nodeDrag && moved){ const id=nodeEl.dataset.id, ph=nodeEl.dataset.ph==="1"; const src=ph?(d.placeholders||[]).find(p=>p.id===id):characterById(id); if(src){ src.treeX=parseFloat(nodeEl.style.left)-offX; src.treeY=parseFloat(nodeEl.style.top)-offY; markDirty(); } } };
+    view.addEventListener("pointermove",mv); view.addEventListener("pointerup",up);
+  });
+}
+function renderDynastyPage(e, editable){
+  const d=dynastyById(e.id); if(!d)return '<div class="cmpDetail"><div class="note" style="padding:20px">Not found.</div></div>';
+  const theme=d.color, accent=d.accentColor||d.color;
+  const members=dynastyMembers(d.id);
+  const ruled=dynastyRealmsRuled(d);
+  const ruledRows = ruled.length ? ruled.map(a=>`<div class="li cmpXref" data-cat="realm" data-id="${a.realm.id}" style="cursor:pointer">🏰 <b>${esc(a.realm.name)}</b> <span class="note" style="margin-left:auto">${a.years?`${a.years} yrs`:`${a.count} reign${a.count===1?"":"s"}`}</span></div>`).join("") : '<div class="note">No dynasty members have ruled a realm yet.</div>';
+  const memberList = members.length ? members.map(m=>compRefChip("character",m.id,m.name)).join(" ") : '<span class="note">None</span>';
+  // infobox
+  let infobox;
+  if(editable){
+    infobox=`${d.crest?`<img class="wikiPortrait" src="${esc(d.crest)}" alt=""/>`:'<div class="wikiPortraitEmpty">No crest</div>'}
+      <div class="ibEditRow"><label class="btn tiny ibUpload">🛡 Crest<input type="file" id="dyCrest" accept="image/*" hidden/></label>${d.crest?'<button class="btn tiny" id="dyCrestClear">Clear</button>':""}</div>
+      <label class="ibField"><span>Name</span><input class="txt cmpFld" data-k="name" data-live="1"/></label>
+      <label class="ibField"><span>Main colour</span><input type="color" class="cmpFld" data-k="color" data-live="1"/></label>
+      <div class="ibField"><span>Accent colour <span class="note">(optional)</span></span><div class="ibColorRow"><span class="sw" style="background:${accent}"></span><input type="color" class="cmpFld" data-k="accentColor"/><button class="btn tiny" id="dyAccentClear" title="No accent">↺</button></div></div>
+      <div class="ibField"><span>Members (${members.length})</span><div class="ibV">${memberList}</div></div>`;
+  } else {
+    infobox=`${d.crest?`<img class="wikiPortrait" src="${esc(d.crest)}" alt=""/>`:""}<div class="wikiBoxName">${esc(d.name)}</div>
+      ${ibRow("Members", String(members.length))}
+      ${ibRow("Bearers of", memberList)}`;
+  }
+  const desc = editable
+    ? `<div class="cmpSecH">📜 Description</div><div class="richWrap">${richToolbarHTML()}<div class="richArea" contenteditable="true">${d.descHtml||(d.description?esc(d.description).replace(/\n/g,"<br>"):"")}</div></div>`
+    : ((d.descHtml||d.description)?`<div class="wikiDesc">${d.descHtml||esc(d.description).replace(/\n/g,"<br>")}</div>`:'<span class="note">No description yet.</span>');
+  // family-tree link editor (editor only)
+  let treeEditor="";
+  if(editable){
+    const parentOpts=(nid,cur)=>`<option value="">— founder / no parent —</option>`+
+      members.filter(m=>m.id!==nid).map(m=>`<option value="${m.id}" ${cur===m.id?"selected":""}>${esc(m.name)}</option>`).join("")+
+      (d.placeholders||[]).filter(p=>p.id!==nid).map(p=>`<option value="${p.id}" ${cur===p.id?"selected":""}>${esc(p.name||"…")} (placeholder)</option>`).join("");
+    const memberRows=members.map(m=>`<div class="dynEditRow"><span class="dynEditName">${esc(m.name)}</span>
+      <select class="dyParent" data-nid="${m.id}" data-kind="char">${parentOpts(m.id,m.parentId)}</select>
+      <label class="dynGapLbl"><input type="checkbox" class="dyGap" data-nid="${m.id}" data-kind="char" ${m.parentGap?"checked":""}/> gap</label></div>`).join("")||'<div class="note">No members. Set a character\'s Dynasty to this house first.</div>';
+    const phRows=(d.placeholders||[]).map(p=>`<div class="dynEditRow"><input class="dyPhName" data-nid="${p.id}" value="${esc(p.name||"")}" placeholder="…"/>
+      <select class="dyParent" data-nid="${p.id}" data-kind="ph">${parentOpts(p.id,p.parentId)}</select>
+      <label class="dynGapLbl"><input type="checkbox" class="dyGap" data-nid="${p.id}" data-kind="ph" ${p.parentGap?"checked":""}/> gap</label>
+      <button class="btn tiny danger dyPhDel" data-nid="${p.id}">✕</button></div>`).join("");
+    treeEditor=`<div class="cmpSecH">🌳 Family tree</div>
+      <div class="dynTreeMount" id="dynTreeMount"></div>
+      <details class="dynLinksDet"><summary>Edit tree links & placeholders</summary>
+        <div class="note">Set each member's parent to build the tree. Add placeholder nodes for skipped generations; tick “gap” for a dashed “generations omitted” link.</div>
+        <div class="dynEditList">${memberRows}${phRows}</div>
+        <div class="rulerAddRow"><button class="btn tiny" id="dyAddPh">＋ Add placeholder</button></div>
+      </details>`;
+  } else {
+    treeEditor=`<div class="cmpSecH">🌳 Family tree</div><div class="dynTreeMount" id="dynTreeMount"></div>`;
+  }
+  return `<div class="cmpDetail wikiPage" style="--th:${theme}; --ac:${accent}">    <div class="wikiHead"><div class="wikiTitle cmpDetName">${esc(d.name)}</div><div class="wikiSubtitle">${members.length} member${members.length===1?"":"s"}</div></div>
+    <div class="wikiCols">
+      <div class="wikiMain">
+        ${desc}
+        ${treeEditor}
+        <div class="cmpSecH">👑 Realms ruled <span class="note">(by cumulative reign)</span></div>
+        <div class="list">${ruledRows}</div>
+        ${editable?'<div style="margin-top:16px"><button class="btn danger" id="dyDelete">🗑 Delete dynasty</button></div>':""}
+      </div>
+      <aside class="wikiBox">${infobox}</aside>
+    </div>
+  </div>`;
+}
+function wireDynastyEdit(main, id){
+  const d=dynastyById(id); if(!d)return;
+  const cf=main.querySelector("#dyCrest"); if(cf)cf.onchange=()=>{ const file=cf.files&&cf.files[0]; if(!file)return; const rd=new FileReader(); rd.onload=()=>{ d.crest=rd.result; markDirty(); renderCompMain(); }; rd.readAsDataURL(file); };
+  const cc=main.querySelector("#dyCrestClear"); if(cc)cc.onclick=()=>{ d.crest=""; markDirty(); renderCompMain(); };
+  const ac=main.querySelector("#dyAccentClear"); if(ac)ac.onclick=()=>{ d.accentColor=""; markDirty(); renderCompMain(); };
+  const rich=main.querySelector(".richWrap"); if(rich)wireRichEditor(rich,(html)=>{ d.descHtml=html; markDirty(); });
+  main.querySelectorAll(".dyParent").forEach(el=>el.onchange=()=>{ const nid=el.dataset.nid; if(el.dataset.kind==="char"){ const m=characterById(nid); if(m)m.parentId=el.value; } else { const p=(d.placeholders||[]).find(x=>x.id===nid); if(p)p.parentId=el.value; } markDirty(); renderCompMain(); });
+  main.querySelectorAll(".dyGap").forEach(el=>el.onchange=()=>{ const nid=el.dataset.nid; if(el.dataset.kind==="char"){ const m=characterById(nid); if(m)m.parentGap=el.checked; } else { const p=(d.placeholders||[]).find(x=>x.id===nid); if(p)p.parentGap=el.checked; } markDirty(); renderCompMain(); });
+  main.querySelectorAll(".dyPhName").forEach(el=>el.addEventListener("input",()=>{ const p=(d.placeholders||[]).find(x=>x.id===el.dataset.nid); if(p){ p.name=el.value; markDirty(); } }));
+  main.querySelectorAll(".dyPhDel").forEach(el=>el.onclick=()=>{ d.placeholders=(d.placeholders||[]).filter(x=>x.id!==el.dataset.nid); markDirty(); renderCompMain(); });
+  const addPh=main.querySelector("#dyAddPh"); if(addPh)addPh.onclick=()=>{ d.placeholders=d.placeholders||[]; d.placeholders.push({id:uid(),name:"…",parentId:"",parentGap:false}); markDirty(); renderCompMain(); };
+  const del=main.querySelector("#dyDelete"); if(del)del.onclick=()=>{ if(!confirm("Delete this dynasty? Members will keep their data but lose the house link."))return;
+    _compendium.dynasties=_compendium.dynasties.filter(x=>x.id!==id);
+    allCharacters().forEach(c=>{ if(c.dynastyId===id)c.dynastyId=""; });
+    markDirty(); _compState.open=null; renderCompMain(); };
+}
 // A full "page" for a single compendium entry, with a Back button to the list.
 function renderCompDetail(cat, e, editable){
-  if(!e) return '<div class="cmpDetail"><button class="btn ghost cmpBack" id="cmpBack">← Compendium</button><div class="note" style="padding:20px">Not found.</div></div>';
+  if(!e) return '<div class="cmpDetail"><div class="note" style="padding:20px">Not found.</div></div>';
   if(cat==="character")return renderCharacterPage(e, editable);
   if(cat==="realm")return renderRealmPage(e, editable);
+  if(cat==="dynasty")return renderDynastyPage(e, editable);
   const used=e.used||[];
   const usedBlock=used.length?`<div class="cmpUsed"><span class="cmpUsedL">Realms</span> ${used.map(esc).join(", ")}</div>`:"";
   let extra="";
@@ -4372,9 +4866,7 @@ function renderCompDetail(cat, e, editable){
     const hasAny=e.ref||descHTML||loreHTML||usedBlock;
     bodyHTML=hasAny?`${e.ref||""}${descHTML}${loreHTML}${usedBlock}`:'<span class="note">No details recorded yet.</span>';
   }
-  return `<div class="cmpDetail">
-    <button class="btn ghost cmpBack" id="cmpBack">← Compendium</button>
-    <div class="cmpDetHead"><span class="rvDot" style="background:${e.color||'#7c8698'};width:20px;height:20px"></span><span class="cmpDetName">${esc(e.name||'—')}</span></div>
+  return `<div class="cmpDetail">    <div class="cmpDetHead"><span class="rvDot" style="background:${e.color||'#7c8698'};width:20px;height:20px"></span><span class="cmpDetName">${esc(e.name||'—')}</span></div>
     ${e.sub?`<div class="cmpDetSub">${e.sub}</div>`:""}
     <div class="cmpDetBody">${bodyHTML}</div>
     ${extra}
@@ -4727,12 +5219,12 @@ function renderRealmEditor(){
       <div class="field"><label>Mode of Production (realm default)</label><select id="recon">${opt(world.lists.economies,r.economy)}</select></div>
     </div>
     <div class="field2">
-      <div class="field"><label>State religion</label><select id="rrel"><option value="">— none —</option>${opt(world.lists.religions,r.stateReligion)}</select></div>
+      <div class="field"><label>State religion</label><select id="rrel">${opt(world.lists.religions,r.stateReligion||"No Religion")}</select></div>
       <div class="field"><label>Capital</label><select id="rcap">${capOpts}</select></div>
     </div>
     <div class="field2">
-      <div class="field"><label>Culture</label><select id="rcul"><option value="">—</option>${opt(world.lists.cultures,r.dominantCulture)}</select></div>
-      <div class="field"><label>Language</label><select id="rlang"><option value="">—</option>${opt(world.lists.languages,r.dominantLanguage)}</select></div>
+      <div class="field"><label>Culture</label><select id="rcul">${opt(world.lists.cultures,r.dominantCulture||"No Culture")}</select></div>
+      <div class="field"><label>Language</label><select id="rlang">${opt(world.lists.languages,r.dominantLanguage||"No Language")}</select></div>
     </div>
     <div class="field2">
       <div class="field"><label>Racial Administration (one or more)</label>
@@ -6850,16 +7342,7 @@ function wireTopbar(){
     const c={id:uid(),name:"New Continent",ox:200+ (n%3)*1300,oy:200+Math.floor(n/3)*1100,note:""};
     world.continents.push(c);state.focusedContinent=c.id;renderMap();renderLeft();selectContinent(c.id);markDirty();flash("Continent added. Use the Draw tool to add provinces.");
   };
-  $("#addRealm").onclick=()=>{
-    beginEdit();
-    const r={id:uid(),name:"New Realm "+(world.realms.length+1),color:autoPastelHex(),government:world.lists.governments[0],economy:world.lists.economies[0],stateReligion:"",dominantCulture:"",dominantRace:"",leaderName:"",leaderTitle:"",capitalId:null,note:""};
-    initRealmTech(r);   // give new realms the current Tech Fields at TL0 (older realms are unaffected)
-    world.realms.push(r);
-    if(state.mapmode==="imported"){state.mapmode="political";const ms=$("#mapmode");if(ms)ms.value="political";}
-    renderLeft();selectRealm(r.id);
-    setTool("paint");flash("New realm created — click or drag across provinces to paint them into it.");
-    markDirty();
-  };
+  { const ar=$("#addRealm"); if(ar)ar.onclick=()=>createNewRealm(); }
   $("#realmSearch").addEventListener("input",renderLeft);
   $("#zin").onclick=()=>zoomBy(1.25);
   $("#zout").onclick=()=>zoomBy(0.8);

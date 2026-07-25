@@ -297,6 +297,9 @@ details.rvProvinces[open]>summary::before{content:"▾"}
   font-weight:700; margin-bottom:5px}
 .rvBlock.rvPowers{border-left-color:#7c5cff; background:rgba(124,92,255,.10)}
 .rvBlock.rvTechBlock{border-left-color:#9b5de5; background:rgba(155,93,229,.08)}
+.rvBlock.rvDemoBlock{border-left-color:#3f9ae0; background:rgba(63,154,224,.08)}
+.rvBlock.rvDemoBlock .pvPopHead{display:flex; align-items:center; gap:8px; flex-wrap:wrap}
+.rvBlock.rvDemoBlock .pvPieToggle{margin-left:auto}
 .rvPowerChips{display:flex; flex-wrap:wrap; gap:5px}
 .rvBlock.rvTechBlock .techFieldDet{margin:5px 0}
 /* clickable compendium chips */
@@ -307,6 +310,8 @@ details.rvProvinces[open]>summary::before{content:"▾"}
 /* ===== Compendium modal ===== */
 .cmpWrap{width:100%; height:100%; display:flex; flex-direction:column}
 .cmpHead{display:flex; align-items:center; gap:12px; padding:2px 2px 14px; border-bottom:1px solid var(--line)}
+.cmpNavBack{flex:0 0 auto; font-size:16px; min-width:34px}
+.cmpNavBack:disabled{opacity:.35; cursor:default}
 .cmpTitle{font-family:"Georgia","Palatino Linotype",serif; font-weight:700; font-size:24px; flex:0 0 auto}
 .cmpHead #cmpSearch{flex:1; min-width:0; font-size:15px; padding:8px 12px}
 .cmpBody{display:flex; gap:0; min-height:0; flex:1; overflow:hidden}
@@ -330,6 +335,24 @@ details.rvProvinces[open]>summary::before{content:"▾"}
 .cmpEntrySub{margin-left:auto; font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.3px}
 .cmpEntryGo{flex:0 0 auto; color:var(--muted); font-size:22px; font-weight:700; margin-left:8px}
 .cmpEntry:hover .cmpEntryGo{color:var(--accent)}
+/* pinned current-leader entries */
+.cmpEntry.pinned{border-color:color-mix(in srgb,#e9c46a 55%,var(--line)); background:color-mix(in srgb,#e9c46a 10%,var(--panel2))}
+.cmpPin{flex:0 0 auto; margin-left:8px; font-size:11.5px; font-weight:700; color:#8a6a1e;
+  background:color-mix(in srgb,#e9c46a 30%,var(--panel)); border-radius:11px; padding:1px 8px}
+/* per-section search + filter bar */
+.cmpListBar{display:flex; gap:8px; align-items:center; margin-bottom:12px; position:sticky; top:0; z-index:2;
+  background:var(--panel); padding-bottom:4px}
+.cmpListSearch{flex:1; min-width:0; padding:9px 12px; font-size:14px}
+.cmpFilterSel{flex:0 0 auto; padding:8px 10px; border:1px solid var(--line); border-radius:8px;
+  background:var(--panel); color:var(--ink); font-size:13.5px}
+.cmpListBar .cmpAddNew{flex:0 0 auto}
+/* colour-themed cross-reference chips */
+.cmpRefChip{display:inline-flex; align-items:center; gap:5px; cursor:pointer; font-family:inherit; font-size:13px;
+  font-weight:600; color:var(--ink); padding:2px 10px; border-radius:20px; line-height:1.5;
+  background:color-mix(in srgb, var(--cc) 15%, var(--panel)); border:1px solid color-mix(in srgb, var(--cc) 48%, var(--line));
+  transition:filter .1s, transform .06s; margin:1px 0}
+.cmpRefChip:hover{filter:brightness(1.08); transform:translateY(-1px); box-shadow:0 2px 7px rgba(0,0,0,.16)}
+.cmpRefChip .rvDot{width:9px; height:9px; margin:0}
 /* detail mode: hide the sidebar + search, give the page room */
 .cmpWrap.cmpDetailMode #cmpTabs{display:none}
 .cmpWrap.cmpDetailMode #cmpSearch{visibility:hidden}
@@ -397,6 +420,129 @@ details.rvProvinces[open]>summary::before{content:"▾"}
 .rulerViewNote{margin-top:3px; font-size:13px; line-height:1.5; white-space:normal}
 .rulerCurrent{display:inline-block; margin-left:6px; font-size:10.5px; text-transform:uppercase; letter-spacing:.4px;
   background:var(--accent); color:#fff; border-radius:9px; padding:1px 7px; vertical-align:middle}
+/* ===== wiki-style compendium pages (characters, dynasties) ===== */
+.wikiPage{--th:#c9a86f; --ac:var(--th)}
+.wikiHead{border-bottom:3px solid var(--th); padding-bottom:8px; margin-bottom:14px}
+.wikiTitle{font-family:"Georgia","Palatino Linotype",serif; font-weight:700; font-size:30px; line-height:1.15;
+  color:color-mix(in srgb, var(--th) 78%, var(--ink))}
+.wikiSubtitle{font-size:13px; color:var(--muted); margin-top:3px; font-style:italic}
+.wikiCols{display:grid; grid-template-columns:1fr 300px; gap:22px; align-items:start}
+.wikiMain{min-width:0}
+.wikiBox{border:1px solid var(--line); border-top:4px solid var(--ac); border-radius:10px; padding:12px;
+  background:color-mix(in srgb, var(--th) 6%, var(--panel2)); font-size:13.5px}
+.wikiBoxName{font-family:"Georgia","Palatino Linotype",serif; font-weight:700; font-size:17px; text-align:center;
+  margin-bottom:8px; color:color-mix(in srgb, var(--th) 70%, var(--ink))}
+.wikiPortrait{display:block; width:100%; max-height:280px; object-fit:cover; border-radius:8px;
+  border:2px solid var(--ac); margin-bottom:8px}
+.wikiPortraitEmpty{height:120px; display:flex; align-items:center; justify-content:center; border:2px dashed var(--line);
+  border-radius:8px; color:var(--muted); font-size:12px; margin-bottom:8px}
+.ibRow{display:flex; gap:8px; padding:5px 0; border-top:1px solid color-mix(in srgb, var(--th) 15%, var(--line))}
+.ibRow:first-of-type{border-top:none}
+.ibL{flex:0 0 88px; font-weight:700; font-size:11px; text-transform:uppercase; letter-spacing:.4px; color:var(--muted)}
+.ibV{flex:1; min-width:0}
+.wikiLink{cursor:pointer; color:var(--accent); text-decoration:underline; text-decoration-style:dotted}
+.wikiLink:hover{text-decoration-style:solid}
+.wikiDesc{font-size:15px; line-height:1.7; white-space:normal}
+.wikiDesc p{margin:0 0 10px}
+/* infobox editor fields */
+.ibField{display:flex; flex-direction:column; gap:4px; margin:8px 0}
+.ibField>span{font-size:11px; text-transform:uppercase; letter-spacing:.4px; color:var(--muted); font-weight:700}
+.ibField select, .ibField input.txt{width:100%; box-sizing:border-box; padding:7px 9px; border:1px solid var(--line);
+  border-radius:7px; background:var(--panel); color:var(--ink); font-size:13.5px}
+.ibField.cmpCheck{flex-direction:row; align-items:center; gap:8px}
+.ibField.cmpCheck input{width:16px; height:16px}
+.ibEditRow{display:flex; gap:6px; align-items:center; margin-bottom:8px}
+.ibUpload{cursor:pointer}
+.ibColorRow{display:flex; align-items:center; gap:6px}
+.ibColorRow .sw{width:22px; height:22px; border-radius:5px; border:1px solid rgba(0,0,0,.2); flex:0 0 auto}
+.ibColorRow input[type=color]{width:44px; height:30px; padding:2px}
+/* rich text editor */
+.richWrap{border:1px solid var(--line); border-radius:9px; overflow:hidden; margin-bottom:6px}
+.richTb{display:flex; align-items:center; gap:3px; padding:5px 7px; background:var(--panel2); border-bottom:1px solid var(--line); flex-wrap:wrap}
+.richTb .richB{min-width:28px; height:26px; border:1px solid var(--line); border-radius:6px; background:var(--panel);
+  color:var(--ink); cursor:pointer; font-size:13px; padding:0 6px}
+.richTb .richB:hover{background:var(--accent); color:#fff; border-color:var(--accent)}
+.richTb .richSize{height:26px; border:1px solid var(--line); border-radius:6px; background:var(--panel); color:var(--ink); font-size:12.5px}
+.richTb .richSep{width:1px; height:18px; background:var(--line); margin:0 3px}
+.richArea{min-height:160px; max-height:44vh; overflow:auto; padding:11px 13px; font-size:15px; line-height:1.7;
+  background:var(--panel); outline:none}
+.richArea:focus{box-shadow:inset 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent)}
+/* dynasty family tree */
+.dynTree, .dynTree ul{list-style:none; margin:0; padding-left:20px}
+.dynTree{padding-left:4px}
+.dynTree li{position:relative; margin:5px 0; padding-left:16px}
+.dynTree li::before{content:""; position:absolute; left:0; top:12px; width:12px; height:0; border-top:2px solid var(--th)}
+.dynTree ul{position:relative}
+.dynTree ul::before{content:""; position:absolute; left:0; top:0; bottom:12px; width:0; border-left:2px solid var(--th)}
+.dynTree li.dynGap::before{border-top-style:dashed}
+.dynTree li.dynGap>ul::before, .dynTree li.dynGap::before{border-color:color-mix(in srgb, var(--th) 55%, var(--muted))}
+.dynMember{cursor:pointer; font-weight:700; color:color-mix(in srgb, var(--th) 65%, var(--ink)); text-decoration:underline; text-decoration-style:dotted}
+.dynMember:hover{text-decoration-style:solid}
+.dynPh{color:var(--muted); font-style:italic}
+.dynEditList{display:flex; flex-direction:column; gap:6px; margin:8px 0}
+.dynEditRow{display:flex; align-items:center; gap:7px; flex-wrap:wrap}
+.dynEditName{flex:0 0 130px; font-weight:600; font-size:13.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.dynEditRow select, .dynEditRow input.dyPhName{flex:1; min-width:120px; padding:5px 7px; border:1px solid var(--line);
+  border-radius:6px; background:var(--panel); color:var(--ink); font-size:13px}
+.dynGapLbl{flex:0 0 auto; font-size:12px; color:var(--muted); display:flex; align-items:center; gap:3px}
+.dynTreePreview{margin-top:10px; padding:10px; border:1px dashed var(--line); border-radius:8px}
+/* ===== interactive dynasty tree ===== */
+.dynTreeView{position:relative; height:480px; overflow:hidden; border:1px solid var(--line); border-radius:11px;
+  background:radial-gradient(circle at 30% 20%, color-mix(in srgb, var(--th) 10%, var(--panel)), var(--panel2));
+  touch-action:none; user-select:none; cursor:grab}
+.dynTreeView:active{cursor:grabbing}
+.dynCanvas{position:absolute; left:0; top:0; transform-origin:0 0; will-change:transform}
+.dynEdges{position:absolute; left:0; top:0; pointer-events:none; overflow:visible}
+.dynEdge{fill:none; stroke:color-mix(in srgb, var(--th) 60%, var(--muted)); stroke-width:2.5}
+.dynEdge.gap{stroke-dasharray:5 6; opacity:.65}
+.dynTreeCtrls{position:absolute; top:8px; right:8px; display:flex; gap:4px; z-index:3}
+.dynTreeHint{position:absolute; bottom:6px; left:10px; font-size:11px; color:var(--muted); pointer-events:none; z-index:3}
+.dynNode{position:absolute; transform:translate(-50%,-50%); text-align:center; cursor:pointer; z-index:1}
+.dynTreeView.canEdit .dynNode{cursor:grab}
+.dynNodeName{margin-top:3px; font-size:12px; font-weight:700; max-width:104px; line-height:1.2;
+  color:var(--ink); text-shadow:0 1px 2px var(--panel)}
+/* heraldic shield frame (smooth SVG clip) — tiers by size: copper (never ruled) < silver (ruled) < gold (marked).
+   The metal frame is a clipped backdrop; the portrait sits in a proportionally scaled inner shield,
+   so the border is even all round and never leaves a gap at the point. */
+.dynShield{--metal:linear-gradient(160deg,#e8b088,#a25b32); --inset:0.88;
+  position:relative; margin:0 auto; box-sizing:border-box; background:transparent;
+  filter:drop-shadow(0 3px 5px rgba(0,0,0,.32))}
+.dynShield::before{content:""; position:absolute; inset:0; background:var(--metal);
+  -webkit-clip-path:url(#shieldClip); clip-path:url(#shieldClip); z-index:0}
+.dynShieldInner{position:absolute; inset:0; z-index:1; overflow:hidden; background:#20242c;
+  transform:scale(var(--inset)); transform-origin:50% 42%;
+  -webkit-clip-path:url(#shieldClip); clip-path:url(#shieldClip)}
+/* overscan by a pixel so no sub-pixel seam shows at the clipped edges */
+.dynShieldInner img{position:absolute; inset:-1px; width:calc(100% + 2px); height:calc(100% + 2px);
+  object-fit:cover; display:block}
+.dynInit{position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+  color:#e8ecf3; font-family:"Georgia","Palatino Linotype",serif; font-weight:700; font-size:22px; text-shadow:0 1px 2px rgba(0,0,0,.5)}
+/* copper — smallest */
+.dynShield.copper{width:60px; height:74px; --metal:linear-gradient(160deg,#e8b088,#a25b32)}
+.dynShield.copper .dynInit{font-size:17px}
+/* silver — larger, bright metallic */
+.dynShield.silver{width:84px; height:102px; --metal:linear-gradient(160deg,#fbfcfe,#c4cad6 45%,#878f9f)}
+/* gold — largest + ornate gilded double ring + glow */
+.dynShield.gold{width:110px; height:134px; --inset:0.85;
+  --metal:linear-gradient(160deg,#fdeeab,#f6dd83 42%,#c68a24);
+  filter:drop-shadow(0 0 6px rgba(233,196,106,.8)) drop-shadow(0 3px 7px rgba(0,0,0,.4))}
+.dynShield.gold .dynShieldInner{box-shadow:inset 0 0 0 2px rgba(255,246,216,.75), inset 0 0 0 4px rgba(150,105,25,.6)}
+.dynShield.gold .dynInit{font-size:32px}
+.dynShield.emb.gold{filter:drop-shadow(0 0 9px rgba(233,196,106,.9)) drop-shadow(0 3px 7px rgba(0,0,0,.4))}
+.dynEmb{position:absolute; top:-12px; left:50%; transform:translateX(-50%); font-size:18px; z-index:2;
+  filter:drop-shadow(0 1px 1px rgba(0,0,0,.4))}
+/* plain card (no portrait) — same tiers on the border */
+.dynChip{position:relative; display:inline-flex; align-items:center; gap:4px; max-width:130px; padding:7px 12px;
+  border-radius:20px; background:var(--panel); border:2px solid var(--line); font-weight:700; font-size:13px;
+  box-shadow:0 2px 5px rgba(0,0,0,.18)}
+.dynChip>span{overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.dynChip.copper{border-color:#a25b32}
+.dynChip.silver{border-color:#9aa1af}
+.dynChip.gold{border-color:#c68a24; background:linear-gradient(#fff8e6,#f3e4bd); color:#5b3f10}
+.dynChip.emb{box-shadow:0 0 0 2px rgba(233,196,106,.5),0 2px 6px rgba(0,0,0,.2)}
+.dynChip .dynEmb{position:static; transform:none; font-size:14px}
+.dynPhCard{display:inline-block; max-width:120px; padding:6px 12px; border-radius:14px; border:2px dashed var(--line);
+  color:var(--muted); font-style:italic; font-size:12.5px; background:var(--panel2)}
 /* ===== province viewer panel (read-only) — distinct from the realm card ===== */
 .provCard{--rc:#6f8fc9; --tc:#7a8a5a; border:1px solid var(--line); border-radius:12px; padding:10px 11px 13px;
   background:var(--panel)}
@@ -537,6 +683,14 @@ details.rvProvinces[open]>summary::before{content:"▾"}
 .monGroupHead{display:flex; align-items:center; gap:6px; padding:5px 8px; cursor:pointer; background:var(--panel2); font-weight:700; font-size:12.5px}
 .monGroupHead .caret{width:12px; color:var(--muted)}
 .monGroup.collapsed .monGroupBody{display:none}
+/* military legend: collapsible per-realm army groups */
+.forceGroup{border:1px solid var(--line); border-radius:8px; margin:4px 0; overflow:hidden}
+.forceGroupHead{display:flex; align-items:center; gap:6px; padding:5px 8px; background:var(--panel2); font-weight:700; font-size:12.5px}
+.forceGroupHead .caret{width:12px; color:var(--muted)}
+.forceGroupHead .swatch{width:12px; height:12px; border-radius:3px; flex:0 0 auto; border:1px solid rgba(0,0,0,.2)}
+.forceGroupHead .fgName{flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.forceGroupHead .fgTS{flex:0 0 auto; font-size:11.5px; color:var(--ink); font-weight:700}
+.forceGroupBody{padding:2px 6px 5px}
 .monRowIcon{width:16px; height:16px; object-fit:contain; vertical-align:middle}
 .monReorder{display:inline-flex; gap:2px; margin-left:auto}
 .monReorder .btn{padding:0 5px; line-height:18px}
@@ -823,6 +977,11 @@ body.viewer #inspector .insTitle input:disabled{font-weight:700; font-size:17px}
   .cmpMain{padding:10px 2px}
   .cmpEditGrid{grid-template-columns:1fr}
   .rulerRowFields{grid-template-columns:1fr}
+  .wikiCols{grid-template-columns:1fr; gap:14px}
+  .wikiBox{order:-1}   /* infobox above the article on phones */
+  .wikiTitle{font-size:24px}
+  .dynEditName{flex:1 0 100%}
+  .dynTreeView{height:380px}
   .pvPie{padding:8px 6px}
   .pvPie svg{width:84px; height:84px}
 
