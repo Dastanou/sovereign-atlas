@@ -385,6 +385,29 @@ details.rvProvinces[open]>summary::before{content:"▾"}
 .cmpLoreEdit{width:100%; box-sizing:border-box; font-size:14.5px; line-height:1.6; padding:11px 13px;
   border:1px solid var(--line); border-radius:9px; background:var(--panel); color:var(--ink); font-family:inherit; resize:vertical}
 .cmpLoreView{font-size:15px; line-height:1.65; white-space:normal}
+/* ===== Species section: square species tiles with square subspecies buttons ===== */
+.spGrid{display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:14px}
+.spTile{--sc:#7c8698; border:2px solid color-mix(in srgb, var(--sc) 50%, var(--line)); border-radius:14px;
+  background:color-mix(in srgb, var(--sc) 8%, var(--panel2)); overflow:hidden; display:flex; flex-direction:column;
+  aspect-ratio:1/1; min-height:230px}
+.spTileHead{display:flex; align-items:center; gap:8px; width:100%; padding:11px 13px; cursor:pointer;
+  background:color-mix(in srgb, var(--sc) 24%, var(--panel)); border:none; border-bottom:2px solid color-mix(in srgb, var(--sc) 45%, var(--line));
+  font-family:"Georgia","Palatino Linotype",serif; font-weight:700; font-size:16px; color:var(--ink); text-align:left;
+  transition:filter .1s}
+.spTileHead:hover{filter:brightness(1.08)}
+.spTileHead .spDot{width:14px; height:14px; border-radius:4px; flex:0 0 auto; border:1px solid rgba(0,0,0,.25)}
+.spTileHead .spName{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.spTileHead .spCount{flex:0 0 auto; font-family:inherit; font-size:12px; font-weight:700; color:var(--muted);
+  background:var(--panel); border-radius:10px; padding:1px 8px}
+.spSubs{flex:1; min-height:0; overflow:auto; padding:10px; display:grid; gap:8px;
+  grid-template-columns:repeat(auto-fill,minmax(64px,1fr)); align-content:start}
+.spSub{--bc:#7c8698; aspect-ratio:1/1; display:flex; align-items:center; justify-content:center; text-align:center;
+  padding:4px; cursor:pointer; border-radius:10px; overflow:hidden;
+  background:color-mix(in srgb, var(--bc) 20%, var(--panel)); border:2px solid color-mix(in srgb, var(--bc) 60%, var(--line));
+  color:var(--ink); font-size:11.5px; font-weight:700; line-height:1.15; transition:transform .06s, box-shadow .1s, filter .1s}
+.spSub:hover{transform:translateY(-2px); filter:brightness(1.08); box-shadow:0 3px 10px rgba(0,0,0,.2)}
+.spSubName{display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; word-break:break-word}
+.spNoSub{grid-column:1/-1; align-self:center; text-align:center}
 /* religion symbol shown atop its compendium page */
 .cmpSymbol{display:flex; justify-content:center; margin:2px 0 14px}
 .cmpSymbol img{max-width:150px; max-height:150px; object-fit:contain; background:var(--panel2);

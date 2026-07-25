@@ -380,7 +380,18 @@ function toggleRealmDiscovery(r,id){ r.discoveries=r.discoveries||[]; const i=r.
 // timeline phase you view. Persisted on world.compendiumStore (kept in sync).
 // ============================================================
 let _compendium=null;
-function blankCompendium(){ return {characters:[], charTags:["Commander","Diplomat","Hero"], dynasties:[], lore:{}, realmRulers:{}, realmNames:{}, places:[], monsterPages:[]}; }
+function blankCompendium(){ return {characters:[], charTags:["Commander","Diplomat","Hero"], dynasties:[], lore:{}, realmRulers:{}, realmNames:{}, places:[], monsterPages:[], relics:[]}; }
+// a hand-written Relic — an artefact with a picture and wherever it currently rests
+function normRelic(r){ r=r||{}; return {id:r.id||uid(), name:typeof r.name==="string"?r.name:"New Relic",
+  kind:typeof r.kind==="string"?r.kind:"Relic", descHtml:typeof r.descHtml==="string"?r.descHtml:"",
+  color:r.color||"#c9a227", image:typeof r.image==="string"?r.image:"",
+  provinceId:typeof r.provinceId==="string"?r.provinceId:"", realmId:typeof r.realmId==="string"?r.realmId:"",
+  holderCharId:typeof r.holderCharId==="string"?r.holderCharId:"", location:typeof r.location==="string"?r.location:"",
+  status:typeof r.status==="string"?r.status:"",
+  // provenance: where it was and what state it was in, over time (earliest → latest)
+  history:Array.isArray(r.history)?r.history.map(h=>({id:h&&h.id||uid(), date:(h&&h.date)||"", provinceId:(h&&h.provinceId)||"",
+    realmId:(h&&h.realmId)||"", holderCharId:(h&&h.holderCharId)||"", location:(h&&h.location)||"",
+    status:(h&&h.status)||"", note:(h&&h.note)||""})):[]}; }
 // a Geography entry the user writes themselves (a location, landmark, ruin, mountain…)
 function normPlace(p){ p=p||{}; return {id:p.id||uid(), name:typeof p.name==="string"?p.name:"New Place", kind:typeof p.kind==="string"?p.kind:"Landmark", descHtml:typeof p.descHtml==="string"?p.descHtml:"", color:p.color||"#3f9ae0", image:typeof p.image==="string"?p.image:"", provinceId:typeof p.provinceId==="string"?p.provinceId:""}; }
 // a Monsters entry — a bestiary page ("Dire Creatures") that map creatures can be linked to
@@ -433,6 +444,7 @@ function normalizeCompendium(src){
   if(cp.realmNames&&typeof cp.realmNames==="object")out.realmNames=Object.assign({},cp.realmNames);   // remembered names for realms not in the loaded turn
   if(Array.isArray(cp.places))out.places=cp.places.map(normPlace);
   if(Array.isArray(cp.monsterPages))out.monsterPages=cp.monsterPages.map(normMonsterPage);
+  if(Array.isArray(cp.relics))out.relics=cp.relics.map(normRelic);
   out.characters.forEach(c=>{ c.tags=c.tags.filter(t=>out.charTags.includes(t)); if(c.dynastyId&&!out.dynasties.some(d=>d.id===c.dynastyId))c.dynastyId=""; });
   return out;
 }
@@ -469,6 +481,9 @@ function newCharacter(opts){ opts=opts||{}; return normCharacter({name:opts.name
 function allPlaces(){ ensureCompendium(world); if(!Array.isArray(_compendium.places))_compendium.places=[]; return _compendium.places; }
 function placeById(id){ return allPlaces().find(p=>p.id===id)||null; }
 function newPlace(name){ return normPlace({name:name||"New Place"}); }
+function allRelics(){ ensureCompendium(world); if(!Array.isArray(_compendium.relics))_compendium.relics=[]; return _compendium.relics; }
+function relicById(id){ return allRelics().find(r=>r.id===id)||null; }
+function newRelic(name){ return normRelic({name:name||"New Relic"}); }
 function allMonsterPages(){ ensureCompendium(world); if(!Array.isArray(_compendium.monsterPages))_compendium.monsterPages=[]; return _compendium.monsterPages; }
 function monsterPageById(id){ return allMonsterPages().find(m=>m.id===id)||null; }
 function newMonsterPage(name){ return normMonsterPage({name:name||"New Bestiary Page"}); }
@@ -478,6 +493,10 @@ function monstersOnPage(pageId){ return (world.monsters||[]).filter(m=>m.compPag
 function raceEntryId(kind,name){ return kind+":"+name; }
 function splitRaceId(id){ const i=String(id).indexOf(":"); return i<0?{kind:"grp",name:String(id)}:{kind:String(id).slice(0,i),name:String(id).slice(i+1)}; }
 function subracesOfGroupSafe(g){ return (world.lists&&world.lists.subraces||[]).filter(s=>subraceGroup(s)===g); }
+// world-wide head counts for a subspecies / a whole species (summed from every province's pop groups)
+function subspeciesPopulation(name){ let n=0; (world.provinces||[]).forEach(p=>(p.pops||[]).forEach(q=>{ if(q.race===name)n+=(q.size||0); })); return Math.round(n); }
+function speciesPopulation(group){ let n=0; (world.provinces||[]).forEach(p=>(p.pops||[]).forEach(q=>{ if(q.race&&subraceGroup(q.race)===group)n+=(q.size||0); })); return Math.round(n); }
+function worldPopulationTotal(){ let n=0; (world.provinces||[]).forEach(p=>(p.pops||[]).forEach(q=>{ n+=(q.size||0); })); return Math.round(n); }
 // ---- Dynasties ----
 function allDynasties(){ ensureCompendium(world); return _compendium.dynasties; }
 function dynastyById(id){ return allDynasties().find(d=>d.id===id)||null; }
@@ -678,13 +697,19 @@ function renderRegionView(){
 }
 function subraceGroup(sr){ return (world&&world.subraceOf&&world.subraceOf[sr])||sr; }
 function subracesInGroup(g){ return (world.lists.subraces||[]).filter(sr=>subraceGroup(sr)===g); }
-// A race group's display colour = its representative subrace's colour (races carry no colour of their own).
-function raceGroupColor(g){ const subs=subracesInGroup(g); const rep=subs.length?subs[0]:g; return catColor("subraces",rep); }
+// A species' display colour: its own colour when one has been set in the GM Screen, otherwise
+// it falls back to a representative subspecies' colour (how it always worked before).
+function speciesHasOwnColor(g){ return !!(world&&world.colors&&world.colors.races&&world.colors.races[g]); }
+function raceGroupColor(g){
+  if(speciesHasOwnColor(g)) return world.colors.races[g];
+  const subs=subracesInGroup(g); const rep=subs.length?subs[0]:g; return catColor("subraces",rep);
+}
 function subraceUsage(v){ let n=0; (world&&world.provinces||[]).forEach(p=>{ if((p.pops||[]).some(q=>q.race===v))n++; }); return n; }
 function renameSubrace(ov,nv){
   world.provinces.forEach(p=>{ let ch=false; (p.pops||[]).forEach(q=>{ if(q.race===ov){q.race=nv;ch=true;} }); if(ch)deriveProvince(p); });
   if(world.subraceOf&&world.subraceOf[ov]!==undefined){ world.subraceOf[nv]=world.subraceOf[ov]; delete world.subraceOf[ov]; }
   if(world.colors&&world.colors.subraces&&world.colors.subraces[ov]!==undefined){ world.colors.subraces[nv]=world.colors.subraces[ov]; delete world.colors.subraces[ov]; }
+  moveCompLore("race", raceEntryId("sub",ov), raceEntryId("sub",nv));   // its Compendium page follows the rename
 }
 function deleteSubrace(v){
   const grp=subraceGroup(v);
@@ -692,6 +717,7 @@ function deleteSubrace(v){
   world.provinces.forEach(p=>{ let ch=false; (p.pops||[]).forEach(q=>{ if(q.race===v){q.race=fb;ch=true;} }); if(ch)deriveProvince(p); });
   const i=(world.lists.subraces||[]).indexOf(v); if(i>=0)world.lists.subraces.splice(i,1);
   if(world.subraceOf)delete world.subraceOf[v]; if(world.colors&&world.colors.subraces)delete world.colors.subraces[v];
+  dropCompLore("race", raceEntryId("sub",v));
 }
 // province feature categories: Wonders (structures), Resource features, and Misc
 const FEATURE_CATS_DEFAULT={"Ancient Ruin":"wonder","Floating Monolith":"wonder","Sunken City":"wonder","Sacred Grove":"wonder","Ley-line Nexus":"resource","Volcanic Rift":"resource","Impact Crater":"misc","Arcane Scar":"misc"};
@@ -2444,7 +2470,7 @@ function drawAxisStripes(ctx,key,s){
    AUTOMATIC HISTORY TRACKER
    Logs a dated entry whenever a tracked, map-mode attribute changes.
    ============================================================ */
-const FIELD_TITLES={realm:"Ownership",terrain:"Terrain",settlement:"Settlement",resource:"Resource",religion:"Religion",culture:"Culture",race:"Race",language:"Language",economy:"Mode of Production"};
+const FIELD_TITLES={realm:"Ownership",terrain:"Terrain",settlement:"Settlement",resource:"Resource",religion:"Religion",culture:"Culture",race:"Species",language:"Language",economy:"Mode of Production"};
 function provTrackedValue(p,field){
   if(field==="realm")return p.realmId?(world.realms.find(r=>r.id===p.realmId)?.name||"Unknown realm"):"Unclaimed";
   if(field==="terrain")return p.terrain||"—";
@@ -2765,7 +2791,7 @@ function renderPopPanel(){
     <div class="note" style="margin:6px 0 2px">Favor <span class="note">(grow faster · decline slower)</span></div>
     <div class="ppModes">
       <button class="btn tiny ppMode${state.popFavRel?" primary":""}" data-fav="rel" title="Favor pops of each realm's state religion">☩ Religion</button>
-      <button class="btn tiny ppMode${state.popFavRace?" primary":""}" data-fav="race" title="Favor pops of each realm's admin races">👑 Admin race</button>
+      <button class="btn tiny ppMode${state.popFavRace?" primary":""}" data-fav="race" title="Favor pops of each realm's administrative species">👑 Admin species</button>
     </div>
     <div class="ppModes">
       <button class="btn tiny ppMode${state.popFavCul?" primary":""}" data-fav="cul" title="Favor pops of each realm's dominant culture">🎭 Culture</button>
@@ -2987,7 +3013,7 @@ function openSettleConfig(){
     <div class="note" style="margin:2px 0">Only send pops that match <b>all</b> ticked traits (tick none = anyone may settle):</div>
     <div class="ppModes" style="flex-wrap:wrap">
       <button class="btn tiny ppMode${sp.byReligion?" primary":""}" data-sf="byReligion">☩ Religion</button>
-      <button class="btn tiny ppMode${sp.byRace?" primary":""}" data-sf="byRace">👑 Admin race</button>
+      <button class="btn tiny ppMode${sp.byRace?" primary":""}" data-sf="byRace">👑 Admin species</button>
       <button class="btn tiny ppMode${sp.byCulture?" primary":""}" data-sf="byCulture">🎭 Culture</button>
       <button class="btn tiny ppMode${sp.byLanguage?" primary":""}" data-sf="byLanguage">🗣 Language</button>
     </div>
@@ -3009,7 +3035,7 @@ function openExpandPopup(r){
       <label style="font-size:13px"><input type="checkbox" id="exRel" ${sp.byReligion?"checked":""}/> Religion</label>
       <label style="font-size:13px;margin-left:10px"><input type="checkbox" id="exCul" ${sp.byCulture?"checked":""}/> Culture</label>
       <label style="font-size:13px;margin-left:10px"><input type="checkbox" id="exLan" ${sp.byLanguage?"checked":""}/> Language</label>
-      <label style="font-size:13px;margin-left:10px"><input type="checkbox" id="exRac" ${sp.byRace?"checked":""}/> Race</label>
+      <label style="font-size:13px;margin-left:10px"><input type="checkbox" id="exRac" ${sp.byRace?"checked":""}/> Species</label>
     </div>
     <div class="field"><label><input type="radio" name="exm" value="override" ${m==="override"?"checked":""}/> <b>Override</b> — replace the province's population with an equal number of the realm's own religion, culture, language & race.</label></div>
     <div class="btnrow"><button class="btn primary" id="exGo">🖌 Start painting</button></div>`);
@@ -3770,7 +3796,7 @@ function renderLeft(){
   else if(!shown){rl.innerHTML='<div class="note" style="padding:8px 10px">No realms match your search.</div>';}
   renderLegend();
 }
-const MODE_TITLES={political:"Political",provincemap:"Province Map",terrain:"Terrain",settlement:"Settlements",religion:"Religions",culture:"Cultures",race:"Races",language:"Languages",population:"Population",resource:"Resources",economy:"Modes of Production",monster:"Monsters",military:"Military",region:"Regions",tech:"Tech Level",imported:"Imported colors"};
+const MODE_TITLES={political:"Political",provincemap:"Province Map",terrain:"Terrain",settlement:"Settlements",religion:"Religions",culture:"Cultures",race:"Species",language:"Languages",population:"Population",resource:"Resources",economy:"Modes of Production",monster:"Monsters",military:"Military",region:"Regions",tech:"Tech Level",imported:"Imported colors"};
 function legendEntries(mode){           // [color, label, paintValue]
   const L=world.lists, e=[];
   if(mode==="political"){e.push(["#39415e","Unclaimed","__none__"]);world.realms.forEach(r=>e.push([r.color,r.name,r.id]));}
@@ -3850,12 +3876,12 @@ function renderRaceLegend(box){
     const members=subs.filter(sr=>subraceGroup(sr)===g);
     if(!members.length) continue;
     const head=div("mlRaceGroup"+(state.selRaceGroup===g?" active":""));
-    head.dataset.grp=g; head.style.cursor="pointer"; head.title=`Highlight all ${esc(g)} subraces`;
+    head.dataset.grp=g; head.style.cursor="pointer"; head.title=`Highlight all ${esc(g)} subspecies`;
     head.innerHTML=`<span class="mlRaceGroupName">${esc(g)}</span>`;
     box.appendChild(head);
     members.forEach(sr=>{
       const row=div("mlRow mlSubRow"+(state.selRaceGroup===g?" active":""));
-      row.dataset.grp=g; row.style.cursor="pointer"; row.title=`Highlight all ${esc(g)} subraces`;
+      row.dataset.grp=g; row.style.cursor="pointer"; row.title=`Highlight all ${esc(g)} subspecies`;
       row.innerHTML=`<span class="sw" style="background:${catColor('subraces',sr)}"></span>${esc(sr)}`;
       box.appendChild(row);
     });
@@ -4014,7 +4040,7 @@ function renderLegend(){
   if(paintable){
     const h=div("note");h.style.marginTop="6px";h.textContent="Click an entry, then click/drag on the map to paint it.";box.appendChild(h);
     const lk=MODE_LIST[state.mapmode];
-    if(state.mapmode==="race"){const mb=document.createElement("button");mb.className="btn tiny";mb.style.marginTop="6px";mb.textContent="✎ Edit race groups & subraces (GM Screen)";mb.onclick=()=>openGM2();box.appendChild(mb);}
+    if(state.mapmode==="race"){const mb=document.createElement("button");mb.className="btn tiny";mb.style.marginTop="6px";mb.textContent="✎ Edit species & subspecies (GM Screen)";mb.onclick=()=>openGM2();box.appendChild(mb);}
     else if(lk){const mb=document.createElement("button");mb.className="btn tiny";mb.style.marginTop="6px";mb.textContent="✎ Edit / add "+({governments:"governments",religions:"religions",cultures:"cultures",languages:"languages",terrains:"terrains",settlements:"settlements",resources:"resources"}[lk]||lk);mb.onclick=()=>openLists(lk);box.appendChild(mb);}
     if(state.mapmode!=="political"){
       const rob=document.createElement("button");rob.className="btn tiny"+(state.realmOverlay?" primary":"");rob.style.marginTop="6px";rob.style.marginLeft="6px";
@@ -4146,7 +4172,7 @@ function renderProvinceView(){
         <div class="pvPies">
           ${pieCell("Religion",p,"religion","religions")}
           ${pieCell("Culture",p,"culture","cultures")}
-          ${pieCell("Race",p,"race","subraces")}
+          ${pieCell("Species",p,"race","subraces")}
           ${pieCell("Language",p,"language","languages")}
         </div>
       </div>
@@ -4212,8 +4238,8 @@ function renderRealmView(){
             ${row("Language", r.dominantLanguage?compChip("language",r.dominantLanguage,{color:catColor('languages',r.dominantLanguage)}):"—")}
           </div>
           <div class="rvBlock rvRacial">
-            <div class="rvRow"><span class="rvLbl">Racial Admin</span><span class="rvVal rvRaces">${raceTags(r.adminRaces)}</span></div>
-            <div class="rvRow"><span class="rvLbl">Racial Mil.</span><span class="rvVal rvRaces">${raceTags(r.militaryRaces)}</span></div>
+            <div class="rvRow"><span class="rvLbl">Admin Species</span><span class="rvVal rvRaces">${raceTags(r.adminRaces)}</span></div>
+            <div class="rvRow"><span class="rvLbl">Military Species</span><span class="rvVal rvRaces">${raceTags(r.militaryRaces)}</span></div>
           </div>
           <div class="rvBlock rvPowers">
             <div class="rvBlockH">✨ Powers</div>
@@ -4237,7 +4263,7 @@ function renderRealmView(){
             ${rPops.length?`<div class="pvPies">
               ${pieCellPops("Religion",rPops,"religion","religions",6)}
               ${pieCellPops("Culture",rPops,"culture","cultures",6)}
-              ${pieCellPops("Race",rPops,"race","subraces",6)}
+              ${pieCellPops("Species",rPops,"race","subraces",6)}
               ${pieCellPops("Language",rPops,"language","languages",6)}
             </div>`:'<div class="note">No population recorded for this realm.</div>'}
           </div>
@@ -4328,13 +4354,14 @@ function compendiumCats(){
     races.forEach(n=>{
       const used=comp_realmNames(r=>(r.adminRaces||[]).includes(n)||(r.militaryRaces||[]).includes(n));
       const kids=subracesOfGroupSafe(n);
-      entries.push({ id:raceEntryId("grp",n), name:n, color:raceGroupColor(n), sub:`Race${kids.length?` · ${kids.length} subrace${kids.length===1?"":"s"}`:""}`, used, ref:"", desc:"" });
+      entries.push({ id:raceEntryId("grp",n), name:n, color:raceGroupColor(n), sub:`Species${kids.length?` · ${kids.length} subspecies`:""}`, used, ref:"", desc:"" });
     });
+    // every subspecies gets its own page — including ones sharing their species' name (Dwarf, Elf, …)
     subs.forEach(s=>{
-      const g=subraceGroup(s); if(g===s && races.includes(s))return;   // a subrace identical to its group is already listed
-      entries.push({ id:raceEntryId("sub",s), name:s, color:catColor("subraces",s), sub:`Subrace${g?` of ${g}`:""}`, used:[], ref:"", desc:"" });
+      const g=subraceGroup(s);
+      entries.push({ id:raceEntryId("sub",s), name:s, color:catColor("subraces",s), sub:`Subspecies${g?` of ${g}`:""}`, used:[], ref:"", desc:"" });
     });
-    cats.push({ cat:"race", label:"🧬 Races", entries });
+    cats.push({ cat:"race", label:"🧬 Species", entries });
   }
   // Geography — named regions from the map plus hand-written locations & landmarks
   {
@@ -4348,16 +4375,28 @@ function compendiumCats(){
     });
     cats.push({ cat:"geography", label:"🗺 Geography", entries });
   }
+  // Relics & Wonders — every wonder built on the map, plus hand-written relics
+  {
+    const entries=[];
+    (world.wonders||[]).forEach(w=>{
+      const p=(world.provinces||[]).find(x=>x.id===w.provinceId);
+      entries.push({ id:"wonder:"+w.id, name:w.name, color:"#d9a521", sub:`Wonder${p?` · ${p.name}`:""}`, used:[], ref:"", desc:w.description||"" });
+    });
+    allRelics().forEach(rl=>{
+      entries.push({ id:"relic:"+rl.id, name:rl.name, color:rl.color, sub:rl.kind||"Relic", used:[], ref:"", desc:"" });
+    });
+    cats.push({ cat:"relic", label:"🏺 Relics & Wonders", entries });
+  }
   // Monsters — bestiary pages that map creatures can be linked to
   cats.push({ cat:"monster", label:"🐉 Monsters", entries:allMonsterPages().map(mp=>{
     const n=monstersOnPage(mp.id).length;
     return { id:mp.id, name:mp.name, color:mp.color, sub:n?`${n} on the map`:"", used:[], ref:"", desc:"" };
   }) });
   // fixed sidebar order (Dynasties sits with Characters; anything unlisted falls in after)
-  const ORDER=["realm","government","economy","character","dynasty","religion","culture","language","race","geography","monster","discovery","power"];
+  const ORDER=["realm","government","economy","character","dynasty","religion","culture","language","race","geography","relic","monster","discovery","power"];
   const rank=k=>{ const i=ORDER.indexOf(k); return i<0?ORDER.length:i; };
   // keep editable sections visible even when empty, so you can add the first entry
-  const KEEP=!VIEWER?["geography","monster","character","dynasty"]:[];
+  const KEEP=!VIEWER?["geography","relic","monster","character","dynasty"]:[];
   return cats.filter(c=>c.entries.length||KEEP.includes(c.cat)).sort((a,b)=>rank(a.cat)-rank(b.cat));
 }
 // resolve the underlying object whose canonical description is edited (or null → lore-only)
@@ -4369,11 +4408,16 @@ function compTargetObj(cat,id){
   if(cat==="dynasty")return dynastyById(id);
   if(cat==="monster")return monsterPageById(id);
   if(cat==="geography"){ const s=String(id); if(s.slice(0,6)==="place:")return placeById(s.slice(6)); if(s.slice(0,7)==="region:")return regionById(s.slice(7)); }
+  if(cat==="relic"){ const s=String(id); if(s.slice(0,6)==="relic:")return relicById(s.slice(6)); if(s.slice(0,7)==="wonder:")return (world.wonders||[]).find(w=>w.id===s.slice(7))||null; }
   return null;
 }
 let _compState={cat:null,val:null,open:null};
 function compEntryFind(cat,id){ const cats=compendiumCats(); const c=cats.find(x=>x.cat===cat); if(!c)return null; return c.entries.find(e=>String(e.id)===String(id))||null; }
 function compLoreKey(cat,id){ return cat+"::"+id; }
+// keep a page's written article attached when its underlying name changes (or drop it when deleted)
+function moveCompLore(cat,oldId,newId){ ensureCompendium(world); const a=compLoreKey(cat,oldId), b=compLoreKey(cat,newId);
+  if(_compendium.lore[a]!==undefined){ _compendium.lore[b]=_compendium.lore[a]; delete _compendium.lore[a]; } }
+function dropCompLore(cat,id){ ensureCompendium(world); delete _compendium.lore[compLoreKey(cat,id)]; }
 function compLore(cat,id){ ensureCompendium(world); const e=_compendium.lore[compLoreKey(cat,id)]; return (e&&typeof e.lore==="string")?e.lore:""; }
 function setCompLore(cat,id,text){ ensureCompendium(world); const k=compLoreKey(cat,id); const t=(text||"").replace(/\s+$/,""); if(t){ _compendium.lore[k]=_compendium.lore[k]||{}; _compendium.lore[k].lore=text; } else if(_compendium.lore[k]){ delete _compendium.lore[k]; } markDirty(); }
 // ---- Compendium navigation history (browser-style back) ----
@@ -4437,6 +4481,7 @@ function renderCompMain(){
       if(_compState.cat==="dynasty")wireDynastyEdit(main,_compState.open);
       if(_compState.cat==="race")wireRaceEdit(main,_compState.open);
       if(_compState.cat==="geography")wireGeographyEdit(main,_compState.open);
+      if(_compState.cat==="relic")wireRelicEdit(main,_compState.open);
       if(_compState.cat==="monster")wireMonsterPageEdit(main,_compState.open);
     }
     main.scrollTop=0;
@@ -4461,6 +4506,7 @@ const COMP_SORTS={
   economy:[["az","Name A–Z"],["za","Name Z–A"],["usage","Most realms"]],
   race:[["az","Name A–Z"],["za","Name Z–A"],["usage","Most realms"]],
   geography:[["az","Name A–Z"],["za","Name Z–A"],["kind","Type"]],
+  relic:[["az","Name A–Z"],["za","Name Z–A"],["kind","Type"]],
   monster:[["az","Name A–Z"],["za","Name Z–A"],["onmap","Most on the map"]]
 };
 function compSortsFor(cat){ return COMP_SORTS[cat]||[["az","Name A–Z"],["za","Name Z–A"]]; }
@@ -4495,12 +4541,14 @@ function renderCompList(c, main, editable){
   if(editable&&c.cat==="dynasty")addBtn=`<button class="btn primary cmpAddNew" id="cmpAddDyn">＋ New</button>`;
   if(editable&&c.cat==="geography")addBtn=`<button class="btn primary cmpAddNew" id="cmpAddPlace" title="Add a location or landmark">＋ Place</button>`;
   if(editable&&c.cat==="monster")addBtn=`<button class="btn primary cmpAddNew" id="cmpAddMonPage">＋ New</button>`;
+  if(editable&&c.cat==="relic")addBtn=`<button class="btn primary cmpAddNew" id="cmpAddRelic" title="Add a relic (wonders come from the map automatically)">＋ Relic</button>`;
   let filterSel="";
   if(c.cat==="character"){
     const dynOpts=allDynasties().map(d=>`<option value="dyn:${d.id}" ${ui.filter==="dyn:"+d.id?"selected":""}>${esc(d.name)}</option>`).join("");
     filterSel=`<select id="cmpFilter" class="cmpFilterSel"><option value="all" ${ui.filter==="all"?"selected":""}>All</option><option value="current" ${ui.filter==="current"?"selected":""}>Current leaders</option><option value="ruler" ${ui.filter==="ruler"?"selected":""}>Ever ruled</option><option value="commander" ${ui.filter==="commander"?"selected":""}>Commanders</option>${dynOpts}</select>`;
   }
-  const sortSel=`<select id="cmpSort" class="cmpFilterSel" title="Sort">${compSortsFor(c.cat).map(([v,l])=>`<option value="${v}" ${ui.sort===v?"selected":""}>${esc(l)}</option>`).join("")}</select>`;
+  // the Species section uses its own grouped grid, so it has no sort dropdown
+  const sortSel=(c.cat==="race")?"":`<select id="cmpSort" class="cmpFilterSel" title="Sort">${compSortsFor(c.cat).map(([v,l])=>`<option value="${v}" ${ui.sort===v?"selected":""}>${esc(l)}</option>`).join("")}</select>`;
   const label=c.label.replace(/^[^\sA-Za-z]+\s*/,"").toLowerCase();
   main.innerHTML=`<div class="cmpListBar"><input id="cmpListSearch" class="txt cmpListSearch" placeholder="🔍 Search ${esc(label)}…" autocomplete="off"/>${filterSel}${sortSel}${addBtn}</div><div id="cmpListItems"></div>`;
   const si=main.querySelector("#cmpListSearch"); if(si){ si.value=ui.q; si.addEventListener("input",()=>{ ui.q=si.value; renderCompListItems(c); }); }
@@ -4510,12 +4558,37 @@ function renderCompList(c, main, editable){
   const addD=main.querySelector("#cmpAddDyn"); if(addD)addD.onclick=()=>{ const d=newDynasty(); allDynasties().push(d); markDirty(); compNav({cat:"dynasty",open:d.id}); };
   const addP=main.querySelector("#cmpAddPlace"); if(addP)addP.onclick=()=>{ const pl=newPlace(); allPlaces().push(pl); markDirty(); compNav({cat:"geography",open:"place:"+pl.id}); };
   const addM=main.querySelector("#cmpAddMonPage"); if(addM)addM.onclick=()=>{ const mp=newMonsterPage(); allMonsterPages().push(mp); markDirty(); compNav({cat:"monster",open:mp.id}); };
+  const addR=main.querySelector("#cmpAddRelic"); if(addR)addR.onclick=()=>{ const rl=newRelic(); allRelics().push(rl); markDirty(); compNav({cat:"relic",open:"relic:"+rl.id}); };
   renderCompListItems(c);
+}
+// Species section: square species tiles, each holding smaller square subspecies buttons.
+function renderSpeciesGrid(box, q){
+  const races=(world.lists&&world.lists.races||[]);
+  const hit=n=>!q||String(n).toLowerCase().includes(q);
+  const groups=races.filter(g=>hit(g)||subracesOfGroupSafe(g).some(hit)).sort((a,b)=>a.localeCompare(b));
+  // subspecies whose species isn't in the list (orphans) still get a home
+  const orphan=(world.lists&&world.lists.subraces||[]).filter(s=>!races.includes(subraceGroup(s))&&hit(s));
+  if(!groups.length&&!orphan.length){ box.innerHTML='<div class="note" style="padding:18px">No matches.</div>'; return; }
+  const tile=(g,subs)=>{
+    const col=raceGroupColor(g);
+    const kids=subs.slice().sort((a,b)=>a.localeCompare(b));   // includes a subspecies sharing its species' name
+    return `<div class="spTile" style="--sc:${col}">
+      <button class="spTileHead" data-sp="${esc(g)}" title="Open the ${esc(g)} species page">
+        <span class="spDot" style="background:${col}"></span><span class="spName">${esc(g)}</span>
+        <span class="spCount">${kids.length}</span>
+      </button>
+      <div class="spSubs">${kids.length?kids.map(s=>`<button class="spSub" data-sub="${esc(s)}" style="--bc:${catColor("subraces",s)}" title="${esc(s)}"><span class="spSubName">${esc(s)}</span></button>`).join(""):'<div class="note spNoSub">No subspecies</div>'}</div>
+    </div>`;
+  };
+  box.innerHTML=`<div class="spGrid">${groups.map(g=>tile(g,subracesOfGroupSafe(g))).join("")}${orphan.length?tile("Unclassified",orphan):""}</div>`;
+  box.querySelectorAll(".spTileHead").forEach(el=>el.onclick=()=>compNav({cat:"race",open:raceEntryId("grp",el.dataset.sp)}));
+  box.querySelectorAll(".spSub").forEach(el=>el.onclick=()=>compNav({cat:"race",open:raceEntryId("sub",el.dataset.sub)}));
 }
 function renderCompListItems(c){
   const box=document.getElementById("cmpListItems"); if(!box)return;
   const ui=_compListUI[c.cat]||{q:"",filter:"all",sort:"az"};
   const q=(ui.q||"").trim().toLowerCase();
+  if(c.cat==="race"){ renderSpeciesGrid(box,q); return; }
   const cmp=compSortComparator(c.cat, ui.sort||"az");
   let list=c.entries.filter(e=>!q||(e.name||"").toLowerCase().includes(q)||(e.sub||"").toLowerCase().includes(q));
   if(c.cat==="character"){
@@ -4642,6 +4715,7 @@ function compRefColor(cat,id){
     case "race": { const {kind,name}=splitRaceId(id); return kind==="sub"?catColor("subraces",name):raceGroupColor(name); }
     case "geography": { const s=String(id); if(s.slice(0,6)==="place:"){ const pl=placeById(s.slice(6)); return pl?pl.color:"#3f9ae0"; } if(s.slice(0,7)==="region:"){ const rg=regionById(s.slice(7)); return rg?regionColor(rg):"#8a6fd0"; } return "#3f9ae0"; }
     case "monster": { const mp=monsterPageById(id); return mp?mp.color:"#c2543f"; }
+    case "relic": { const s=String(id); if(s.slice(0,6)==="relic:"){ const rl=relicById(s.slice(6)); return rl?rl.color:"#c9a227"; } return "#d9a521"; }
     case "realm": { const r=(world.realms||[]).find(x=>x.id===id); return r?r.color:"#7c8698"; }
     case "character": { const c=characterById(id); return c?charThemeColor(c):"#7c8698"; }
     case "dynasty": { const d=dynastyById(id); return d?d.color:"#7c8698"; }
@@ -4655,7 +4729,7 @@ function compRefChip(cat,id,label){ const col=compRefColor(cat,id); return `<but
 function charInfoboxView(c){
   const rows=[]; const dy=c.dynastyId&&dynastyById(c.dynastyId);
   if(dy)rows.push(ibRow("Dynasty", compRefChip("dynasty",dy.id,dy.name)));
-  if(c.race)rows.push(ibRow("Race", compRefChip("race",raceEntryId("grp",c.race),c.race)));
+  if(c.race)rows.push(ibRow("Species", compRefChip("race",raceEntryId("grp",c.race),c.race)));
   if(c.culture)rows.push(ibRow("Culture", compRefChip("culture",c.culture)));
   if(c.religion)rows.push(ibRow("Religion", compRefChip("religion",c.religion)));
   if(c.languages&&c.languages.length)rows.push(ibRow("Language"+(c.languages.length>1?"s":""), c.languages.map(l=>compRefChip("language",l)).join(" ")));
@@ -4679,7 +4753,7 @@ function charInfoboxEdit(c){
     <div class="ibEditRow"><label class="btn tiny ibUpload">📷 Portrait<input type="file" id="chPortrait" accept="image/*" hidden/></label>${c.portrait?'<button class="btn tiny" id="chPortraitClear">Clear</button>':""}</div>
     <label class="ibField"><span>Name</span><input class="txt cmpFld" data-k="name" data-live="1"/></label>
     <label class="ibField"><span>Dynasty</span><select id="chDynasty">${dynOpts}</select></label>
-    <label class="ibField"><span>Race</span><select class="cmpFld" data-k="race">${selOpts(world.lists.races,c.race)}</select></label>
+    <label class="ibField"><span>Species</span><select class="cmpFld" data-k="race">${selOpts(world.lists.races,c.race)}</select></label>
     <label class="ibField"><span>Culture</span><select class="cmpFld" data-k="culture">${selOpts(world.lists.cultures,c.culture)}</select></label>
     <label class="ibField"><span>Religion</span><select class="cmpFld" data-k="religion">${selOpts(world.lists.religions,c.religion)}</select></label>
     <div class="ibField"><span>Languages</span><div class="cmpTagChips">${langChips}</div><select id="chLangAdd"><option value="">＋ add language…</option>${langOpts}</select></div>
@@ -4951,20 +5025,25 @@ function renderRacePage(e, editable){
   const group=isSub?subraceGroup(name):name;
   const col=isSub?catColor("subraces",name):raceGroupColor(name);
   const kids=isSub?[]:subracesOfGroupSafe(name);
-  const provCount=(world.provinces||[]).filter(p=>(p.pops||[]).some(q=>q.size>0 && q.race===name)).length;
+  const provCount=(world.provinces||[]).filter(p=>(p.pops||[]).some(q=>q.size>0 && (isSub?q.race===name:subraceGroup(q.race)===name))).length;
+  const pop=isSub?subspeciesPopulation(name):speciesPopulation(name);
+  const worldPop=worldPopulationTotal();
+  const share=worldPop>0?Math.round(pop/worldPop*1000)/10:0;
   const lore=compLore("race", e.id);
   const info=[
-    ibRow("Type", isSub?"Subrace":"Race"),
-    isSub&&group?ibRow("Racial group", compRefChip("race",raceEntryId("grp",group),group)):"",
-    (!isSub&&kids.length)?ibRow("Subraces", kids.map(s=>compRefChip("race",raceEntryId("sub",s),s)).join(" ")):"",
-    e.used&&e.used.length?ibRow("Realms", e.used.map(esc).join(", ")):"",
-    isSub?ibRow("Provinces", String(provCount)):""
+    ibRow("Type", isSub?"Subspecies":"Species"),
+    isSub&&group?ibRow("Species", compRefChip("race",raceEntryId("grp",group),group)):"",
+    (!isSub&&kids.length)?ibRow("Subspecies", kids.map(s=>compRefChip("race",raceEntryId("sub",s),s)).join(" ")):"",
+    ibRow("Population", `${pop.toLocaleString()}${worldPop>0?` <span class="note">(${share}% of the world)</span>`:""}`),
+    ibRow("Provinces", String(provCount)),
+    (!isSub&&kids.length)?ibRow("By subspecies", kids.map(s=>`${compRefChip("race",raceEntryId("sub",s),s)} <span class="note">${subspeciesPopulation(s).toLocaleString()}</span>`).join("<br>")):"",
+    e.used&&e.used.length?ibRow("Realms", e.used.map(esc).join(", ")):""
   ].filter(Boolean).join("");
   const body = editable
     ? `<div class="cmpSecH">📜 Description</div><div class="richWrap">${richToolbarHTML()}<div class="richArea" contenteditable="true">${lore}</div></div>`
     : (lore?`<div class="wikiDesc">${lore}</div>`:'<span class="note">No description yet.</span>');
   return `<div class="cmpDetail wikiPage" style="--th:${col}; --ac:${col}">
-    <div class="wikiHead"><div class="wikiTitle cmpDetName">${esc(name)}</div><div class="wikiSubtitle">${isSub?("Subrace"+(group?" of "+esc(group):"")):"Race"}</div></div>
+    <div class="wikiHead"><div class="wikiTitle cmpDetName">${esc(name)}</div><div class="wikiSubtitle">${isSub?("Subspecies"+(group?" of "+esc(group):"")):"Species"}</div></div>
     <div class="wikiCols"><div class="wikiMain">${body}</div>
       <aside class="wikiBox"><div class="wikiBoxName">${esc(name)}</div>${info}</aside></div>
   </div>`;
@@ -5008,6 +5087,133 @@ function renderGeographyPage(e, editable){
     <div class="wikiHead"><div class="wikiTitle cmpDetName">${esc(pl.name)}</div><div class="wikiSubtitle">${esc(pl.kind||"Landmark")}</div></div>
     <div class="wikiCols"><div class="wikiMain">${body}</div><aside class="wikiBox">${infobox}</aside></div>
   </div>`;
+}
+// ---- Relics & Wonders page (a wonder built on the map, or a hand-written relic) ----
+function renderRelicPage(e, editable){
+  const s=String(e.id);
+  if(s.slice(0,7)==="wonder:"){
+    const w=(world.wonders||[]).find(x=>x.id===s.slice(7)); if(!w)return '<div class="cmpDetail"><div class="note" style="padding:20px">Not found.</div></div>';
+    const p=(world.provinces||[]).find(x=>x.id===w.provinceId);
+    const realm=p&&p.realmId?(world.realms||[]).find(r=>r.id===p.realmId):null;
+    const lore=compLore("relic", e.id);
+    const info=[
+      ibRow("Type","Wonder"),
+      p?ibRow("Province", `<span class="li cmpProvLink" data-pid="${p.id}" style="display:inline;cursor:pointer;padding:0">${esc(p.name)}</span>`):"",
+      realm?ibRow("Realm", compRefChip("realm",realm.id,realm.name)):"",
+      w.holySite?ibRow("Holy site", (w.religions||[]).length?(w.religions||[]).map(rn=>compRefChip("religion",rn)).join(" "):"Yes"):""
+    ].filter(Boolean).join("");
+    const body = editable
+      ? `<div class="cmpEditGrid"><label class="cmpF cmpFWide"><span>Description <span class="note">(also shown on the province's wonder panel)</span></span><textarea class="txt cmpFld" data-k="description" rows="4"></textarea></label></div>
+         <div class="cmpSecH">📜 Compendium article</div><div class="richWrap">${richToolbarHTML()}<div class="richArea" contenteditable="true">${lore}</div></div>`
+      : `${w.description?`<div class="cmpDesc">${esc(w.description).replace(/\n/g,"<br>")}</div>`:""}${lore?`<div class="wikiDesc">${lore}</div>`:(w.description?"":'<span class="note">No description yet.</span>')}`;
+    return `<div class="cmpDetail wikiPage" style="--th:#d9a521; --ac:#d9a521">
+      <div class="wikiHead"><div class="wikiTitle cmpDetName">${esc(w.name)}</div><div class="wikiSubtitle">Wonder${p?` · ${esc(p.name)}`:""}</div></div>
+      <div class="wikiCols"><div class="wikiMain">${body}</div>
+        <aside class="wikiBox">${w.image?`<img class="wikiPortrait" src="${esc(w.image)}" alt=""/>`:""}<div class="wikiBoxName">${esc(w.name)}</div>${info}</aside></div>
+    </div>`;
+  }
+  const rl=relicById(s.slice(6)); if(!rl)return '<div class="cmpDetail"><div class="note" style="padding:20px">Not found.</div></div>';
+  const prov=rl.provinceId?(world.provinces||[]).find(p=>p.id===rl.provinceId):null;
+  const realm=rl.realmId?(world.realms||[]).find(r=>r.id===rl.realmId):null;
+  const holder=rl.holderCharId?characterById(rl.holderCharId):null;
+  let infobox;
+  if(editable){
+    const provOpts=`<option value="">— none —</option>`+(world.provinces||[]).filter(p=>!p.ocean).map(p=>`<option value="${p.id}" ${rl.provinceId===p.id?"selected":""}>${esc(p.name)}</option>`).join("");
+    const realmOpts=`<option value="">— none —</option>`+(world.realms||[]).map(r=>`<option value="${r.id}" ${rl.realmId===r.id?"selected":""}>${esc(r.name)}</option>`).join("");
+    const charOpts=`<option value="">— none —</option>`+allCharacters().map(c=>`<option value="${c.id}" ${rl.holderCharId===c.id?"selected":""}>${esc(c.name)}</option>`).join("");
+    infobox=`${rl.image?`<img class="wikiPortrait" src="${esc(rl.image)}" alt=""/>`:'<div class="wikiPortraitEmpty">No image</div>'}
+      <div class="ibEditRow"><label class="btn tiny ibUpload">🖼 Image<input type="file" id="rlImage" accept="image/*" hidden/></label>${rl.image?'<button class="btn tiny" id="rlImageClear">Clear</button>':""}</div>
+      <label class="ibField"><span>Name</span><input class="txt cmpFld" data-k="name" data-live="1"/></label>
+      <label class="ibField"><span>Kind <span class="note">(Relic, Regalia, Weapon…)</span></span><input class="txt cmpFld" data-k="kind"/></label>
+      <label class="ibField"><span>Colour</span><input type="color" class="cmpFld" data-k="color" data-live="1"/></label>
+      <div class="cmpSecH" style="margin-top:12px">📍 Where it is now</div>
+      <div class="ibField"><span>Province</span><select id="rlProvince">${provOpts}</select></div>
+      <div class="ibField"><span>Realm</span><select id="rlRealm">${realmOpts}</select></div>
+      <div class="ibField"><span>Held by</span><select id="rlHolder">${charOpts}</select></div>
+      <label class="ibField"><span>Location note</span><input class="txt cmpFld" data-k="location" placeholder="e.g. sealed in the vault"/></label>
+      <label class="ibField"><span>Status</span><input class="txt cmpFld" data-k="status" placeholder="e.g. Lost, Intact, Broken"/></label>`;
+  } else {
+    const where=[
+      prov?ibRow("Province", `<span class="li cmpProvLink" data-pid="${prov.id}" style="display:inline;cursor:pointer;padding:0">${esc(prov.name)}</span>`):"",
+      realm?ibRow("Realm", compRefChip("realm",realm.id,realm.name)):"",
+      holder?ibRow("Held by", compRefChip("character",holder.id,holder.name)):"",
+      rl.location?ibRow("Location", esc(rl.location)):"",
+      rl.status?ibRow("Status", esc(rl.status)):""
+    ].filter(Boolean).join("");
+    infobox=`${rl.image?`<img class="wikiPortrait" src="${esc(rl.image)}" alt=""/>`:""}<div class="wikiBoxName">${esc(rl.name)}</div>${ibRow("Kind",esc(rl.kind||"Relic"))}${where||'<div class="note">Whereabouts unrecorded.</div>'}`;
+  }
+  const hist=rl.history||[];
+  const provName=id=>{ const p=(world.provinces||[]).find(x=>x.id===id); return p?p.name:""; };
+  const realmName=id=>{ const r=(world.realms||[]).find(x=>x.id===id); return r?r.name:""; };
+  let histHTML;
+  if(editable){
+    const pOpts=(sel)=>`<option value="">— province —</option>`+(world.provinces||[]).filter(p=>!p.ocean).map(p=>`<option value="${p.id}" ${sel===p.id?"selected":""}>${esc(p.name)}</option>`).join("");
+    const rOpts=(sel)=>`<option value="">— realm —</option>`+(world.realms||[]).map(r=>`<option value="${r.id}" ${sel===r.id?"selected":""}>${esc(r.name)}</option>`).join("");
+    const cOpts=(sel)=>`<option value="">— holder —</option>`+allCharacters().map(c=>`<option value="${c.id}" ${sel===c.id?"selected":""}>${esc(c.name)}</option>`).join("");
+    histHTML=(hist.length?hist.map((h,i)=>`
+      <div class="rulerRow" data-i="${i}">
+        <div class="rulerRowTop"><span class="rulerOrd">${i+1}</span>
+          <input class="rlhDate" data-i="${i}" placeholder="Date / era" value="${esc(h.date||"")}"/>
+          <button class="btn tiny rlhUp" data-i="${i}" title="Earlier">▲</button>
+          <button class="btn tiny rlhDn" data-i="${i}" title="Later">▼</button>
+          <button class="btn tiny danger rlhDel" data-i="${i}" title="Remove">✕</button></div>
+        <div class="rulerRowFields">
+          <select class="rlhProv" data-i="${i}">${pOpts(h.provinceId)}</select>
+          <select class="rlhRealm" data-i="${i}">${rOpts(h.realmId)}</select>
+          <select class="rlhHolder" data-i="${i}">${cOpts(h.holderCharId)}</select>
+        </div>
+        <div class="rulerRowFields">
+          <input class="rlhLoc" data-i="${i}" placeholder="Location note" value="${esc(h.location||"")}"/>
+          <input class="rlhStatus" data-i="${i}" placeholder="Status" value="${esc(h.status||"")}"/>
+        </div>
+        <textarea class="rlhNote" data-i="${i}" rows="2" placeholder="What happened to it here…">${esc(h.note||"")}</textarea>
+      </div>`).join(""):'<div class="note">No history recorded yet.</div>')
+      + `<div class="rulerAddRow"><button class="btn tiny" id="rlhAdd">＋ Add entry</button><button class="btn tiny" id="rlhFromCur">＋ From current</button></div>
+         <div class="note">Ordered earliest → latest. “From current” snapshots the relic's present location &amp; status as a new entry.</div>`;
+  } else {
+    histHTML=hist.length?hist.map((h,i)=>{
+      const bits=[h.provinceId?provName(h.provinceId):"", h.realmId?realmName(h.realmId):"", h.holderCharId?charName(h.holderCharId):"", h.location||""].filter(Boolean);
+      return `<div class="rulerViewRow" style="cursor:default">
+        <span class="rulerOrd">${i+1}</span>
+        <div class="rulerViewMain">
+          <span class="rulerViewName">${esc(h.date||"Unknown date")}</span>${h.status?` <span class="rulerViewTitle">${esc(h.status)}</span>`:""}${i===hist.length-1?' <span class="rulerCurrent">latest</span>':""}
+          ${bits.length?`<div class="note">${bits.map(esc).join(" · ")}</div>`:""}
+          ${h.note?`<div class="rulerViewNote">${esc(h.note).replace(/\n/g,"<br>")}</div>`:""}
+        </div></div>`; }).join("") : '<div class="note">No recorded history.</div>';
+  }
+  const body = editable
+    ? `<div class="cmpSecH">📜 Description</div><div class="richWrap">${richToolbarHTML()}<div class="richArea" contenteditable="true">${rl.descHtml||""}</div></div>
+       <div class="cmpSecH">🕑 History <span class="note">(location &amp; status over time)</span></div>
+       <div class="rulerTimeline">${histHTML}</div>
+       <div style="margin-top:16px"><button class="btn danger" id="rlDelete">🗑 Delete relic</button></div>`
+    : `${rl.descHtml?`<div class="wikiDesc">${rl.descHtml}</div>`:'<span class="note">No description yet.</span>'}
+       <div class="cmpSecH">🕑 History</div><div class="rulerTimeline">${histHTML}</div>`;
+  return `<div class="cmpDetail wikiPage" style="--th:${rl.color}; --ac:${rl.color}">
+    <div class="wikiHead"><div class="wikiTitle cmpDetName">${esc(rl.name)}</div><div class="wikiSubtitle">${esc(rl.kind||"Relic")}</div></div>
+    <div class="wikiCols"><div class="wikiMain">${body}</div><aside class="wikiBox">${infobox}</aside></div>
+  </div>`;
+}
+function wireRelicEdit(main, id){
+  const s=String(id);
+  if(s.slice(0,7)==="wonder:"){ const rich=main.querySelector(".richWrap"); if(rich)wireRichEditor(rich,(html)=>setCompLore("relic",id,html)); return; }
+  const rl=relicById(s.slice(6)); if(!rl)return;
+  const fi=main.querySelector("#rlImage"); if(fi)fi.onchange=()=>{ const f=fi.files&&fi.files[0]; if(!f)return; const rd=new FileReader(); rd.onload=()=>{ rl.image=rd.result; markDirty(); renderCompMain(); }; rd.readAsDataURL(f); };
+  const ic=main.querySelector("#rlImageClear"); if(ic)ic.onclick=()=>{ rl.image=""; markDirty(); renderCompMain(); };
+  const pv=main.querySelector("#rlProvince"); if(pv)pv.onchange=()=>{ rl.provinceId=pv.value||""; markDirty(); };
+  const rm=main.querySelector("#rlRealm"); if(rm)rm.onchange=()=>{ rl.realmId=rm.value||""; markDirty(); };
+  const hd=main.querySelector("#rlHolder"); if(hd)hd.onchange=()=>{ rl.holderCharId=hd.value||""; markDirty(); };
+  const rich=main.querySelector(".richWrap"); if(rich)wireRichEditor(rich,(html)=>{ rl.descHtml=html; markDirty(); });
+  // ---- provenance timeline ----
+  rl.history=rl.history||[]; const H=rl.history; const rr=()=>renderCompMain();
+  const bindH=(sel,key,reload)=>main.querySelectorAll(sel).forEach(el=>el.addEventListener(reload?"change":"input",()=>{ const h=H[+el.dataset.i]; if(!h)return; h[key]=el.value; markDirty(); if(reload)rr(); }));
+  bindH(".rlhDate","date"); bindH(".rlhLoc","location"); bindH(".rlhStatus","status"); bindH(".rlhNote","note");
+  bindH(".rlhProv","provinceId",true); bindH(".rlhRealm","realmId",true); bindH(".rlhHolder","holderCharId",true);
+  main.querySelectorAll(".rlhDel").forEach(el=>el.onclick=()=>{ H.splice(+el.dataset.i,1); markDirty(); rr(); });
+  main.querySelectorAll(".rlhUp").forEach(el=>el.onclick=()=>{ const i=+el.dataset.i; if(i>0){ const t=H[i-1]; H[i-1]=H[i]; H[i]=t; markDirty(); rr(); } });
+  main.querySelectorAll(".rlhDn").forEach(el=>el.onclick=()=>{ const i=+el.dataset.i; if(i<H.length-1){ const t=H[i+1]; H[i+1]=H[i]; H[i]=t; markDirty(); rr(); } });
+  const ha=main.querySelector("#rlhAdd"); if(ha)ha.onclick=()=>{ H.push({id:uid(),date:"",provinceId:"",realmId:"",holderCharId:"",location:"",status:"",note:""}); markDirty(); rr(); };
+  const hc=main.querySelector("#rlhFromCur"); if(hc)hc.onclick=()=>{ H.push({id:uid(),date:"",provinceId:rl.provinceId||"",realmId:rl.realmId||"",holderCharId:rl.holderCharId||"",location:rl.location||"",status:rl.status||"",note:""}); markDirty(); rr(); };
+  const del=main.querySelector("#rlDelete"); if(del)del.onclick=()=>{ if(!confirm("Delete this relic?"))return; _compendium.relics=allRelics().filter(x=>x.id!==rl.id); markDirty(); _compState.open=null; renderCompMain(); };
 }
 // ---- Monsters (bestiary) page ----
 function renderMonsterPageView(e, editable){
@@ -5061,6 +5267,7 @@ function renderCompDetail(cat, e, editable){
   if(cat==="dynasty")return renderDynastyPage(e, editable);
   if(cat==="race")return renderRacePage(e, editable);
   if(cat==="geography")return renderGeographyPage(e, editable);
+  if(cat==="relic")return renderRelicPage(e, editable);
   if(cat==="monster")return renderMonsterPageView(e, editable);
   const used=e.used||[];
   const usedBlock=used.length?`<div class="cmpUsed"><span class="cmpUsedL">Realms</span> ${used.map(esc).join(", ")}</div>`:"";
@@ -5191,7 +5398,7 @@ function renderProvinceEditor(){
     <button class="btn tiny" id="pwonderAdd" style="margin-top:6px">＋ Add wonder</button>
 
     ${p.ocean?"":`<div class="sectionH">Population — <span id="ppopTot">${(p.population||0).toLocaleString()}</span> · <span id="ppopN">${p.pops.length}</span> group(s)</div>
-    <div class="note">Each group is a chunk of people sharing one religion, culture, race and language. Add groups for minorities — the map-mode percentages update automatically from the groups.</div>
+    <div class="note">Each group is a chunk of people sharing one religion, culture, subspecies and language. Add groups for minorities — the map-mode percentages update automatically from the groups.</div>
     <div id="ppops"></div>
     <button class="btn tiny" id="ppopAdd" style="margin-top:6px">＋ Add pop group</button>`}
 
@@ -5323,7 +5530,7 @@ function renderPops(p){
     const row=div("popRow");
     row.style.borderLeft=`5px solid ${q.race?catColor("subraces",q.race):"#39415e"}`;   // tint by subrace colour
     row.innerHTML=`<div class="popHead"><input class="psize" type="number" min="0" value="${q.size||0}" title="People in this group"/><span class="x" title="Remove group">✕</span></div>
-      <div class="popAxes">${sel(world.lists.religions,q.religion,"prel","Religion")}${sel(world.lists.cultures,q.culture,"pcul","Culture")}${sel(world.lists.subraces,q.race,"prace","Subrace")}${sel(world.lists.languages,q.language,"plang","Language")}${sel(world.lists.economies,q.economy,"pecon2","Mode of Production")}</div>`;
+      <div class="popAxes">${sel(world.lists.religions,q.religion,"prel","Religion")}${sel(world.lists.cultures,q.culture,"pcul","Culture")}${sel(world.lists.subraces,q.race,"prace","Subspecies")}${sel(world.lists.languages,q.language,"plang","Language")}${sel(world.lists.economies,q.economy,"pecon2","Mode of Production")}</div>`;
     const updSize=()=>{recomputeProvince(p);totals();renderMap();renderLeft();markDirty();};
     const updAxis=(k,val)=>{q[k]=val;recomputeProvince(p);totals();renderMap();renderLeft();markDirty();};   // no merge while the province is open — identical groups fold together on deselect
     row.querySelector(".psize").addEventListener("input",e=>{q.size=Math.max(0,+e.target.value||0);updSize();});
@@ -5452,12 +5659,12 @@ function renderRealmEditor(){
       <div class="field"><label>Language</label><select id="rlang">${opt(world.lists.languages,r.dominantLanguage||"No Language")}</select></div>
     </div>
     <div class="field2">
-      <div class="field"><label>Racial Administration (one or more)</label>
+      <div class="field"><label>Administrative Species (one or more)</label>
         <div id="radminRaces" class="raceMulti"></div>
-        <select id="radminSelRace"><option value="">＋ add race…</option>${world.lists.races.map(x=>`<option>${esc(x)}</option>`).join("")}</select></div>
-      <div class="field"><label>Racial Military (one or more)</label>
+        <select id="radminSelRace"><option value="">＋ add species…</option>${world.lists.races.map(x=>`<option>${esc(x)}</option>`).join("")}</select></div>
+      <div class="field"><label>Military Species (one or more)</label>
         <div id="rmilRaces" class="raceMulti"></div>
-        <select id="rmilSelRace"><option value="">＋ add race…</option>${world.lists.races.map(x=>`<option>${esc(x)}</option>`).join("")}</select></div>
+        <select id="rmilSelRace"><option value="">＋ add species…</option>${world.lists.races.map(x=>`<option>${esc(x)}</option>`).join("")}</select></div>
     </div>
     <div class="sectionH">👑 Ruler</div>
     <div class="field2">
@@ -5506,7 +5713,7 @@ function renderRealmEditor(){
       <label style="font-size:13px"><input type="checkbox" id="rexRel" ${state.settleParams.byReligion?"checked":""}/> Religion</label>
       <label style="font-size:13px;margin-left:10px"><input type="checkbox" id="rexCul" ${state.settleParams.byCulture?"checked":""}/> Culture</label>
       <label style="font-size:13px;margin-left:10px"><input type="checkbox" id="rexLan" ${state.settleParams.byLanguage?"checked":""}/> Language</label>
-      <label style="font-size:13px;margin-left:10px"><input type="checkbox" id="rexRac" ${state.settleParams.byRace?"checked":""}/> Race</label>
+      <label style="font-size:13px;margin-left:10px"><input type="checkbox" id="rexRac" ${state.settleParams.byRace?"checked":""}/> Species</label>
     </div>
     <div class="btnrow" style="margin-top:6px"><button class="btn" id="rexUndo">↶ Undo last expansion</button></div>
     <div class="note">Reverts the most recent conquer/settle/override paint — moved settlers return to their origin provinces.</div>
@@ -6329,7 +6536,7 @@ const HERALD_EXPORT=[
   ["resource","resource.png","Resource"],
   ["religion","religion.png","Religion"],
   ["culture","culture.png","Culture"],
-  ["race","racial.png","Racial"],
+  ["race","racial.png","Species"],
   ["language","language.png","Language"],
   ["population","population.png","Population"],
 ];
@@ -6474,7 +6681,7 @@ function applyListDelete(k,v){
     }
   }
 }
-// Races & subraces are managed in the 🧭 GM Screen (v2), not here.
+// Species & subspecies are managed in the 🧭 GM Screen (v2), not here.
 const LIST_KEYS=[["religions","Religions"],["cultures","Cultures"],["languages","Languages"],["terrains","Terrains"],["settlements","Settlement tiers"],["resources","Resources"],["hiddenResources","Strategic resources"],["features","Features"],["governments","Government types"],["economies","Modes of Production"]];
 const MODE_LIST={religion:"religions",culture:"cultures",race:"races",language:"languages",terrain:"terrains",settlement:"settlements",resource:"resources",economy:"economies"};
 function randomizeCategory(k){
@@ -6569,9 +6776,9 @@ function tuneValuesHTML(){
     <div class="sectionH">⚙ Terrain habitability (population &amp; growth multiplier)</div>
     <p class="note">1.0 = a normal fertile land. Higher = more people and faster growth; lower = harsher.</p>
     <div style="display:flex;flex-wrap:wrap;gap:6px">${terrRows}</div>
-    <div class="sectionH">🧬 Growth modifier per race</div>
-    <p class="note">Multiplies how fast each race's pop groups grow when you press 🌱 Grow. 1.0 = normal, 1.5 = fast breeders, 0.5 = slow.</p>
-    <div style="display:flex;flex-wrap:wrap;gap:6px">${raceRows||'<div class="note">No races defined yet.</div>'}</div>
+    <div class="sectionH">🧬 Growth modifier per species</div>
+    <p class="note">Multiplies how fast each species' pop groups grow when you press 🌱 Grow. 1.0 = normal, 1.5 = fast breeders, 0.5 = slow.</p>
+    <div style="display:flex;flex-wrap:wrap;gap:6px">${raceRows||'<div class="note">No species defined yet.</div>'}</div>
     <div class="sectionH">🏙 Settlement-tier capacity</div>
     <p class="note">How much population each settlement tier can hold when seeding (relative multiplier).</p>
     <div style="display:flex;flex-wrap:wrap;gap:6px">${settleRows}</div>
@@ -6801,13 +7008,14 @@ function renderGM2(){
       <td><input class="gmSCeil" data-s="${esc(s)}" type="number" step="1000" min="0" value="${settleCeilBase(s)}" ${i<=0?"disabled":""}/></td>
     </tr>`).join("");
   const raceRows=(world.lists.races||[]).map((rc,ri)=>`<tr>
+      <td style="white-space:nowrap"><input class="gmRCol" data-r="${esc(rc)}" type="color" value="${toHex(raceGroupColor(rc))}" title="Species colour"/>${speciesHasOwnColor(rc)?`<button class="btn tiny gmRColClr" data-r="${esc(rc)}" title="Clear — follow its first subspecies again">↺</button>`:""}</td>
       <td><input class="gmRName" data-r="${esc(rc)}" value="${esc(rc)}"/></td>
       <td><input class="gmRSize" data-r="${esc(rc)}" type="number" step="0.05" min="0.05" value="${raceSize(rc)}"/></td>
       <td><input class="gmRGrow" data-r="${esc(rc)}" type="number" step="0.05" min="0" value="${raceGrowthMod(rc)}"/></td>
       <td style="white-space:nowrap">
         <button class="btn tiny gmRUp" data-r="${esc(rc)}" ${ri===0?"disabled":""} title="Move up">↑</button>
         <button class="btn tiny gmRDn" data-r="${esc(rc)}" ${ri===(world.lists.races.length-1)?"disabled":""} title="Move down">↓</button>
-        <button class="btn tiny gmRDel" data-r="${esc(rc)}" style="color:var(--bad)" title="Delete race group">✕</button>
+        <button class="btn tiny gmRDel" data-r="${esc(rc)}" style="color:var(--bad)" title="Delete species">✕</button>
       </td>
     </tr>`).join("");
   const subRows=(world.lists.subraces||[]).map(sr=>{ const gp=subraceGroup(sr);
@@ -6860,16 +7068,16 @@ function renderGM2(){
         <table class="gm2tbl"><thead><tr><th>Tier</th><th>Growth ×</th><th>Base ceiling</th></tr></thead><tbody>${settleRows}</tbody></table>
       </section>
       <section class="gmBlock gmSpanAll">
-        <div class="gmBlockH">🧬 Race groups</div>
-        <p class="note">The top-level races. Rename, reorder (↑/↓ — also sets the order they appear in the Race map legend), or delete them here. <b>Size</b> = how much each individual counts toward a province's growth ceiling — 0.5 means half-size, so twice as many fit (denser). <b>Growth ×</b> = how fast they breed. Subraces (below) are grouped under these and carry the colours.</p>
-        <table class="gm2tbl"><thead><tr><th>Race group</th><th>Size</th><th>Growth ×</th><th></th></tr></thead><tbody>${raceRows||'<tr><td class="note">No race groups.</td></tr>'}</tbody></table>
-        <div class="btnrow" style="margin-top:8px"><button class="btn tiny" id="gmAddRace">＋ Add race group</button></div>
+        <div class="gmBlockH">🧬 Species</div>
+        <p class="note">The top-level species. Rename, recolour, reorder (↑/↓ — also sets the order they appear in the Species map legend), or delete them here. <b>Colour</b> is the species' own — used for its Compendium tile and species-level highlights; press ↺ to clear it and fall back to its first subspecies' colour. <b>Size</b> = how much each individual counts toward a province's growth ceiling — 0.5 means half-size, so twice as many fit (denser). <b>Growth ×</b> = how fast they breed. Subspecies (below) keep their own separate colours, which are what the Species map paints.</p>
+        <table class="gm2tbl"><thead><tr><th>Colour</th><th>Species</th><th>Size</th><th>Growth ×</th><th></th></tr></thead><tbody>${raceRows||'<tr><td class="note">No species.</td></tr>'}</tbody></table>
+        <div class="btnrow" style="margin-top:8px"><button class="btn tiny" id="gmAddRace">＋ Add species</button></div>
       </section>
       <section class="gmBlock gmSpanAll">
-        <div class="gmBlockH">🧝 Subraces</div>
-        <p class="note">Subraces are what population groups actually are — they show on the Race map and in province pie charts, coloured individually and grouped under a race. Clicking a subrace on the map highlights its whole race group. (With none defined, each race is simply its own subrace.)</p>
-        <table class="gm2tbl"><thead><tr><th>Colour</th><th>Subrace</th><th>Race group</th><th></th></tr></thead><tbody>${subRows}</tbody></table>
-        <div class="btnrow" style="margin-top:8px"><button class="btn tiny" id="gmAddSub">＋ Add subrace</button></div>
+        <div class="gmBlockH">🧝 Subspecies</div>
+        <p class="note">Subspecies are what population groups actually are — they show on the Species map and in province pie charts, coloured individually and grouped under a species. Clicking a subspecies on the map highlights its whole species. (With none defined, each species is simply its own subspecies.)</p>
+        <table class="gm2tbl"><thead><tr><th>Colour</th><th>Subspecies</th><th>Species</th><th></th></tr></thead><tbody>${subRows}</tbody></table>
+        <div class="btnrow" style="margin-top:8px"><button class="btn tiny" id="gmAddSub">＋ Add subspecies</button></div>
       </section>
       <section class="gmBlock gmSpanAll">
         <div class="gmBlockH">⛰ Terrain types &amp; modifiers</div>
@@ -6920,30 +7128,37 @@ function renderGM2(){
   host.querySelectorAll(".gmSCeil").forEach(el=>el.addEventListener("input",e=>{ t.settleCeil[el.dataset.s]=Math.max(0,Math.round(+e.target.value||0)); markDirty(); }));
   // ---- races (groups): size / growth / rename / reorder / delete / add ----
   world.tune.raceSize=world.tune.raceSize||{}; world.tune.raceGrowth=world.tune.raceGrowth||{};
+  world.colors=world.colors||{};
+  host.querySelectorAll(".gmRCol").forEach(el=>el.addEventListener("input",e=>{ world.colors.races=world.colors.races||{}; world.colors.races[el.dataset.r]=e.target.value; renderMap(); renderLegend(); markDirty(); }));
+  host.querySelectorAll(".gmRColClr").forEach(el=>el.addEventListener("click",()=>{ if(world.colors.races)delete world.colors.races[el.dataset.r]; renderMap(); renderLegend(); markDirty(); renderGM2(); }));
   host.querySelectorAll(".gmRSize").forEach(el=>el.addEventListener("input",e=>{ world.tune.raceSize[el.dataset.r]=Math.max(0.05,+e.target.value||1); markDirty(); }));
   host.querySelectorAll(".gmRGrow").forEach(el=>el.addEventListener("input",e=>{ world.tune.raceGrowth[el.dataset.r]=Math.max(0,+e.target.value||0); markDirty(); }));
   host.querySelectorAll(".gmRName").forEach(el=>el.addEventListener("change",e=>{
     const ov=el.dataset.r, nv=e.target.value.trim();
     if(!nv||nv===ov){ e.target.value=ov; return; }
-    if((world.lists.races||[]).includes(nv)){ flash("A race group “"+nv+"” already exists."); e.target.value=ov; return; }
+    if((world.lists.races||[]).includes(nv)){ flash("A species “"+nv+"” already exists."); e.target.value=ov; return; }
     const i=world.lists.races.indexOf(ov); if(i<0)return;
     world.lists.races[i]=nv; applyListRename("races",ov,nv);   // also remaps subraceOf, tune keys, realm dominantRace
     Object.keys(world.subraceOf||{}).forEach(sr=>{ if(world.subraceOf[sr]===ov)world.subraceOf[sr]=nv; });
+    if(world.colors&&world.colors.races&&world.colors.races[ov]!==undefined){ world.colors.races[nv]=world.colors.races[ov]; delete world.colors.races[ov]; }
+    moveCompLore("race", raceEntryId("grp",ov), raceEntryId("grp",nv));   // its Compendium page follows the rename
     renderMap(); renderLegend(); markDirty(); renderGM2();
   }));
   host.querySelectorAll(".gmRUp").forEach(el=>el.addEventListener("click",()=>{ const a=world.lists.races, i=a.indexOf(el.dataset.r); if(i>0){ [a[i-1],a[i]]=[a[i],a[i-1]]; markDirty(); renderLegend(); renderGM2(); } }));
   host.querySelectorAll(".gmRDn").forEach(el=>el.addEventListener("click",()=>{ const a=world.lists.races, i=a.indexOf(el.dataset.r); if(i>=0&&i<a.length-1){ [a[i+1],a[i]]=[a[i],a[i+1]]; markDirty(); renderLegend(); renderGM2(); } }));
   host.querySelectorAll(".gmRDel").forEach(el=>el.addEventListener("click",()=>{ const v=el.dataset.r;
-    if((world.lists.races||[]).length<=1){ flash("Keep at least one race group."); return; }
+    if((world.lists.races||[]).length<=1){ flash("Keep at least one species."); return; }
     const subs=(world.lists.subraces||[]).filter(sr=>subraceGroup(sr)===v);
-    if(subs.length && !confirm(`“${v}” has ${subs.length} subrace${subs.length===1?"":"s"} (${subs.join(", ")}). Delete the group and move them to another race group?`))return;
+    if(subs.length && !confirm(`“${v}” has ${subs.length} subspecies (${subs.join(", ")}). Delete the species and move them to another one?`))return;
     const fallback=(world.lists.races||[]).find(x=>x!==v)||"";
     subs.forEach(sr=>{ world.subraceOf[sr]=fallback; });
     applyListDelete("races",v);
     const i=world.lists.races.indexOf(v); if(i>=0)world.lists.races.splice(i,1);
+    if(world.colors&&world.colors.races)delete world.colors.races[v];
+    dropCompLore("race", raceEntryId("grp",v));
     renderMap(); renderLegend(); markDirty(); renderGM2();
   }));
-  { const a=$("#gmAddRace"); if(a)a.onclick=()=>{ let base="New Race",n=base,k=2; while((world.lists.races||[]).includes(n))n=base+" "+(k++); world.lists.races.push(n); markDirty(); renderGM2(); }; }
+  { const a=$("#gmAddRace"); if(a)a.onclick=()=>{ let base="New Species",n=base,k=2; while((world.lists.races||[]).includes(n))n=base+" "+(k++); world.lists.races.push(n); markDirty(); renderGM2(); }; }
   // ---- subraces ----
   world.subraceOf=world.subraceOf||{}; world.colors=world.colors||{};
   host.querySelectorAll(".gmSubCol").forEach(el=>el.addEventListener("input",e=>{ world.colors.subraces=world.colors.subraces||{}; world.colors.subraces[el.dataset.s]=e.target.value; renderMap(); renderLegend(); markDirty(); }));
@@ -6956,7 +7171,7 @@ function renderGM2(){
     if((world.lists.subraces||[]).length<=1){ flash("Keep at least one subrace."); return; }
     const used=subraceUsage(v); if(used>0 && !confirm(`“${v}” is used by ${used} province${used===1?"":"s"}. Delete it and move those pops to another subrace?`))return;
     deleteSubrace(v); renderMap(); renderLegend(); markDirty(); renderGM2(); }));
-  { const a=$("#gmAddSub"); if(a)a.onclick=()=>{ let base="New Subrace",n=base,k=2; while((world.lists.subraces||[]).includes(n))n=base+" "+(k++); world.lists.subraces.push(n); world.subraceOf[n]=(world.lists.races||[])[0]||n; markDirty(); renderGM2(); }; }
+  { const a=$("#gmAddSub"); if(a)a.onclick=()=>{ let base="New Subspecies",n=base,k=2; while((world.lists.subraces||[]).includes(n))n=base+" "+(k++); world.lists.subraces.push(n); world.subraceOf[n]=(world.lists.races||[])[0]||n; markDirty(); renderGM2(); }; }
   // ---- terrain rows ----
   host.querySelectorAll(".gmTCol").forEach(el=>el.addEventListener("input",e=>{ world.colors.terrains=world.colors.terrains||{}; world.colors.terrains[el.dataset.t]=e.target.value; renderMap(); renderLegend(); markDirty(); }));
   host.querySelectorAll(".gmTGrow").forEach(el=>el.addEventListener("input",e=>{ t.terrainGrow[el.dataset.t]=Math.max(0,+e.target.value||0); markDirty(); }));
@@ -7407,7 +7622,7 @@ const MAPMODE_BAR=[
   ["resource",MM_ICON.resource,"Resources","3","resource"],
   ["religion",MM_ICON.religion,"Religions","4","religion"],
   ["culture",MM_ICON.culture,"Cultures","5","culture"],
-  ["race",MM_ICON.race,"Races","6","race"],
+  ["race",MM_ICON.race,"Species","6","race"],
   ["language",MM_ICON.language,"Languages","7","language"],
   ["population",MM_ICON.population,"Population","8","population"],
   ["settlement",MM_ICON.settlement,"Settlements","9","settlement"],
