@@ -385,6 +385,10 @@ details.rvProvinces[open]>summary::before{content:"▾"}
 .cmpLoreEdit{width:100%; box-sizing:border-box; font-size:14.5px; line-height:1.6; padding:11px 13px;
   border:1px solid var(--line); border-radius:9px; background:var(--panel); color:var(--ink); font-family:inherit; resize:vertical}
 .cmpLoreView{font-size:15px; line-height:1.65; white-space:normal}
+/* religion symbol shown atop its compendium page */
+.cmpSymbol{display:flex; justify-content:center; margin:2px 0 14px}
+.cmpSymbol img{max-width:150px; max-height:150px; object-fit:contain; background:var(--panel2);
+  border:1px solid var(--line); border-radius:10px; padding:8px}
 /* character page: ruler checkbox + role tags */
 .cmpF.cmpCheck{flex-direction:row; align-items:center; gap:8px}
 .cmpF.cmpCheck input{width:16px; height:16px}

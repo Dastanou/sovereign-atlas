@@ -380,7 +380,11 @@ function toggleRealmDiscovery(r,id){ r.discoveries=r.discoveries||[]; const i=r.
 // timeline phase you view. Persisted on world.compendiumStore (kept in sync).
 // ============================================================
 let _compendium=null;
-function blankCompendium(){ return {characters:[], charTags:["Commander","Diplomat","Hero"], dynasties:[], lore:{}, realmRulers:{}, realmNames:{}}; }
+function blankCompendium(){ return {characters:[], charTags:["Commander","Diplomat","Hero"], dynasties:[], lore:{}, realmRulers:{}, realmNames:{}, places:[], monsterPages:[]}; }
+// a Geography entry the user writes themselves (a location, landmark, ruin, mountain…)
+function normPlace(p){ p=p||{}; return {id:p.id||uid(), name:typeof p.name==="string"?p.name:"New Place", kind:typeof p.kind==="string"?p.kind:"Landmark", descHtml:typeof p.descHtml==="string"?p.descHtml:"", color:p.color||"#3f9ae0", image:typeof p.image==="string"?p.image:"", provinceId:typeof p.provinceId==="string"?p.provinceId:""}; }
+// a Monsters entry — a bestiary page ("Dire Creatures") that map creatures can be linked to
+function normMonsterPage(m){ m=m||{}; return {id:m.id||uid(), name:typeof m.name==="string"?m.name:"New Bestiary Page", descHtml:typeof m.descHtml==="string"?m.descHtml:"", color:m.color||"#c2543f", image:typeof m.image==="string"?m.image:""}; }
 function normCharacter(c){
   c=c||{};
   return {
@@ -427,6 +431,8 @@ function normalizeCompendium(src){
   if(cp.lore&&typeof cp.lore==="object")out.lore=JSON.parse(JSON.stringify(cp.lore));
   if(cp.realmRulers&&typeof cp.realmRulers==="object"){ Object.keys(cp.realmRulers).forEach(rid=>{ const arr=cp.realmRulers[rid]; if(Array.isArray(arr))out.realmRulers[rid]=arr.filter(x=>x&&x.charId).map(x=>({charId:x.charId, title:x.title||"", from:x.from||"", to:x.to||"", note:x.note||""})); }); }
   if(cp.realmNames&&typeof cp.realmNames==="object")out.realmNames=Object.assign({},cp.realmNames);   // remembered names for realms not in the loaded turn
+  if(Array.isArray(cp.places))out.places=cp.places.map(normPlace);
+  if(Array.isArray(cp.monsterPages))out.monsterPages=cp.monsterPages.map(normMonsterPage);
   out.characters.forEach(c=>{ c.tags=c.tags.filter(t=>out.charTags.includes(t)); if(c.dynastyId&&!out.dynasties.some(d=>d.id===c.dynastyId))c.dynastyId=""; });
   return out;
 }
@@ -459,6 +465,19 @@ function allCharTags(){ ensureCompendium(world); return _compendium.charTags; }
 function characterById(id){ return allCharacters().find(c=>c.id===id)||null; }
 function charName(id){ const c=characterById(id); return c?c.name:""; }
 function newCharacter(opts){ opts=opts||{}; return normCharacter({name:opts.name||"New Character", isRuler:!!opts.isRuler, tags:opts.tags?opts.tags.slice():[], color:opts.color||""}); }
+// ---- Geography places & bestiary pages (global compendium) ----
+function allPlaces(){ ensureCompendium(world); if(!Array.isArray(_compendium.places))_compendium.places=[]; return _compendium.places; }
+function placeById(id){ return allPlaces().find(p=>p.id===id)||null; }
+function newPlace(name){ return normPlace({name:name||"New Place"}); }
+function allMonsterPages(){ ensureCompendium(world); if(!Array.isArray(_compendium.monsterPages))_compendium.monsterPages=[]; return _compendium.monsterPages; }
+function monsterPageById(id){ return allMonsterPages().find(m=>m.id===id)||null; }
+function newMonsterPage(name){ return normMonsterPage({name:name||"New Bestiary Page"}); }
+// map creatures linked to a bestiary page (creatures are per-snapshot; the page is global)
+function monstersOnPage(pageId){ return (world.monsters||[]).filter(m=>m.compPageId===pageId); }
+// ---- Races: race groups vs subraces (both get Compendium pages; the group is a classification) ----
+function raceEntryId(kind,name){ return kind+":"+name; }
+function splitRaceId(id){ const i=String(id).indexOf(":"); return i<0?{kind:"grp",name:String(id)}:{kind:String(id).slice(0,i),name:String(id).slice(i+1)}; }
+function subracesOfGroupSafe(g){ return (world.lists&&world.lists.subraces||[]).filter(s=>subraceGroup(s)===g); }
 // ---- Dynasties ----
 function allDynasties(){ ensureCompendium(world); return _compendium.dynasties; }
 function dynastyById(id){ return allDynasties().find(d=>d.id===id)||null; }
@@ -1080,7 +1099,9 @@ function normalize(w){
   w.monsterGroups.forEach(g=>{ if(!g.id)g.id=uid(); g.name=g.name||"Group"; });
   w.monsters.forEach(m=>{ if(!m.id)m.id=uid();
     m.icon=m.icon||MONSTER_DEFAULT_ICON; m.description=typeof m.description==="string"?m.description:"";
-    m.creatureType=m.creatureType||""; if(m.groupId===undefined)m.groupId=null; if(m.scale==null)m.scale=0.6; });
+    m.creatureType=m.creatureType||""; if(m.groupId===undefined)m.groupId=null; if(m.scale==null)m.scale=0.6;
+    if(typeof m.compPageId!=="string")m.compPageId="";   // optional link to a Compendium bestiary page
+  });
   // Wonders (great projects) — their own objects, attached to a province. No longer a "Feature".
   w.wonders = Array.isArray(w.wonders) ? w.wonders : [];
   w.wonders.forEach((x,i)=>{ if(!x.id)x.id=uid(); x.name=x.name||"New Wonder"; x.image=x.image||"";
@@ -3220,12 +3241,8 @@ function selectRealm(id){
   document.body.classList.add("has-sel");
   renderLeft();renderRealmEditor();renderWonderPanel();
 }
-function selectReligion(name){
-  if(state.selProvince) commitProvincePops(state.selProvince);
-  state.selReligion=name;state.selProvince=null;state.selRealm=null;state.selWater=null;state.selLabel=null;state.selForce=null;state.selBattle=null;state.selMonster=null;
-  document.body.classList.add("has-sel");
-  hideTechPanel();renderMap();renderReligionEditor();renderWonderPanel();
-}
+// The old religion side panel is retired — a faith's details now live on its Compendium page.
+function selectReligion(name){ if(name)openCompendium("religion",name); }
 function selectContinent(id){
   if(state.selProvince) commitProvincePops(state.selProvince);
   state.focusedContinent=id;state.selProvince=null;state.selRealm=null;state.selReligion=null;state.selWater=null;state.selLabel=null;
@@ -3237,6 +3254,45 @@ function selectCustomLabel(id){
   state.selLabel=id;state.selProvince=null;state.selRealm=null;state.selReligion=null;state.selWater=null;
   document.body.classList.add("has-sel");
   renderMap();renderLabelEditor();renderWonderPanel();
+}
+/* Right-click on the map: open the info for whatever the current map mode is showing.
+   Political/Tech → that realm's panel (dismissed by clicking off it).
+   Everything else → the matching Compendium page. Works in the editor and the viewer. */
+function mapRightClick(ev){
+  const w=screenToWorld(ev), wx=w[0], wy=w[1], m=state.mapmode;
+  if(m==="monster"){
+    const mo=monsterAt(wx,wy); if(!mo)return;
+    if(mo.compPageId && monsterPageById(mo.compPageId)) openCompendium("monster", mo.compPageId);
+    else { const pages=allMonsterPages(); if(pages.length)openCompendium("monster", null); else { selectMonster(mo.id); flash(!VIEWER?"No bestiary page linked — pick one in this creature's editor.":"No bestiary entry for this creature."); } }
+    return;
+  }
+  const p=provinceAt(wx,wy); if(!p)return;
+  if(m==="political"||m==="tech"){
+    if(!p.realmId){ flash("This province is unclaimed."); return; }
+    selectRealm(p.realmId); armSelectionDismiss(); return;
+  }
+  if(p.ocean)return;
+  if(m==="region"){ const regs=regionsOfProvince(p.id); if(regs.length)openCompendium("geography","region:"+regs[0].id); else flash("This province isn't in any region."); return; }
+  if(m==="religion"){ const v=dominant(p.religion); if(v)openCompendium("religion",v); return; }
+  if(m==="culture"){ const v=dominant(p.culture); if(v)openCompendium("culture",v); return; }
+  if(m==="language"){ const v=dominant(p.language); if(v)openCompendium("language",v); return; }
+  if(m==="race"){ const v=dominant(p.race); if(v)openCompendium("race",raceEntryId("sub",v)); return; }
+  if(m==="economy"){ const v=economyOf(p); if(v)openCompendium("economy",v); return; }
+  // any other mode: fall back to the realm panel if the province belongs to one
+  if(p.realmId){ selectRealm(p.realmId); armSelectionDismiss(); }
+}
+/* After a right-click-opened panel, the next click anywhere outside it closes it. */
+let _dismissArmed=null;
+function armSelectionDismiss(){
+  if(_dismissArmed)document.removeEventListener("mousedown",_dismissArmed,true);
+  _dismissArmed=function(e){
+    if(e.button===2)return;                                   // ignore another right-click
+    const t=e.target; if(!t||!t.closest)return;
+    if(t.closest("#right, #techPanel, #wonderPanel, #modalHost, #mapLegend, #topbar, #toggleBar, #mapmodeBar, #paintPanel, #popPanel, #convPanel, #zoomctl, #pingBar"))return;
+    document.removeEventListener("mousedown",_dismissArmed,true); _dismissArmed=null;
+    clearSelection();
+  };
+  setTimeout(()=>{ if(_dismissArmed)document.addEventListener("mousedown",_dismissArmed,true); },0);
 }
 function clearSelection(){   // click on empty void: deselect and hide the inspector
   if(state.selProvince) commitProvincePops(state.selProvince);
@@ -3597,7 +3653,9 @@ function renderMonsterEditor(){
           <div class="monHeadText"><div class="monName">${esc(m.name||"(unnamed)")}</div>${ctname?`<div class="monType" style="color:${ctcol}">${esc(ctname)}</div>`:""}</div>
         </div>
         ${m.description?`<div class="monDesc">${esc(m.description)}</div>`:'<div class="note">No description.</div>'}
+        ${(m.compPageId&&monsterPageById(m.compPageId))?`<div style="margin-top:8px"><button class="rvChip compChip" data-cat="monster" data-val="${esc(m.compPageId)}">📖 ${esc(monsterPageById(m.compPageId).name)}</button></div>`:""}
       </div>`;
+    ins.querySelectorAll(".compChip").forEach(el=>el.onclick=()=>openCompendium(el.dataset.cat, el.dataset.val));
     return;
   }
   const presetOpts=`<option value="">— pick a preset —</option>`+world.monsterPresets.map(pr=>`<option value="${pr.id}">${esc(pr.name||"(unnamed)")}</option>`).join("");
@@ -3614,11 +3672,14 @@ function renderMonsterEditor(){
     </div>
     <div class="field"><label>Images <span class="note">(from img/monsters/)</span></label><div class="monImgRow">${MONSTER_IMAGES.map(mi=>`<button class="monImgBtn${m.icon===mi.src?' sel':''}" data-src="${esc(mi.src)}" title="${esc(mi.name)}"><img src="${esc(mi.src)}"/></button>`).join("")}</div></div>
     <div class="field"><label>Description</label><textarea id="mdesc" rows="4" placeholder="What is this creature?">${esc(m.description||"")}</textarea></div>
+    <div class="field"><label>Bestiary page <span class="note">(Compendium → Monsters; right-clicking this creature opens it)</span></label>
+      <select id="mcomp"><option value="">— none —</option>${allMonsterPages().map(mp=>`<option value="${mp.id}" ${m.compPageId===mp.id?"selected":""}>${esc(mp.name)}</option>`).join("")}<option value="__new">＋ New bestiary page…</option></select></div>
     <div class="btnrow"><button class="btn${state.moveMode==="monster"?" primary":""}" id="mmove">✥ ${state.moveMode==="monster"?"Moving… (click to stop)":"Move"}</button><button class="btn danger" id="mdel">Delete</button></div>`;
   $("#mname").addEventListener("input",e=>{m.name=e.target.value;renderMap();renderLegend();markDirty();});
   $("#mtype").addEventListener("change",e=>{m.creatureType=e.target.value;renderMap();renderLegend();renderMonsterEditor();markDirty();});
   $("#mico").addEventListener("input",e=>{m.icon=e.target.value;renderMap();renderLegend();markDirty();});
   $("#mdesc").addEventListener("input",e=>{m.description=e.target.value;renderLegend();markDirty();});
+  { const mc=$("#mcomp"); if(mc)mc.onchange=()=>{ if(mc.value==="__new"){ const nm=(prompt("New bestiary page name:",m.name||"New Bestiary Page")||"").trim(); if(nm){ const mp=newMonsterPage(nm); allMonsterPages().push(mp); m.compPageId=mp.id; } markDirty(); renderMonsterEditor(); return; } m.compPageId=mc.value||""; markDirty(); }; }
   ins.querySelectorAll(".monImgBtn").forEach(b=>b.addEventListener("click",()=>{ m.icon=b.dataset.src; renderMap();renderLegend();renderMonsterEditor();markDirty(); }));
   $("#mscale").addEventListener("input",e=>{m.scale=+e.target.value;$("#mscv").textContent=(+e.target.value).toFixed(1)+"×";renderMap();markDirty();});
   $("#mpreset").addEventListener("change",e=>{ const pr=world.monsterPresets.find(x=>x.id===e.target.value); if(!pr)return;
@@ -4131,7 +4192,7 @@ function renderRealmView(){
   const curReign=realmCurrentReign(r), curRuler=realmCurrentRuler(r);
   const rulerChip = curRuler ? compChip("character", curRuler.id, {label:(curReign&&curReign.title?curReign.title+" ":"")+curRuler.name, color:charThemeColor(curRuler)}) : "—";
   const row=(l,v)=>`<div class="rvRow"><span class="rvLbl">${l}</span><span class="rvVal">${v||"—"}</span></div>`;
-  const raceTags=(arr)=>(arr&&arr.length) ? arr.map(x=>compChip("race",x,{color:raceGroupColor(x)})).join("") : `<span class="rvVal">—</span>`;
+  const raceTags=(arr)=>(arr&&arr.length) ? arr.map(x=>compChip("race",raceEntryId("grp",x),{label:x,color:raceGroupColor(x)})).join("") : `<span class="rvVal">—</span>`;
   const powers=realmPowers(r);
   const rPops=realmPops(r);   // every pop across the realm, for the demographics pies
   ins.innerHTML=`
@@ -4260,15 +4321,44 @@ function compendiumCats(){
     const used=comp_realmNames(r=>r.economy===n);
     return { id:n, name:n, color:catColor("economies",n), sub:subCount(used), used, ref:"", desc:"" };
   }) });
-  // Races
-  cats.push({ cat:"race", label:"🧬 Races", entries:(world.lists&&world.lists.races||[]).map(n=>{
-    const used=comp_realmNames(r=>(r.adminRaces||[]).includes(n)||(r.militaryRaces||[]).includes(n));
-    return { id:n, name:n, color:raceGroupColor(n), sub:subCount(used), used, ref:"", desc:"" };
+  // Races — race pages AND subrace pages in one section; the racial group is a classification label
+  {
+    const races=(world.lists&&world.lists.races||[]), subs=(world.lists&&world.lists.subraces||[]);
+    const entries=[];
+    races.forEach(n=>{
+      const used=comp_realmNames(r=>(r.adminRaces||[]).includes(n)||(r.militaryRaces||[]).includes(n));
+      const kids=subracesOfGroupSafe(n);
+      entries.push({ id:raceEntryId("grp",n), name:n, color:raceGroupColor(n), sub:`Race${kids.length?` · ${kids.length} subrace${kids.length===1?"":"s"}`:""}`, used, ref:"", desc:"" });
+    });
+    subs.forEach(s=>{
+      const g=subraceGroup(s); if(g===s && races.includes(s))return;   // a subrace identical to its group is already listed
+      entries.push({ id:raceEntryId("sub",s), name:s, color:catColor("subraces",s), sub:`Subrace${g?` of ${g}`:""}`, used:[], ref:"", desc:"" });
+    });
+    cats.push({ cat:"race", label:"🧬 Races", entries });
+  }
+  // Geography — named regions from the map plus hand-written locations & landmarks
+  {
+    const entries=[];
+    (world.regions||[]).forEach(rg=>{
+      const n=(rg.provinceIds||[]).length;
+      entries.push({ id:"region:"+rg.id, name:rg.name, color:regionColor(rg), sub:`Region · ${n} province${n===1?"":"s"}`, used:[], ref:"", desc:rg.description||"" });
+    });
+    allPlaces().forEach(pl=>{
+      entries.push({ id:"place:"+pl.id, name:pl.name, color:pl.color, sub:pl.kind||"Landmark", used:[], ref:"", desc:"" });
+    });
+    cats.push({ cat:"geography", label:"🗺 Geography", entries });
+  }
+  // Monsters — bestiary pages that map creatures can be linked to
+  cats.push({ cat:"monster", label:"🐉 Monsters", entries:allMonsterPages().map(mp=>{
+    const n=monstersOnPage(mp.id).length;
+    return { id:mp.id, name:mp.name, color:mp.color, sub:n?`${n} on the map`:"", used:[], ref:"", desc:"" };
   }) });
   // fixed sidebar order (Dynasties sits with Characters; anything unlisted falls in after)
-  const ORDER=["realm","government","economy","character","dynasty","religion","culture","language","race","discovery","power"];
+  const ORDER=["realm","government","economy","character","dynasty","religion","culture","language","race","geography","monster","discovery","power"];
   const rank=k=>{ const i=ORDER.indexOf(k); return i<0?ORDER.length:i; };
-  return cats.filter(c=>c.entries.length).sort((a,b)=>rank(a.cat)-rank(b.cat));
+  // keep editable sections visible even when empty, so you can add the first entry
+  const KEEP=!VIEWER?["geography","monster","character","dynasty"]:[];
+  return cats.filter(c=>c.entries.length||KEEP.includes(c.cat)).sort((a,b)=>rank(a.cat)-rank(b.cat));
 }
 // resolve the underlying object whose canonical description is edited (or null → lore-only)
 function compTargetObj(cat,id){
@@ -4277,6 +4367,8 @@ function compTargetObj(cat,id){
   if(cat==="religion")return religionMeta(id);
   if(cat==="character")return characterById(id);
   if(cat==="dynasty")return dynastyById(id);
+  if(cat==="monster")return monsterPageById(id);
+  if(cat==="geography"){ const s=String(id); if(s.slice(0,6)==="place:")return placeById(s.slice(6)); if(s.slice(0,7)==="region:")return regionById(s.slice(7)); }
   return null;
 }
 let _compState={cat:null,val:null,open:null};
@@ -4323,6 +4415,7 @@ function renderCompMain(){
     main.querySelectorAll(".cmpWonderLink").forEach(el=>el.onclick=()=>{ const w=(world.wonders||[]).find(x=>x.id===el.dataset.wid); if(w&&w.provinceId){ const p=world.provinces.find(x=>x.id===w.provinceId); if(p){ closeModal(); zoomToProvince(p); selectProvince(p.id); } } });
     main.querySelectorAll(".cmpRealmLink").forEach(el=>el.onclick=()=>{ const r=world.realms.find(x=>x.id===el.dataset.rid); if(r){ closeModal(); selectRealm(r.id); } });
     main.querySelectorAll(".cmpForceLink").forEach(el=>el.onclick=()=>{ const f=(world.forces||[]).find(x=>x.id===el.dataset.fid); if(f){ closeModal(); if(typeof selectForce==="function")selectForce(f.id); } });
+    main.querySelectorAll(".cmpMonsterLink").forEach(el=>el.onclick=()=>{ const m=(world.monsters||[]).find(x=>x.id===el.dataset.mid); if(m){ closeModal(); centerOn(m.x,m.y); selectMonster(m.id); } });
     // cross-reference: jump to another compendium entry's page
     main.querySelectorAll(".cmpXref").forEach(el=>el.onclick=()=>compGoto(el.dataset.cat, el.dataset.id));
     // interactive family tree (both viewer and editor)
@@ -4342,6 +4435,9 @@ function renderCompMain(){
       if(_compState.cat==="character")wireCharacterEdit(main,_compState.open);
       if(_compState.cat==="realm")wireRealmRulerEdit(main,_compState.open);
       if(_compState.cat==="dynasty")wireDynastyEdit(main,_compState.open);
+      if(_compState.cat==="race")wireRaceEdit(main,_compState.open);
+      if(_compState.cat==="geography")wireGeographyEdit(main,_compState.open);
+      if(_compState.cat==="monster")wireMonsterPageEdit(main,_compState.open);
     }
     main.scrollTop=0;
     return;
@@ -4363,7 +4459,9 @@ const COMP_SORTS={
   language:[["az","Name A–Z"],["za","Name Z–A"],["usage","Most realms"]],
   government:[["az","Name A–Z"],["za","Name Z–A"],["usage","Most realms"]],
   economy:[["az","Name A–Z"],["za","Name Z–A"],["usage","Most realms"]],
-  race:[["az","Name A–Z"],["za","Name Z–A"],["usage","Most realms"]]
+  race:[["az","Name A–Z"],["za","Name Z–A"],["usage","Most realms"]],
+  geography:[["az","Name A–Z"],["za","Name Z–A"],["kind","Type"]],
+  monster:[["az","Name A–Z"],["za","Name Z–A"],["onmap","Most on the map"]]
 };
 function compSortsFor(cat){ return COMP_SORTS[cat]||[["az","Name A–Z"],["za","Name Z–A"]]; }
 function compSortComparator(cat, key){
@@ -4383,6 +4481,8 @@ function compSortComparator(cat, key){
     case "tlDesc": return (a,b)=>{ const ta=(world.discoveries||[]).find(x=>x.id===a.id), tb=(world.discoveries||[]).find(x=>x.id===b.id); return (tlClamp(tb&&tb.tl)-tlClamp(ta&&ta.tl))||az(a,b); };
     case "field": return (a,b)=>{ const fa=((world.discoveries||[]).find(x=>x.id===a.id)||{}).field||""; const fb=((world.discoveries||[]).find(x=>x.id===b.id)||{}).field||""; return fa.localeCompare(fb)||az(a,b); };
     case "type": return (a,b)=>{ const ta=((world.powers||[]).find(x=>x.id===a.id)||{}).type||""; const tb=((world.powers||[]).find(x=>x.id===b.id)||{}).type||""; return ta.localeCompare(tb)||az(a,b); };
+    case "kind": return (a,b)=>((a.sub||"").localeCompare(b.sub||""))||az(a,b);
+    case "onmap": return (a,b)=>(monstersOnPage(b.id).length-monstersOnPage(a.id).length)||az(a,b);
     default: return az;   // "az"
   }
 }
@@ -4393,6 +4493,8 @@ function renderCompList(c, main, editable){
   let addBtn="";
   if(editable&&c.cat==="character")addBtn=`<button class="btn primary cmpAddNew" id="cmpAddChar">＋ New</button>`;
   if(editable&&c.cat==="dynasty")addBtn=`<button class="btn primary cmpAddNew" id="cmpAddDyn">＋ New</button>`;
+  if(editable&&c.cat==="geography")addBtn=`<button class="btn primary cmpAddNew" id="cmpAddPlace" title="Add a location or landmark">＋ Place</button>`;
+  if(editable&&c.cat==="monster")addBtn=`<button class="btn primary cmpAddNew" id="cmpAddMonPage">＋ New</button>`;
   let filterSel="";
   if(c.cat==="character"){
     const dynOpts=allDynasties().map(d=>`<option value="dyn:${d.id}" ${ui.filter==="dyn:"+d.id?"selected":""}>${esc(d.name)}</option>`).join("");
@@ -4406,6 +4508,8 @@ function renderCompList(c, main, editable){
   const so=main.querySelector("#cmpSort"); if(so)so.addEventListener("change",()=>{ ui.sort=so.value; renderCompListItems(c); });
   const addC=main.querySelector("#cmpAddChar"); if(addC)addC.onclick=()=>{ const ch=newCharacter({name:"New Character"}); allCharacters().push(ch); markDirty(); compNav({cat:"character",open:ch.id}); };
   const addD=main.querySelector("#cmpAddDyn"); if(addD)addD.onclick=()=>{ const d=newDynasty(); allDynasties().push(d); markDirty(); compNav({cat:"dynasty",open:d.id}); };
+  const addP=main.querySelector("#cmpAddPlace"); if(addP)addP.onclick=()=>{ const pl=newPlace(); allPlaces().push(pl); markDirty(); compNav({cat:"geography",open:"place:"+pl.id}); };
+  const addM=main.querySelector("#cmpAddMonPage"); if(addM)addM.onclick=()=>{ const mp=newMonsterPage(); allMonsterPages().push(mp); markDirty(); compNav({cat:"monster",open:mp.id}); };
   renderCompListItems(c);
 }
 function renderCompListItems(c){
@@ -4515,9 +4619,14 @@ function compEditFields(cat, e){
       <label class="cmpF"><span>TL</span><input type="number" min="0" max="12" class="txt cmpFld" data-k="tl" data-reload="1"/></label>
       <label class="cmpF cmpFWide"><span>Description</span><textarea class="txt cmpFld" data-k="description" rows="4"></textarea></label>
     </div>`;
-  if(cat==="religion")return `<div class="cmpEditGrid">
+  if(cat==="religion"){
+    const meta=religionMeta(e.id);
+    const symOpts=`<option value="">— none —</option>`+(RELIGION_IMAGES||[]).map(mi=>`<option value="${esc(mi.src)}" ${meta.symbol===mi.src?"selected":""}>${esc(mi.name)}</option>`).join("")+((meta.symbol&&!(RELIGION_IMAGES||[]).some(mi=>mi.src===meta.symbol))?`<option value="${esc(meta.symbol)}" selected>(current) ${esc(meta.symbol)}</option>`:"");
+    return `<div class="cmpEditGrid">
+      <label class="cmpF"><span>Symbol <span class="note">(from static/img/religions/)</span></span><select class="cmpFld" data-k="symbol" data-reload="1">${symOpts}</select></label>
       <label class="cmpF cmpFWide"><span>Description</span><textarea class="txt cmpFld" data-k="description" rows="5"></textarea></label>
     </div>`;
+  }
   return "";
 }
 // ---- Character page (wiki-style: title, infobox, rich description) ----
@@ -4530,7 +4639,9 @@ function compRefColor(cat,id){
     case "language": return catColor("languages",id);
     case "economy": return catColor("economies",id);
     case "government": return "#7c8698";
-    case "race": return raceGroupColor(id);
+    case "race": { const {kind,name}=splitRaceId(id); return kind==="sub"?catColor("subraces",name):raceGroupColor(name); }
+    case "geography": { const s=String(id); if(s.slice(0,6)==="place:"){ const pl=placeById(s.slice(6)); return pl?pl.color:"#3f9ae0"; } if(s.slice(0,7)==="region:"){ const rg=regionById(s.slice(7)); return rg?regionColor(rg):"#8a6fd0"; } return "#3f9ae0"; }
+    case "monster": { const mp=monsterPageById(id); return mp?mp.color:"#c2543f"; }
     case "realm": { const r=(world.realms||[]).find(x=>x.id===id); return r?r.color:"#7c8698"; }
     case "character": { const c=characterById(id); return c?charThemeColor(c):"#7c8698"; }
     case "dynasty": { const d=dynastyById(id); return d?d.color:"#7c8698"; }
@@ -4544,7 +4655,7 @@ function compRefChip(cat,id,label){ const col=compRefColor(cat,id); return `<but
 function charInfoboxView(c){
   const rows=[]; const dy=c.dynastyId&&dynastyById(c.dynastyId);
   if(dy)rows.push(ibRow("Dynasty", compRefChip("dynasty",dy.id,dy.name)));
-  if(c.race)rows.push(ibRow("Race", compRefChip("race",c.race)));
+  if(c.race)rows.push(ibRow("Race", compRefChip("race",raceEntryId("grp",c.race),c.race)));
   if(c.culture)rows.push(ibRow("Culture", compRefChip("culture",c.culture)));
   if(c.religion)rows.push(ibRow("Religion", compRefChip("religion",c.religion)));
   if(c.languages&&c.languages.length)rows.push(ibRow("Language"+(c.languages.length>1?"s":""), c.languages.map(l=>compRefChip("language",l)).join(" ")));
@@ -4833,16 +4944,130 @@ function wireDynastyEdit(main, id){
     allCharacters().forEach(c=>{ if(c.dynastyId===id)c.dynastyId=""; });
     markDirty(); _compState.open=null; renderCompMain(); };
 }
+// ---- Race / subrace page ----
+function renderRacePage(e, editable){
+  const {kind,name}=splitRaceId(e.id);
+  const isSub=kind==="sub";
+  const group=isSub?subraceGroup(name):name;
+  const col=isSub?catColor("subraces",name):raceGroupColor(name);
+  const kids=isSub?[]:subracesOfGroupSafe(name);
+  const provCount=(world.provinces||[]).filter(p=>(p.pops||[]).some(q=>q.size>0 && q.race===name)).length;
+  const lore=compLore("race", e.id);
+  const info=[
+    ibRow("Type", isSub?"Subrace":"Race"),
+    isSub&&group?ibRow("Racial group", compRefChip("race",raceEntryId("grp",group),group)):"",
+    (!isSub&&kids.length)?ibRow("Subraces", kids.map(s=>compRefChip("race",raceEntryId("sub",s),s)).join(" ")):"",
+    e.used&&e.used.length?ibRow("Realms", e.used.map(esc).join(", ")):"",
+    isSub?ibRow("Provinces", String(provCount)):""
+  ].filter(Boolean).join("");
+  const body = editable
+    ? `<div class="cmpSecH">📜 Description</div><div class="richWrap">${richToolbarHTML()}<div class="richArea" contenteditable="true">${lore}</div></div>`
+    : (lore?`<div class="wikiDesc">${lore}</div>`:'<span class="note">No description yet.</span>');
+  return `<div class="cmpDetail wikiPage" style="--th:${col}; --ac:${col}">
+    <div class="wikiHead"><div class="wikiTitle cmpDetName">${esc(name)}</div><div class="wikiSubtitle">${isSub?("Subrace"+(group?" of "+esc(group):"")):"Race"}</div></div>
+    <div class="wikiCols"><div class="wikiMain">${body}</div>
+      <aside class="wikiBox"><div class="wikiBoxName">${esc(name)}</div>${info}</aside></div>
+  </div>`;
+}
+// ---- Geography page (a map region, or a hand-written location/landmark) ----
+function renderGeographyPage(e, editable){
+  const s=String(e.id);
+  if(s.slice(0,7)==="region:"){
+    const rg=regionById(s.slice(7)); if(!rg)return '<div class="cmpDetail"><div class="note" style="padding:20px">Not found.</div></div>';
+    const provs=(rg.provinceIds||[]).map(id=>(world.provinces||[]).find(p=>p.id===id)).filter(Boolean);
+    const pop=provs.reduce((a,p)=>a+(p.population||0),0);
+    const lore=compLore("geography", e.id);
+    const body = editable
+      ? `<div class="cmpEditGrid"><label class="cmpF cmpFWide"><span>Description <span class="note">(also shown on the map's region panel)</span></span><textarea class="txt cmpFld" data-k="description" rows="4"></textarea></label></div>
+         <div class="cmpSecH">📜 Compendium article</div><div class="richWrap">${richToolbarHTML()}<div class="richArea" contenteditable="true">${lore}</div></div>`
+      : `${rg.description?`<div class="cmpDesc">${esc(rg.description).replace(/\n/g,"<br>")}</div>`:""}${lore?`<div class="wikiDesc">${lore}</div>`:(rg.description?"":'<span class="note">No description yet.</span>')}`;
+    return `<div class="cmpDetail wikiPage" style="--th:${regionColor(rg)}; --ac:${regionColor(rg)}">
+      <div class="wikiHead"><div class="wikiTitle cmpDetName">${esc(rg.name)}</div><div class="wikiSubtitle">Geographical region</div></div>
+      <div class="wikiCols"><div class="wikiMain">${body}
+        <div class="cmpSecH">Provinces (${provs.length})</div>
+        <div class="list">${provs.length?provs.map(p=>`<div class="li cmpProvLink" data-pid="${p.id}" style="cursor:pointer">▪ ${esc(p.name)}</div>`).join(""):'<div class="note">None</div>'}</div></div>
+        <aside class="wikiBox"><div class="wikiBoxName">${esc(rg.name)}</div>${ibRow("Type","Region")}${ibRow("Provinces",String(provs.length))}${ibRow("Population",pop.toLocaleString())}</aside></div>
+    </div>`;
+  }
+  const pl=placeById(s.slice(6)); if(!pl)return '<div class="cmpDetail"><div class="note" style="padding:20px">Not found.</div></div>';
+  const prov=pl.provinceId?(world.provinces||[]).find(p=>p.id===pl.provinceId):null;
+  const provOpts=`<option value="">— none —</option>`+(world.provinces||[]).filter(p=>!p.ocean).map(p=>`<option value="${p.id}" ${pl.provinceId===p.id?"selected":""}>${esc(p.name)}</option>`).join("");
+  const infobox = editable
+    ? `${pl.image?`<img class="wikiPortrait" src="${esc(pl.image)}" alt=""/>`:'<div class="wikiPortraitEmpty">No image</div>'}
+       <div class="ibEditRow"><label class="btn tiny ibUpload">🖼 Image<input type="file" id="plImage" accept="image/*" hidden/></label>${pl.image?'<button class="btn tiny" id="plImageClear">Clear</button>':""}</div>
+       <label class="ibField"><span>Name</span><input class="txt cmpFld" data-k="name" data-live="1"/></label>
+       <label class="ibField"><span>Kind <span class="note">(Landmark, City, Ruin…)</span></span><input class="txt cmpFld" data-k="kind"/></label>
+       <label class="ibField"><span>Colour</span><input type="color" class="cmpFld" data-k="color" data-live="1"/></label>
+       <div class="ibField"><span>Province</span><select id="plProvince">${provOpts}</select></div>`
+    : `${pl.image?`<img class="wikiPortrait" src="${esc(pl.image)}" alt=""/>`:""}<div class="wikiBoxName">${esc(pl.name)}</div>${ibRow("Kind",esc(pl.kind||"Landmark"))}${prov?ibRow("Province",`<span class="li cmpProvLink" data-pid="${prov.id}" style="display:inline;cursor:pointer;padding:0">${esc(prov.name)}</span>`):""}`;
+  const body = editable
+    ? `<div class="cmpSecH">📜 Description</div><div class="richWrap">${richToolbarHTML()}<div class="richArea" contenteditable="true">${pl.descHtml||""}</div></div>
+       <div style="margin-top:16px"><button class="btn danger" id="plDelete">🗑 Delete place</button></div>`
+    : (pl.descHtml?`<div class="wikiDesc">${pl.descHtml}</div>`:'<span class="note">No description yet.</span>');
+  return `<div class="cmpDetail wikiPage" style="--th:${pl.color}; --ac:${pl.color}">
+    <div class="wikiHead"><div class="wikiTitle cmpDetName">${esc(pl.name)}</div><div class="wikiSubtitle">${esc(pl.kind||"Landmark")}</div></div>
+    <div class="wikiCols"><div class="wikiMain">${body}</div><aside class="wikiBox">${infobox}</aside></div>
+  </div>`;
+}
+// ---- Monsters (bestiary) page ----
+function renderMonsterPageView(e, editable){
+  const mp=monsterPageById(e.id); if(!mp)return '<div class="cmpDetail"><div class="note" style="padding:20px">Not found.</div></div>';
+  const linked=monstersOnPage(mp.id);
+  const rows=linked.length?linked.map(m=>`<div class="li cmpMonsterLink" data-mid="${m.id}" style="cursor:pointer">${isImgIcon(m.icon)?`<img class="monRowIcon" src="${esc(m.icon)}"/>`:esc(m.icon||"🐾")} ${esc(m.name||"(unnamed)")}${m.creatureType?` <span class="note">— ${esc(m.creatureType)}</span>`:""}</div>`).join(""):'<div class="note">No creatures on the map link here yet. Open a creature and pick this page in its editor.</div>';
+  const infobox = editable
+    ? `${mp.image?`<img class="wikiPortrait" src="${esc(mp.image)}" alt=""/>`:'<div class="wikiPortraitEmpty">No image</div>'}
+       <div class="ibEditRow"><label class="btn tiny ibUpload">🖼 Image<input type="file" id="mpImage" accept="image/*" hidden/></label>${mp.image?'<button class="btn tiny" id="mpImageClear">Clear</button>':""}</div>
+       <label class="ibField"><span>Name</span><input class="txt cmpFld" data-k="name" data-live="1"/></label>
+       <label class="ibField"><span>Colour</span><input type="color" class="cmpFld" data-k="color" data-live="1"/></label>
+       <div class="ibField"><span>On the map</span><div class="ibV">${linked.length}</div></div>`
+    : `${mp.image?`<img class="wikiPortrait" src="${esc(mp.image)}" alt=""/>`:""}<div class="wikiBoxName">${esc(mp.name)}</div>${ibRow("On the map",String(linked.length))}`;
+  const body = editable
+    ? `<div class="cmpSecH">📜 Description</div><div class="richWrap">${richToolbarHTML()}<div class="richArea" contenteditable="true">${mp.descHtml||""}</div></div>
+       <div style="margin-top:16px"><button class="btn danger" id="mpDelete">🗑 Delete page</button></div>`
+    : (mp.descHtml?`<div class="wikiDesc">${mp.descHtml}</div>`:'<span class="note">No description yet.</span>');
+  return `<div class="cmpDetail wikiPage" style="--th:${mp.color}; --ac:${mp.color}">
+    <div class="wikiHead"><div class="wikiTitle cmpDetName">${esc(mp.name)}</div><div class="wikiSubtitle">Bestiary</div></div>
+    <div class="wikiCols"><div class="wikiMain">${body}
+      <div class="cmpSecH">🐾 Creatures on the map (${linked.length})</div><div class="list">${rows}</div></div>
+      <aside class="wikiBox">${infobox}</aside></div>
+  </div>`;
+}
+function wireGeographyEdit(main, id){
+  const s=String(id);
+  if(s.slice(0,7)==="region:"){ const rich=main.querySelector(".richWrap"); if(rich)wireRichEditor(rich,(html)=>{ setCompLore("geography",id,html); }); return; }
+  const pl=placeById(s.slice(6)); if(!pl)return;
+  const fi=main.querySelector("#plImage"); if(fi)fi.onchange=()=>{ const f=fi.files&&fi.files[0]; if(!f)return; const rd=new FileReader(); rd.onload=()=>{ pl.image=rd.result; markDirty(); renderCompMain(); }; rd.readAsDataURL(f); };
+  const ic=main.querySelector("#plImageClear"); if(ic)ic.onclick=()=>{ pl.image=""; markDirty(); renderCompMain(); };
+  const ps=main.querySelector("#plProvince"); if(ps)ps.onchange=()=>{ pl.provinceId=ps.value||""; markDirty(); };
+  const rich=main.querySelector(".richWrap"); if(rich)wireRichEditor(rich,(html)=>{ pl.descHtml=html; markDirty(); });
+  const del=main.querySelector("#plDelete"); if(del)del.onclick=()=>{ if(!confirm("Delete this place?"))return; _compendium.places=allPlaces().filter(x=>x.id!==pl.id); markDirty(); _compState.open=null; renderCompMain(); };
+}
+function wireMonsterPageEdit(main, id){
+  const mp=monsterPageById(id); if(!mp)return;
+  const fi=main.querySelector("#mpImage"); if(fi)fi.onchange=()=>{ const f=fi.files&&fi.files[0]; if(!f)return; const rd=new FileReader(); rd.onload=()=>{ mp.image=rd.result; markDirty(); renderCompMain(); }; rd.readAsDataURL(f); };
+  const ic=main.querySelector("#mpImageClear"); if(ic)ic.onclick=()=>{ mp.image=""; markDirty(); renderCompMain(); };
+  const rich=main.querySelector(".richWrap"); if(rich)wireRichEditor(rich,(html)=>{ mp.descHtml=html; markDirty(); });
+  const del=main.querySelector("#mpDelete"); if(del)del.onclick=()=>{ if(!confirm("Delete this bestiary page? Linked creatures will simply lose the link."))return;
+    _compendium.monsterPages=allMonsterPages().filter(x=>x.id!==mp.id);
+    (world.monsters||[]).forEach(m=>{ if(m.compPageId===mp.id)m.compPageId=""; });
+    markDirty(); _compState.open=null; renderCompMain(); };
+}
+function wireRaceEdit(main, id){ const rich=main.querySelector(".richWrap"); if(rich)wireRichEditor(rich,(html)=>{ setCompLore("race",id,html); }); }
 // A full "page" for a single compendium entry, with a Back button to the list.
 function renderCompDetail(cat, e, editable){
   if(!e) return '<div class="cmpDetail"><div class="note" style="padding:20px">Not found.</div></div>';
   if(cat==="character")return renderCharacterPage(e, editable);
   if(cat==="realm")return renderRealmPage(e, editable);
   if(cat==="dynasty")return renderDynastyPage(e, editable);
+  if(cat==="race")return renderRacePage(e, editable);
+  if(cat==="geography")return renderGeographyPage(e, editable);
+  if(cat==="monster")return renderMonsterPageView(e, editable);
   const used=e.used||[];
   const usedBlock=used.length?`<div class="cmpUsed"><span class="cmpUsedL">Realms</span> ${used.map(esc).join(", ")}</div>`:"";
-  let extra="";
+  let extra="", topArt="";
   if(cat==="religion"){
+    const meta=religionMeta(e.id);
+    if(meta.symbol)topArt=`<div class="cmpSymbol"><img src="${esc(meta.symbol)}" alt=""/></div>`;
     const holyP=holySiteProvincesOf(e.id), holyW=holyWondersOf(e.id);
     extra=`<div class="cmpSecH">⛪ Holy sites (${holyP.length})</div>
       <div class="list">${holyP.length?holyP.map(p=>`<div class="li cmpProvLink" data-pid="${p.id}" style="cursor:pointer">⛪ ${esc(p.name)}</div>`).join(""):'<div class="note">None</div>'}</div>
@@ -4868,7 +5093,7 @@ function renderCompDetail(cat, e, editable){
   }
   return `<div class="cmpDetail">    <div class="cmpDetHead"><span class="rvDot" style="background:${e.color||'#7c8698'};width:20px;height:20px"></span><span class="cmpDetName">${esc(e.name||'—')}</span></div>
     ${e.sub?`<div class="cmpDetSub">${e.sub}</div>`:""}
-    <div class="cmpDetBody">${bodyHTML}</div>
+    <div class="cmpDetBody">${topArt}${bodyHTML}</div>
     ${extra}
   </div>`;
 }
@@ -5605,6 +5830,8 @@ function customLabelAt(ev){
 function setupMapInteraction(){
   const cv=$("#map");
   let down=false, dragged=false, sx0=0, sy0=0, camStart=null;
+  // Right-click: open the relevant info panel / Compendium page for what's under the cursor.
+  cv.addEventListener("contextmenu",ev=>{ ev.preventDefault(); mapRightClick(ev); });
 
   let painted=false;
   const rel=ev=>{const r=cv.getBoundingClientRect();return [ev.clientX-r.left,ev.clientY-r.top];};
