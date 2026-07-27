@@ -710,6 +710,9 @@ details.rvProvinces[open]>summary::before{content:"▾"}
 .monGroupHead{display:flex; align-items:center; gap:6px; padding:5px 8px; cursor:pointer; background:var(--panel2); font-weight:700; font-size:12.5px}
 .monGroupHead .caret{width:12px; color:var(--muted)}
 .monGroup.collapsed .monGroupBody{display:none}
+/* sub-heading inside a floating map legend (e.g. "Feature types" under the regions list) */
+.mlSubH{margin:8px 0 3px; padding-top:6px; border-top:1px solid var(--line); font-size:10.5px;
+  text-transform:uppercase; letter-spacing:.5px; color:var(--muted); font-weight:700}
 /* military legend: collapsible per-realm army groups */
 .forceGroup{border:1px solid var(--line); border-radius:8px; margin:4px 0; overflow:hidden}
 .forceGroupHead{display:flex; align-items:center; gap:6px; padding:5px 8px; background:var(--panel2); font-weight:700; font-size:12.5px}

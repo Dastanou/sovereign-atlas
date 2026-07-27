@@ -59,8 +59,8 @@ const RES_LEGEND_ABBR={"Semi-Precious Gems":"S-P Gems"};
 function resLabel(res){ return RES_LEGEND_ABBR[res]||res; }
 // canonical resource list, ordered base-then-its-prestige-goods
 const RESOURCE_LIST=(()=>{const out=[];REGULAR_RESOURCES.forEach(b=>{out.push(b);prestigeOf(b).forEach(p=>out.push(p));});return out;})();
-const HIDDEN_RESOURCES=["Horses","Iron","Coal","Saltpeter","Oil","Uranium"];
-const HIDDEN_RES_GLYPH={Horses:"🐎",Iron:"⛓️",Coal:"◾",Saltpeter:"🧨",Oil:"🛢️",Uranium:"☢️"};
+const HIDDEN_RESOURCES=["Horses","Iron","Coal","Saltpeter","Oil","Uranium","Chaotic Polymorphine"];
+const HIDDEN_RES_GLYPH={Horses:"🐎",Iron:"⛓️",Coal:"◾",Saltpeter:"🧨",Oil:"🛢️",Uranium:"☢️","Chaotic Polymorphine":"🧪"};
 // Semantic resource colours. Each regular resource has a colour that suits it, and its
 // prestige goods share the same hue family (a richer / lighter shade) so families read together.
 const RESOURCE_COLORS={
@@ -652,16 +652,40 @@ function renderRegionLegend(box){
     add.onclick=()=>{ beginEdit(); const rg=newRegion(); world.regions.push(rg); markDirty(); selectRegion(rg.id); buildMapLegend(); };
     box.appendChild(add);
   }
-  if(!regs.length){ const n=div("note"); n.textContent=VIEWER?"No regions defined.":"No regions yet. Click ＋ New region, then click provinces on the map to add them."; box.appendChild(n); return; }
-  regs.forEach(rg=>{
-    const row=div("mlRow"+(state.selRegion===rg.id?" active":""));
-    row.style.cursor="pointer"; row.dataset.rid=rg.id; row.title=VIEWER?`Highlight ${esc(rg.name)}`:`Edit ${esc(rg.name)}`;
-    row.innerHTML=`<span class="sw" style="background:${regionColor(rg)}"></span>${esc(rg.name||"Region")}<span class="note" style="margin-left:auto">${(rg.provinceIds||[]).length}</span>`;
+  if(!regs.length){
+    const n=div("note"); n.textContent=VIEWER?"No regions defined.":"No regions yet. Click ＋ New region, then click provinces on the map to add them."; box.appendChild(n);
+  } else {
+    regs.forEach(rg=>{
+      const row=div("mlRow"+(state.selRegion===rg.id?" active":""));
+      row.style.cursor="pointer"; row.dataset.rid=rg.id; row.title=VIEWER?`Highlight ${esc(rg.name)}`:`Edit ${esc(rg.name)}`;
+      row.innerHTML=`<span class="sw" style="background:${regionColor(rg)}"></span>${esc(rg.name||"Region")}<span class="note" style="margin-left:auto">${(rg.provinceIds||[]).length}</span>`;
+      box.appendChild(row);
+    });
+    box.querySelectorAll("[data-rid]").forEach(el=>el.onclick=ev=>{ ev.stopPropagation(); const id=el.dataset.rid;
+      if(state.selRegion===id){ state.selRegion=null; renderMap(); buildMapLegend(); clearSelection(); }
+      else { selectRegion(id); buildMapLegend(); }
+    });
+  }
+  renderFeatureCatLegend(box);   // always shown, even with no regions defined yet
+}
+/* Province-feature types listed in the Regions legend: click one to spotlight every province
+   holding a feature of that type (same behaviour as the other map-mode legends). */
+function renderFeatureCatLegend(box){
+  const defs=featureCatDefs(); if(!defs.length)return;
+  const h=div("mlSubH"); h.textContent="Feature types"; box.appendChild(h);
+  defs.forEach(c=>{
+    const n=provincesWithFeatureCat(c.id).length;
+    const active=state.legendFilter&&state.legendFilter.mode==="featurecat"&&state.legendFilter.value===c.id;
+    const row=div("mlRow"+(active?" active":""));
+    row.style.cursor="pointer"; row.dataset.fcat=c.id;
+    row.title=`Highlight provinces with a ${c.label} feature`;
+    row.innerHTML=`<span class="sw" style="background:${c.color}"></span>${esc(c.glyph||"❖")} ${esc(c.label)}<span class="note" style="margin-left:auto">${n}</span>`;
     box.appendChild(row);
   });
-  box.querySelectorAll("[data-rid]").forEach(el=>el.onclick=ev=>{ ev.stopPropagation(); const id=el.dataset.rid;
-    if(state.selRegion===id){ state.selRegion=null; renderMap(); buildMapLegend(); clearSelection(); }
-    else { selectRegion(id); buildMapLegend(); }
+  box.querySelectorAll("[data-fcat]").forEach(el=>el.onclick=ev=>{ ev.stopPropagation(); const id=el.dataset.fcat;
+    const on=state.legendFilter&&state.legendFilter.mode==="featurecat"&&state.legendFilter.value===id;
+    state.legendFilter=on?null:{mode:"featurecat",value:id};
+    renderMap(); buildMapLegend();
   });
 }
 function selectRegion(id){
@@ -728,7 +752,22 @@ const FEATURE_CAT_ORDER=["wonder","resource","misc"];
 const FEATURE_CAT_VISIBLE=["resource","misc"];
 const FEATURE_CAT_LABEL={wonder:"Wonder",resource:"Resource feature",misc:"Misc"};
 const FEATURE_CAT_GLYPH={wonder:"🏛️",resource:"💎",misc:"❖"};
-function featureCat(name){ return (world.featureCats&&world.featureCats[name])||"misc"; }
+/* Province-feature TYPES are user-editable (GM Screen): each has an id, a label, a colour and a
+   glyph. The built-ins below seed new/old worlds; "wonder" stays hidden (Wonders are their own
+   objects now) so nothing breaks in existing saves. */
+const FEATURE_CATS_SEED=[{id:"resource",label:"Resource feature",color:"#5fb26a",glyph:"💎"},
+                         {id:"misc",label:"Misc",color:"#8a93a6",glyph:"❖"}];
+function featureCatDefs(){ if(!Array.isArray(world.featureCatDefs)||!world.featureCatDefs.length)world.featureCatDefs=FEATURE_CATS_SEED.map(x=>({...x})); return world.featureCatDefs; }
+function featureCatDef(id){ return featureCatDefs().find(c=>c.id===id) || (id==="wonder"?{id:"wonder",label:"Wonder",color:"#e0b34e",glyph:"🏛️"}:null); }
+function featureCatColor(id){ const d=featureCatDef(id); return d?d.color:(FEATURE_CAT_COLORS[id]||"#8a93a6"); }
+function featureCatLabel(id){ const d=featureCatDef(id); return d?d.label:(FEATURE_CAT_LABEL[id]||"Misc"); }
+function featureCatGlyph(id){ const d=featureCatDef(id); return (d&&d.glyph)||FEATURE_CAT_GLYPH[id]||"❖"; }
+function featureCatIds(){ return featureCatDefs().map(c=>c.id); }
+function defaultFeatureCat(){ const ids=featureCatIds(); return ids.includes("misc")?"misc":(ids[0]||"misc"); }
+// every feature name currently placed on a province (features are per-province free text now)
+function allPlacedFeatures(){ const s=new Set(); (world.provinces||[]).forEach(p=>(p.features||[]).forEach(f=>s.add(f))); return [...s]; }
+function provincesWithFeatureCat(catId){ return (world.provinces||[]).filter(p=>(p.features||[]).some(f=>featureCat(f)===catId)); }
+function featureCat(name){ const c=(world.featureCats&&world.featureCats[name]); return (c&&featureCatDef(c))?c:(c==="wonder"?"wonder":defaultFeatureCat()); }
 function setFeatureCat(name,cat){ world.featureCats=world.featureCats||{}; world.featureCats[name]=cat; }
 function featureMeta(name){ world.featureInfo=world.featureInfo||{}; if(!world.featureInfo[name])world.featureInfo[name]={description:""}; return world.featureInfo[name]; }
 // military forces (GURPS Mass Combat framework)
@@ -1065,9 +1104,14 @@ function normalize(w){
   if(!w.lists.religions.includes("No Religion")) w.lists.religions.unshift("No Religion");
   if(!w.lists.cultures.includes("No Culture")) w.lists.cultures.unshift("No Culture");
   if(!w.lists.languages.includes("No Language")) w.lists.languages.unshift("No Language");
-  // feature categories (Wonder / Resource / Misc)
+  // feature TYPES are user-defined (GM Screen); seed the built-ins for old/new worlds
+  if(!Array.isArray(w.featureCatDefs)||!w.featureCatDefs.length) w.featureCatDefs=FEATURE_CATS_SEED.map(x=>({...x}));
+  w.featureCatDefs=w.featureCatDefs.filter(c=>c&&c.id).map(c=>({id:String(c.id), label:typeof c.label==="string"?c.label:String(c.id), color:c.color||"#8a93a6", glyph:typeof c.glyph==="string"?c.glyph:"❖"}));
   w.featureCats=w.featureCats||{};
   (w.lists.features||[]).forEach(f=>{ if(!w.featureCats[f]) w.featureCats[f]=FEATURE_CATS_DEFAULT[f]||"misc"; });
+  // features placed on provinces keep a type even if their old type was removed
+  { const ids=new Set(w.featureCatDefs.map(c=>c.id)); const fb=ids.has("misc")?"misc":(w.featureCatDefs[0]&&w.featureCatDefs[0].id)||"misc";
+    (w.provinces||[]).forEach(p=>(p.features||[]).forEach(f=>{ const c=w.featureCats[f]; if(!c||(!ids.has(c)&&c!=="wonder")) w.featureCats[f]=FEATURE_CATS_DEFAULT[f]||fb; })); }
   // per-feature blurb shown in a bubble when clicked
   w.featureInfo = (w.featureInfo && typeof w.featureInfo==="object") ? w.featureInfo : {};
   (w.lists.features||[]).forEach(f=>{ if(!w.featureInfo[f]) w.featureInfo[f]={description:""}; });
@@ -1076,6 +1120,7 @@ function normalize(w){
   (w.lists.terrains||[]).forEach(t=>{ if(w.terrainImages[t]===undefined){ const d=TERRAIN_IMAGE_DEFAULTS[t]; if(d) w.terrainImages[t]="img/terrain/"+d+".png"; } });
   // resource overhaul: one-time swap to the canonical regular+prestige list + province migration
   w.lists.hiddenResources=(w.lists.hiddenResources&&w.lists.hiddenResources.length)?w.lists.hiddenResources:HIDDEN_RESOURCES.slice();
+  HIDDEN_RESOURCES.forEach(h=>{ if(!w.lists.hiddenResources.includes(h)) w.lists.hiddenResources.push(h); });   // newer strategics reach old worlds
   if(!w.resourcesV2){
     w.lists.resources=RESOURCE_LIST.slice();
     const resSet=new Set(w.lists.resources);
@@ -1736,7 +1781,7 @@ function drawKeyLocations(ctx,ox,oy,s,cw,ch,sz){
 }
 // Feature icons: wonders on the Settlements map, resource features on the Resource map.
 function drawFeatureIcons(ctx,cam,s,cw,ch,cat){
-  const glyph=FEATURE_CAT_GLYPH[cat]||"❖", col=FEATURE_CAT_COLORS[cat]||"#8a93a6";
+  const glyph=featureCatGlyph(cat), col=featureCatColor(cat);
   ctx.save(); ctx.font='15px "Segoe UI Emoji",system-ui,sans-serif'; ctx.textAlign="center"; ctx.textBaseline="middle";
   for(const g of _provGeo){
     if((g.maxx-g.minx)*s<12) continue;                 // skip tiny provinces at overview zoom
@@ -2378,6 +2423,12 @@ function provinceFill(p){
   }
   if(p.ocean) return p.oceanColor || OCEAN_FILL;   // ocean tiles render as sea (or a custom colour) on every mapmode
   if(state.mapmode==="region"){
+    // feature-type spotlight (from the legend): only provinces holding that kind of feature stay lit
+    if(state.legendFilter && state.legendFilter.mode==="featurecat"){
+      const cid=state.legendFilter.value;
+      if(!(p.features||[]).some(f=>featureCat(f)===cid)) return "#333a46";
+      return featureCatColor(cid);
+    }
     const rg=state.selRegion?regionById(state.selRegion):null;
     if(rg && (rg.provinceIds||[]).length){ return (rg.provinceIds.includes(p.id)) ? regionColor(rg) : "#333a46"; }   // spotlight the active (non-empty) region
     const regs=regionsOfProvince(p.id);
@@ -4127,10 +4178,14 @@ function renderProvinceView(){
   const rc=realm?realm.color:"#6f8fc9";
   const terr=p.terrain||"", terrCol=catColor("terrains",terr);
   const row=(l,v)=>`<div class="pvRow"><span class="pvLbl">${l}</span><span class="pvVal">${(v===0||v)?v:"—"}</span></div>`;
+  // features read in type order (as set in the GM Screen), alphabetical within each type
+  const featOrder=featureCatIds();
+  const featRank=f=>{ const i=featOrder.indexOf(featureCat(f)); return i<0?featOrder.length:i; };
   const feats=(p.features&&p.features.length)
-    ? p.features.map(f=>{const cat=featureCat(f),c=FEATURE_CAT_COLORS[cat];return `<span class="pvFeat" data-f="${esc(f)}" title="Click for details" style="cursor:pointer"><span class="sw" style="background:${c}"></span>${esc(f)}</span>`;}).join("")
+    ? p.features.slice().sort((a,b)=>(featRank(a)-featRank(b))||a.localeCompare(b))
+        .map(f=>{const cat=featureCat(f),c=featureCatColor(cat);return `<span class="pvFeat" data-f="${esc(f)}" title="${esc(featureCatLabel(cat))} — click for details" style="cursor:pointer"><span class="sw" style="background:${c}"></span>${esc(f)}</span>`;}).join("")
     : '<span class="pvVal">None</span>';
-  const featKey=FEATURE_CAT_VISIBLE.map(cat=>`<span class="pvKey"><span class="sw" style="background:${FEATURE_CAT_COLORS[cat]}"></span>${FEATURE_CAT_LABEL[cat]}</span>`).join("");
+  const featKey=featureCatDefs().map(c=>`<span class="pvKey"><span class="sw" style="background:${c.color}"></span>${esc(c.label)}</span>`).join("");
   const hist=(p.history&&p.history.length)?p.history.map(h=>{const era=world.eras.find(e=>e.id===h.eraId);
     return `<div class="h"><div class="meta">${era?esc(era.name):""}${h.auto?" · auto":""}</div><div style="font-weight:600">${esc(h.title)}</div>${h.text?`<div class="note">${esc(h.text)}</div>`:""}</div>`;}).join(""):'<div class="note">No recorded history.</div>';
   ins.innerHTML=`
@@ -4190,7 +4245,7 @@ function closeFeatureBubble(){ if(_featBubbleEl){ _featBubbleEl.remove(); _featB
 function _featBubbleOutside(e){ if(_featBubbleEl && !_featBubbleEl.contains(e.target)) closeFeatureBubble(); }
 function showFeatureBubble(name, anchor, editable){
   closeFeatureBubble();
-  const meta=featureMeta(name), cat=featureCat(name), col=FEATURE_CAT_COLORS[cat];
+  const meta=featureMeta(name), cat=featureCat(name), col=featureCatColor(cat);
   const b=document.createElement("div"); b.className="featBubble"; _featBubbleEl=b;
   b.innerHTML=`<div class="fbHead"><span class="sw" style="background:${col}"></span><b>${esc(name)}</b><button class="fbX" title="Close">✕</button></div>`
     +(editable
@@ -5545,20 +5600,30 @@ function renderPops(p){
 }
 function renderFeatures(p){
   const wrap=$("#pfeat");wrap.innerHTML="";
+  const defs=featureCatDefs();
   p.features.forEach((f,i)=>{
-    const cat=featureCat(f), col=FEATURE_CAT_COLORS[cat];
+    const cat=featureCat(f), col=featureCatColor(cat);
     const t=document.createElement("span");t.className="tag";t.style.borderColor=col;
-    t.innerHTML=`<span class="fcat" title="${FEATURE_CAT_LABEL[cat]} — click to change type" style="width:11px;height:11px;border-radius:3px;background:${col};display:inline-block;cursor:pointer"></span> <b>${esc(f)}</b> <span class="x">✕</span>`;
-    t.querySelector(".fcat").onclick=()=>{const cur=featureCat(f);const vi=FEATURE_CAT_VISIBLE.indexOf(cur);setFeatureCat(f,FEATURE_CAT_VISIBLE[(vi+1)%FEATURE_CAT_VISIBLE.length]);renderFeatures(p);renderMap();markDirty();};
+    const opts=defs.map(c=>`<option value="${esc(c.id)}" ${c.id===cat?"selected":""}>${esc(c.label)}</option>`).join("");
+    t.innerHTML=`<span class="sw" style="background:${col}"></span> <b>${esc(f)}</b> <select class="fcatSel" title="Feature type">${opts}</select> <span class="x">✕</span>`;
+    t.querySelector(".fcatSel").onchange=e=>{ setFeatureCat(f,e.target.value); renderFeatures(p); renderMap(); markDirty(); };
     { const nb=t.querySelector("b"); if(nb){ nb.style.cursor="pointer"; nb.title="Click to edit this feature's description"; nb.onclick=()=>showFeatureBubble(f,t,true); } }
     t.querySelector(".x").onclick=()=>{p.features.splice(i,1);renderFeatures(p);renderMap();markDirty();};
     wrap.appendChild(t);
   });
-  const sel=document.createElement("select");sel.className="sel";sel.style.marginTop="6px";
-  sel.innerHTML=`<option value="">＋ add feature…</option>`+world.lists.features.map(f=>`<option>${esc(f)}</option>`).join("")+`<option value="__custom">Custom…</option>`;
-  sel.onchange=()=>{let v=sel.value;if(v==="__custom"){v=(prompt("Feature name:")||"").trim();}if(v){p.features.push(v);if(!world.lists.features.includes(v))world.lists.features.push(v);if(!world.featureCats[v])world.featureCats[v]="misc";renderFeatures(p);renderMap();markDirty();}sel.value="";};
-  wrap.appendChild(sel);
-  const note=div("note");note.style.marginTop="4px";note.innerHTML=`Types: <span style="color:${FEATURE_CAT_COLORS.resource}">■ Resource feature</span> (💎 on Resource map) · <span style="color:${FEATURE_CAT_COLORS.misc}">■ Misc</span>. Click a feature's colour to change its type. <span class="note">(Wonders are now their own section above.)</span>`;
+  // free-text entry — features are per-province now, no shared preset list
+  const row=div(""); row.style.cssText="display:flex;gap:6px;margin-top:6px;align-items:center;flex-wrap:wrap";
+  const inp=document.createElement("input"); inp.className="txt"; inp.placeholder="New feature name…"; inp.style.cssText="flex:1;min-width:120px";
+  const catSel=document.createElement("select"); catSel.className="sel"; catSel.style.flex="0 0 auto";
+  catSel.innerHTML=defs.map(c=>`<option value="${esc(c.id)}">${esc(c.label)}</option>`).join("");
+  const add=document.createElement("button"); add.className="btn tiny primary"; add.textContent="＋ Add";
+  const doAdd=()=>{ const v=inp.value.trim(); if(!v)return; p.features.push(v); setFeatureCat(v,catSel.value||defaultFeatureCat());
+    inp.value=""; renderFeatures(p); renderMap(); markDirty(); };
+  add.onclick=doAdd; inp.addEventListener("keydown",e=>{ if(e.key==="Enter"){ e.preventDefault(); doAdd(); } });
+  row.appendChild(inp); row.appendChild(catSel); row.appendChild(add); wrap.appendChild(row);
+  const note=div("note"); note.style.marginTop="4px";
+  note.innerHTML=`Features are written per province. Types (colours &amp; new ones) are managed in the 🧭 GM Screen: `
+    +defs.map(c=>`<span style="color:${c.color}">■ ${esc(c.label)}</span>`).join(" · ");
   wrap.appendChild(note);
 }
 function moveWonder(p,w,dir){
@@ -7018,6 +7083,18 @@ function renderGM2(){
         <button class="btn tiny gmRDel" data-r="${esc(rc)}" style="color:var(--bad)" title="Delete species">✕</button>
       </td>
     </tr>`).join("");
+  const featCatRows=featureCatDefs().map((c,ci)=>{
+    const n=(world.provinces||[]).reduce((a,p)=>a+((p.features||[]).some(f=>featureCat(f)===c.id)?1:0),0);
+    return `<tr>
+      <td><input class="gmFCCol" data-c="${esc(c.id)}" type="color" value="${toHex(c.color)}" title="Type colour"/></td>
+      <td><input class="gmFCLabel" data-c="${esc(c.id)}" value="${esc(c.label)}"/></td>
+      <td><input class="gmFCGlyph" data-c="${esc(c.id)}" value="${esc(c.glyph||"❖")}" style="width:56px;text-align:center" title="Map glyph"/></td>
+      <td class="note">${n} province${n===1?"":"s"}</td>
+      <td style="white-space:nowrap">
+        <button class="btn tiny gmFCUp" data-c="${esc(c.id)}" ${ci===0?"disabled":""} title="Move up">↑</button>
+        <button class="btn tiny gmFCDn" data-c="${esc(c.id)}" ${ci===featureCatDefs().length-1?"disabled":""} title="Move down">↓</button>
+        <button class="btn tiny gmFCDel" data-c="${esc(c.id)}" style="color:var(--bad)" title="Delete type">✕</button>
+      </td></tr>`; }).join("");
   const subRows=(world.lists.subraces||[]).map(sr=>{ const gp=subraceGroup(sr);
     const gOpts=(world.lists.races||[]).map(g=>`<option value="${esc(g)}" ${gp===g?"selected":""}>${esc(g)}</option>`).join("")+((world.lists.races||[]).includes(gp)?"":`<option value="${esc(gp)}" selected>${esc(gp)}</option>`);
     return `<tr>
@@ -7078,6 +7155,12 @@ function renderGM2(){
         <p class="note">Subspecies are what population groups actually are — they show on the Species map and in province pie charts, coloured individually and grouped under a species. Clicking a subspecies on the map highlights its whole species. (With none defined, each species is simply its own subspecies.)</p>
         <table class="gm2tbl"><thead><tr><th>Colour</th><th>Subspecies</th><th>Species</th><th></th></tr></thead><tbody>${subRows}</tbody></table>
         <div class="btnrow" style="margin-top:8px"><button class="btn tiny" id="gmAddSub">＋ Add subspecies</button></div>
+      </section>
+      <section class="gmBlock gmSpanAll">
+        <div class="gmBlockH">❖ Province feature types</div>
+        <p class="note">Feature names are written freely per province; these are the <b>types</b> that colour them. Give each a colour and a map glyph, add your own beyond the built-ins, or delete one (its features fall back to the first type). They show as a key in the province view and as clickable filters in the Regions map legend.</p>
+        <table class="gm2tbl"><thead><tr><th>Colour</th><th>Type</th><th>Glyph</th><th>Used by</th><th></th></tr></thead><tbody>${featCatRows||'<tr><td class="note">No feature types.</td></tr>'}</tbody></table>
+        <div class="btnrow" style="margin-top:8px"><button class="btn tiny" id="gmAddFeatCat">＋ Add feature type</button></div>
       </section>
       <section class="gmBlock gmSpanAll">
         <div class="gmBlockH">⛰ Terrain types &amp; modifiers</div>
@@ -7172,6 +7255,26 @@ function renderGM2(){
     const used=subraceUsage(v); if(used>0 && !confirm(`“${v}” is used by ${used} province${used===1?"":"s"}. Delete it and move those pops to another subrace?`))return;
     deleteSubrace(v); renderMap(); renderLegend(); markDirty(); renderGM2(); }));
   { const a=$("#gmAddSub"); if(a)a.onclick=()=>{ let base="New Subspecies",n=base,k=2; while((world.lists.subraces||[]).includes(n))n=base+" "+(k++); world.lists.subraces.push(n); world.subraceOf[n]=(world.lists.races||[])[0]||n; markDirty(); renderGM2(); }; }
+  // ---- province feature types: colour / label / glyph / reorder / delete / add ----
+  const fcFind=id=>featureCatDefs().find(x=>x.id===id);
+  host.querySelectorAll(".gmFCCol").forEach(el=>el.addEventListener("input",e=>{ const c=fcFind(el.dataset.c); if(c){ c.color=e.target.value; renderMap(); renderLegend(); markDirty(); } }));
+  host.querySelectorAll(".gmFCLabel").forEach(el=>el.addEventListener("input",e=>{ const c=fcFind(el.dataset.c); if(c){ c.label=e.target.value; renderLegend(); markDirty(); } }));
+  host.querySelectorAll(".gmFCGlyph").forEach(el=>el.addEventListener("input",e=>{ const c=fcFind(el.dataset.c); if(c){ c.glyph=e.target.value||"❖"; renderMap(); renderLegend(); markDirty(); } }));
+  host.querySelectorAll(".gmFCUp").forEach(el=>el.addEventListener("click",()=>{ const a=featureCatDefs(), i=a.findIndex(x=>x.id===el.dataset.c); if(i>0){ [a[i-1],a[i]]=[a[i],a[i-1]]; markDirty(); renderLegend(); renderGM2(); } }));
+  host.querySelectorAll(".gmFCDn").forEach(el=>el.addEventListener("click",()=>{ const a=featureCatDefs(), i=a.findIndex(x=>x.id===el.dataset.c); if(i>=0&&i<a.length-1){ [a[i+1],a[i]]=[a[i],a[i+1]]; markDirty(); renderLegend(); renderGM2(); } }));
+  host.querySelectorAll(".gmFCDel").forEach(el=>el.addEventListener("click",()=>{
+    const a=featureCatDefs(); if(a.length<=1){ flash("Keep at least one feature type."); return; }
+    const id=el.dataset.c, def=fcFind(id); if(!def)return;
+    if(!confirm(`Delete the “${def.label}” feature type? Features using it fall back to the first type.`))return;
+    world.featureCatDefs=a.filter(x=>x.id!==id);
+    const fb=world.featureCatDefs[0].id;
+    Object.keys(world.featureCats||{}).forEach(f=>{ if(world.featureCats[f]===id)world.featureCats[f]=fb; });
+    if(state.legendFilter&&state.legendFilter.mode==="featurecat"&&state.legendFilter.value===id)state.legendFilter=null;
+    renderMap(); renderLegend(); markDirty(); renderGM2();
+  }));
+  { const a=$("#gmAddFeatCat"); if(a)a.onclick=()=>{ const defs=featureCatDefs();
+      let base="type",n=base,k=2; while(defs.some(x=>x.id===n))n=base+(k++);
+      defs.push({id:n,label:"New feature type",color:autoPastelHex(),glyph:"❖"}); markDirty(); renderLegend(); renderGM2(); }; }
   // ---- terrain rows ----
   host.querySelectorAll(".gmTCol").forEach(el=>el.addEventListener("input",e=>{ world.colors.terrains=world.colors.terrains||{}; world.colors.terrains[el.dataset.t]=e.target.value; renderMap(); renderLegend(); markDirty(); }));
   host.querySelectorAll(".gmTGrow").forEach(el=>el.addEventListener("input",e=>{ t.terrainGrow[el.dataset.t]=Math.max(0,+e.target.value||0); markDirty(); }));
