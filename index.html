@@ -16,9 +16,11 @@
 <header id="topbar">
   <!-- world name → age → population → measure → ping → find -->
   <div class="topgroup"><input id="worldName" class="txt worldname" type="text" title="World name" /></div>
-  <div class="topgroup">
-    <select id="eraSelect" class="sel eraname" title="Current age"></select>
-    <button id="manageEras" class="btn ghost editonly" title="Manage ages">⚙</button>
+  <!-- the old era dropdown is retired; Age/Phase now come from the Compendium timeline.
+       (world.eras still exists behind the scenes so old province history entries keep their tags.) -->
+  <!-- current Age / Phase, read from the Compendium timeline's dividers -->
+  <div class="topgroup" id="chronNowGroup" hidden>
+    <button id="chronNowChip" class="chip chronNowChip" title="Current Age and Phase — click to open the Timeline"></button>
   </div>
   <div class="topgroup"><span id="worldPop" class="chip" title="Total population across the whole world">👥 0</span></div>
   <div class="topgroup">
@@ -65,7 +67,7 @@
 
   <div class="topgroup right">
     <button id="btnView" class="btn ghost editorchrome" title="Preview exactly what the site viewer sees (toggle)">👁 View Mode</button>
-    <button id="btnTimeline" class="btn ghost viewerchrome" title="Timeline — load a past turn's snapshot">🕑 Timeline</button>
+    <button id="btnTimeline" class="btn ghost viewerchrome" title="Snapshots — load a past turn">🕑 Snapshots</button>
     <button id="btnCompendium" class="btn ghost" title="Compendium — browse and edit lore for powers, leaders, religions, discoveries and more">📖 Compendium</button>
     <button id="worldView" class="btn ghost" title="Recenter and fit the whole world in view">◎ Recenter</button>
     <button id="btnPanels" class="btn ghost" title="Hide/show the side info panels for a clean map view">⇔ Panels</button>

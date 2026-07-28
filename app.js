@@ -380,7 +380,338 @@ function toggleRealmDiscovery(r,id){ r.discoveries=r.discoveries||[]; const i=r.
 // timeline phase you view. Persisted on world.compendiumStore (kept in sync).
 // ============================================================
 let _compendium=null;
-function blankCompendium(){ return {characters:[], charTags:["Commander","Diplomat","Hero"], dynasties:[], lore:{}, realmRulers:{}, realmNames:{}, places:[], monsterPages:[], relics:[]}; }
+function blankCompendium(){ return {characters:[], charTags:["Commander","Diplomat","Hero"], dynasties:[], lore:{}, realmRulers:{}, realmNames:{}, places:[], monsterPages:[], relics:[], chronicle:blankChronicle()}; }
+// The world chronicle — a horizontal timeline of dated events shown at the foot of the Compendium.
+// Event TYPES are editable (GM Screen) and give each event its default colour.
+const CHRON_TYPES_SEED=[
+  {id:"diplomacy",   label:"Diplomacy",   color:"#3d8bfd"},
+  {id:"battle",      label:"Battle",      color:"#c2453a"},
+  {id:"development", label:"Development", color:"#5fb26a"},
+  {id:"religious",   label:"Religious",   color:"#a98fd0"},
+  {id:"discovery",   label:"Discovery",   color:"#2f9fc7"},
+  {id:"political",   label:"Political",   color:"#e0b34e"},
+  {id:"disaster",    label:"Disaster",    color:"#e07a2f"},
+  {id:"cultural",    label:"Cultural",    color:"#d16fa8"},
+  {id:"other",       label:"Other",       color:"#8a93a6"}
+];
+function blankChronicle(){ return {presentDate:"", presentYear:null, presentMarkerId:"", events:[], markers:[],
+  types:CHRON_TYPES_SEED.map(x=>({...x})),
+  zeroId:"", epochOffset:0, bufferYears:0, relativeReady:false,
+  calendar:{before:"BR", after:"AR", zero:""}}; }   // era labels either side of Year 0 (renameable)
+// Era dividers on the timeline: a Phase is a plain vertical line, an Age a heavier ornate one.
+function normChronMarker(m){ m=m||{}; const date=typeof m.date==="string"?m.date:"";
+  const y=(typeof m.year==="number"&&isFinite(m.year))?m.year:parseChronYear(date);
+  return {id:m.id||uid(), kind:(m.kind==="age"?"age":"phase"), label:typeof m.label==="string"?m.label:"",
+    date, year:(y==null?null:y), color:(typeof m.color==="string"&&m.color)?m.color:"#d9a521",
+    gap:(typeof m.gap==="number"&&isFinite(m.gap))?m.gap:null,
+    gapMax:(typeof m.gapMax==="number"&&isFinite(m.gapMax))?m.gapMax:null,
+    gapApprox:!!m.gapApprox,
+    order:(typeof m.order==="number"&&isFinite(m.order))?m.order:null}; }
+const CHRON_AGE_COLORS=["#d9a521","#3d8bfd","#5fb26a","#a98fd0","#c2453a","#2f9fc7","#d16fa8","#e07a2f"];
+function chronMarkers(){ const ch=chronicle(); if(!Array.isArray(ch.markers))ch.markers=[]; return ch.markers; }
+/* The Present is pinned to a specific Phase/Age divider. If none is chosen it follows the newest
+   Phase (falling back to the newest Age, then to any free-text date kept from older worlds). */
+function presentMarker(){
+  const ch=chronicle(), ms=chronMarkers();
+  if(ch.presentMarkerId){ const m=ms.find(x=>x.id===ch.presentMarkerId); if(m)return m; }
+  // "newest" = last in the timeline's own sequence, i.e. the most recently created/placed one
+  const seq=chronEntries();
+  for(let i=seq.length-1;i>=0;i--) if(seq[i].kind==="phase")return seq[i].obj;
+  for(let i=seq.length-1;i>=0;i--) if(seq[i].kind==="age")return seq[i].obj;
+  return null;
+}
+function chronPresentYear(){ const m=presentMarker(); if(!m)return chronicle().presentYear;
+  const e=chronYearMap()[m.id]; return e?e.year:(m.year!=null?m.year:chronicle().presentYear); }
+function chronPresentLabel(){ const m=presentMarker(); if(m)return m.label||m.date||"Present"; return chronicle().presentDate||"Present"; }
+function chronPresentDateText(){ const m=presentMarker(); if(m&&m.date)return m.date; return chronicle().presentDate||""; }
+/* The Age / Phase the Present falls inside: the latest divider of that kind at or before the
+   Present. With no Present set we take the last one chronologically. */
+function currentChronMarker(kind){
+  const pm=presentMarker(); if(!pm)return null;
+  if(pm.kind===kind)return pm;                       // the Present itself is that kind
+  if(kind==="age"){                                  // the Age the Present's Phase belongs to
+    const seq=chronEntries(); const i=seq.findIndex(x=>x.obj.id===pm.id);
+    for(let k=i-1;k>=0;k--) if(seq[k].kind==="age")return seq[k].obj;
+    return null;
+  }
+  return null;                                       // Present is an Age → no Phase has begun in it
+}
+// Topbar chip mirroring the timeline's current Age and Phase.
+function updateChronNowChip(){
+  const g=document.getElementById("chronNowGroup"), b=document.getElementById("chronNowChip");
+  if(!g||!b)return;
+  if(typeof world==="undefined"||!world){ g.hidden=true; return; }
+  const age=currentChronMarker("age"), ph=currentChronMarker("phase");
+  if(!age&&!ph){ g.hidden=true; return; }
+  g.hidden=false;
+  b.style.setProperty("--ac", (age&&age.color)||"#d9a521");   // match the current Age's colour
+  const parts=[];
+  if(age)parts.push(`<span class="cnAge">❖ ${esc(age.label||age.date||"Age")}</span>`);
+  if(ph)parts.push(`<span class="cnPhase">${esc(ph.label||ph.date||"Phase")}</span>`);
+  b.innerHTML=parts.join('<span class="cnSep">·</span>');
+  const ch=chronicle();
+  b.title=[age?("Age: "+(age.label||age.date||"—")):"", ph?("Phase: "+(ph.label||ph.date||"—")):"",
+           chronPresentLabel()?("Present: "+chronPresentLabel()):""].filter(Boolean).join("  •  ")+"  — click to open the Timeline";
+}
+function chronTypes(){ const ch=chronicle(); if(!Array.isArray(ch.types)||!ch.types.length)ch.types=CHRON_TYPES_SEED.map(x=>({...x})); return ch.types; }
+function chronType(id){ return chronTypes().find(t=>t.id===id)||null; }
+function chronTypeColor(id){ const t=chronType(id); return t?t.color:"#8a93a6"; }
+function chronTypeGlyph(id){ const t=chronType(id); return (t&&t.glyph)||""; }
+function chronTypeLabel(id){ const t=chronType(id); return t?t.label:""; }
+// an event's colour: its own override when set, otherwise its type's colour
+function chronEventColor(e){ return (e&&e.color)||chronTypeColor(e&&e.type)||"#8a93a6"; }
+/* Only http(s) links are allowed out of the Compendium — this blocks javascript:/data: URLs
+   that would otherwise run in the page. Links also open with noopener/noreferrer. */
+function safeExternalUrl(u){
+  const s=String(u==null?"":u).trim(); if(!s)return "";
+  try{ const url=new URL(s, location.href); return (url.protocol==="http:"||url.protocol==="https:")?url.href:""; }
+  catch(_){ return ""; }
+}
+/* Discord deep links: from an already-validated https discord.com/channels/… URL we build the
+   matching discord://-/channels/… app link ourselves. The scheme is never taken from user input,
+   so this can't be used to smuggle in some other protocol. */
+function discordAppUrl(httpsUrl){
+  const s=safeExternalUrl(httpsUrl); if(!s)return "";
+  try{
+    const u=new URL(s);
+    if(!/(^|\.)discord(app)?\.com$/i.test(u.hostname))return "";
+    const m=u.pathname.match(/^\/channels\/([^/]+)\/([^/]+)(?:\/([^/]+))?\/?$/);
+    if(!m)return "";
+    return "discord://-/channels/"+m[1]+"/"+m[2]+(m[3]?"/"+m[3]:"");
+  }catch(_){ return ""; }
+}
+/* Try the desktop app, then fall back to the browser. If the app takes over, the page is
+   backgrounded and we cancel the fallback; otherwise the web link opens a moment later. */
+function openPreferApp(appUrl, webUrl){
+  let done=false;
+  const cancel=()=>{ done=true; };
+  document.addEventListener("visibilitychange",cancel,{once:true});
+  window.addEventListener("blur",cancel,{once:true});
+  const t=setTimeout(()=>{
+    document.removeEventListener("visibilitychange",cancel);
+    window.removeEventListener("blur",cancel);
+    if(!done && !document.hidden && webUrl) window.open(webUrl,"_blank","noopener,noreferrer");
+  },1400);
+  try{ window.location.href=appUrl; }catch(_){ clearTimeout(t); if(webUrl)window.open(webUrl,"_blank","noopener,noreferrer"); }
+}
+// Events are placed along the axis by a number; if you don't give one we read the first number
+// out of the date text, so typing "412" or "Year 412 of the Third Age" both work.
+function parseChronYear(txt){ const m=String(txt==null?"":txt).match(/-?\d+(?:\.\d+)?/); return m?parseFloat(m[0]):null; }
+/* ---- RELATIVE CHRONOLOGY ----------------------------------------------------------------
+   Entries don't store absolute years. Each stores how long it is since the previous entry
+   ("gap"), which may be approximate (~) or a range (10-20). Absolute years are computed by
+   accumulating those gaps, then shifted so a chosen entry is Year 0 — so if you change where
+   zero sits, or invent a calendar later, every date recalculates by itself.               */
+function parseGapInput(txt){
+  const s=String(txt==null?"":txt).trim();
+  const approx=/[~≈]/.test(s) || /\babout\b|\bapprox/i.test(s);
+  const nums=s.match(/-?\d+(?:\.\d+)?/g);
+  if(!nums||!nums.length)return {gap:0, gapMax:null, gapApprox:approx};
+  const a=parseFloat(nums[0]);
+  const b=(nums.length>1)?parseFloat(nums[1]):null;
+  return {gap:a, gapMax:(b!=null&&b!==a)?b:null, gapApprox:approx};
+}
+function gapText(o){
+  if(!o)return "0";
+  const a=(+o.gap||0), b=(o.gapMax==null?null:+o.gapMax);
+  return (o.gapApprox?"~":"")+(b!=null?`${a}-${b}`:`${a}`);
+}
+function gapValue(o){ const a=(+(o&&o.gap)||0), b=(o&&o.gapMax!=null)?+o.gapMax:null; return b!=null?(a+b)/2:a; }
+function gapIsApprox(o){ return !!(o&&(o.gapApprox||o.gapMax!=null)); }
+// Every timeline entry (events and dividers) in sequence order.
+function chronEntries(){
+  const ch=chronicle();
+  const list=[...(ch.events||[]).map(e=>({kind:"event",obj:e})),
+              ...chronMarkers().map(m=>({kind:m.kind,obj:m}))];
+  list.sort((a,b)=>((a.obj.order||0)-(b.obj.order||0)) || String(a.obj.id).localeCompare(String(b.obj.id)));
+  return list;
+}
+/* Walk the sequence accumulating gaps, then shift so the chosen zero entry is year 0.
+   Approximation is sticky: once an uncertain gap is passed, later dates are uncertain too. */
+function chronCompute(){
+  ensureChronRelative();
+  const ch=chronicle(), seq=chronEntries();
+  let pos=0, approx=false; const out=[];
+  seq.forEach((it,i)=>{
+    const o=it.obj;
+    let lo=pos, hi=pos;
+    if(i>0){
+      const a=(+o.gap||0), b=(o.gapMax!=null)?+o.gapMax:null;
+      lo=pos+a; hi=pos+(b!=null?b:a);      // this entry's own earliest/latest, from its own gap
+      pos+=gapValue(o);                    // the chain advances on the midpoint
+    }
+    if(gapIsApprox(o))approx=true;
+    out.push({kind:it.kind, obj:o, pos, lo, hi, hasRange:(o.gapMax!=null), approx});
+  });
+  /* The timeline starts `bufferYears` BEFORE Year 0 and counts down toward it. Add events and the
+     remaining buffer shrinks on its own; once elapsed time passes the buffer, years go positive
+     and read in the after-era. Change the buffer any time to move Year 0 nearer or further. */
+  const buf=(typeof ch.bufferYears==="number"&&isFinite(ch.bufferYears))?ch.bufferYears:0;
+  const off=(typeof ch.epochOffset==="number")?ch.epochOffset:0;
+  out.forEach(x=>{ x.year=x.pos-buf+off; x.yearLo=x.lo-buf+off; x.yearHi=x.hi-buf+off; });
+  return out;
+}
+/* ---- COMPRESSED SPACING -----------------------------------------------------------------
+   A straight year→pixel scale makes one 600-year jump swamp a timeline whose events are usually
+   decades apart. Instead each gap is compressed (a power curve), so short gaps keep room to
+   breathe while long ones shrink to a sensible stretch. Order and proportion are preserved —
+   a longer gap is always visibly longer, just not linearly so.                              */
+const CHRON_GAP_EXP=0.42, CHRON_GAP_MUL=1.1;   // lower exponent = centuries only modestly wider than decades
+function compressGap(g){ g=Math.abs(g); return g<=0?0:Math.pow(g,CHRON_GAP_EXP)*CHRON_GAP_MUL; }
+// Build the year → display-position ladder from every distinct year on the timeline (plus Year 0).
+function chronDisplayMap(){
+  const seq=chronCompute();
+  const set=new Set(seq.map(x=>Math.round(x.year*1000)/1000));
+  seq.forEach(x=>{ if(x.hasRange){ set.add(x.yearLo); set.add(x.yearHi); } });
+  set.add(0);
+  const ys=[...set].sort((a,b)=>a-b);
+  const disp=[]; let d=0;
+  ys.forEach((y,i)=>{ if(i>0)d+=compressGap(y-ys[i-1]); disp.push(d); });
+  return {ys, disp, total:d};
+}
+// Interpolate any year onto that ladder (extrapolating past either end).
+function chronDispOf(DM, y){
+  const {ys,disp}=DM; if(!ys.length)return 0;
+  if(y<=ys[0])return disp[0]-compressGap(ys[0]-y);
+  if(y>=ys[ys.length-1])return disp[disp.length-1]+compressGap(y-ys[ys.length-1]);
+  let lo=0, hi=ys.length-1;
+  while(hi-lo>1){ const mid=(lo+hi)>>1; if(ys[mid]<=y)lo=mid; else hi=mid; }
+  const dy=ys[hi]-ys[lo];
+  return dy<=0?disp[lo]:disp[lo]+((y-ys[lo])/dy)*(disp[hi]-disp[lo]);
+}
+// how many years still separate the newest entry from Year 0 (negative once it's passed)
+function chronYearsToZero(){ const s=chronCompute(); if(!s.length)return (chronicle().bufferYears||0);
+  return -s[s.length-1].year; }
+function chronYearMap(){ const m={}; chronCompute().forEach(x=>{
+  m[x.obj.id]={year:x.year, approx:x.approx, yearLo:x.yearLo, yearHi:x.yearHi, hasRange:x.hasRange}; }); return m; }
+// what an entry's date reads as: its manual label if given, otherwise the calculated year (or span)
+function chronEntryDateText(o){ if(o&&o.date)return o.date; const e=chronYearMap()[o&&o.id];
+  if(!e)return "undated";
+  if(e.hasRange && Math.round(e.yearHi)!==Math.round(e.yearLo))
+    return (e.approx?"~":"")+`${Math.round(e.yearLo)}–${fmtChronYear(e.yearHi,false)}`;
+  return fmtChronYear(e.year,e.approx); }
+// Render a computed year through the world's (renameable) era labels — BC/AD style either side of 0.
+function fmtChronYear(y, approx){
+  const cal=chronicle().calendar||{};
+  const before=cal.before||"BR", after=cal.after||"AR", zeroLbl=cal.zero||"";
+  const n=Math.round(y);
+  let t;
+  if(n===0) t = zeroLbl || ("0 "+after);
+  else if(n<0) t = Math.abs(n)+" "+before;
+  else t = n+" "+after;
+  return (approx?"~":"")+t;
+}
+/* One-time migration: worlds written before this used absolute years. Derive each entry's gap
+   from the old ordering so the timeline looks exactly the same, then work relatively from there. */
+function ensureChronRelative(){
+  const ch=chronicle();
+  if(ch.relativeReady)return;
+  const all=[...(ch.events||[]), ...(Array.isArray(ch.markers)?ch.markers:[])];
+  const dated=all.filter(o=>typeof o.year==="number").sort((a,b)=>a.year-b.year);
+  const undated=all.filter(o=>typeof o.year!=="number");
+  let ord=0, prev=null;
+  dated.forEach(o=>{ o.order=ord++; if(typeof o.gap!=="number")o.gap=(prev==null)?0:Math.max(0,o.year-prev);
+    if(o.gapMax===undefined)o.gapMax=null; if(o.gapApprox===undefined)o.gapApprox=false; prev=o.year; });
+  undated.forEach(o=>{ o.order=ord++; if(typeof o.gap!=="number")o.gap=0;
+    if(o.gapMax===undefined)o.gapMax=null; if(o.gapApprox===undefined)o.gapApprox=false; });
+  if(!ch.zeroId){ const firstAge=(ch.markers||[]).filter(m=>m.kind==="age").sort((a,b)=>(a.order||0)-(b.order||0))[0];
+    ch.zeroId=firstAge?firstAge.id:(dated[0]?dated[0].id:""); }
+  ch.relativeReady=true;
+}
+/* Put a new entry at the END of the current Phase (or Age) rather than the end of all time, so
+   things you add belong to the era you're currently in. Renumbers the sequence afterwards. */
+function chronInsertIntoCurrentSpan(obj){
+  const seq=chronEntries();
+  const cur=currentChronMarker("phase")||currentChronMarker("age");
+  let at=seq.length;
+  if(cur){
+    const ci=seq.findIndex(x=>x.obj.id===cur.id);
+    if(ci>=0){ at=seq.length;
+      for(let i=ci+1;i<seq.length;i++){ if(seq[i].kind===cur.kind){ at=i; break; } }   // up to the next span of the same kind
+    }
+  }
+  const arr=seq.map(x=>x.obj);
+  arr.splice(at,0,obj);
+  arr.forEach((o,i)=>o.order=i);
+  return obj;
+}
+/* Find where a Phase's name can sit ON the axis line: the first gap between the event cards
+   inside its span that's wide enough to hold the label. Returns the gap's centre, or null. */
+function chronLabelSlot(x0, x1, eventXs, cardW, labelW){
+  const PADX=8;
+  const occ=eventXs.map(x=>[x-cardW/2-4, x+cardW/2+4]).sort((a,b)=>a[0]-b[0]);
+  const gaps=[]; let prev=x0;
+  occ.forEach(([a,b])=>{ if(a>prev)gaps.push([prev,a]); prev=Math.max(prev,b); });
+  if(x1>prev)gaps.push([prev,x1]);
+  for(const [a,b] of gaps){ if(b-a>=labelW+PADX*2)return (a+b)/2; }
+  return null;
+}
+function chronLabelWidth(text){ return Math.max(58, String(text||"").length*6.1+22); }
+// which Age a Phase currently sits inside (the last Age before it in the sequence)
+function chronPhaseAge(phase){
+  const seq=chronEntries(); const i=seq.findIndex(x=>x.obj.id===phase.id); if(i<0)return null;
+  for(let k=i-1;k>=0;k--){ if(seq[k].kind==="age")return seq[k].obj; }
+  return null;
+}
+/* Move a Phase (and everything belonging to it, up to the next Phase) into a different Age,
+   landing at the end of that Age's span. */
+function chronMovePhaseToAge(phase, ageId){
+  const seq=chronEntries();
+  const i=seq.findIndex(x=>x.obj.id===phase.id); if(i<0)return;
+  let end=seq.length;                                   // the phase owns entries up to the next Age/Phase
+  for(let k=i+1;k<seq.length;k++){ if(seq[k].kind==="phase"||seq[k].kind==="age"){ end=k; break; } }
+  const block=seq.slice(i,end).map(x=>x.obj);
+  const rest=seq.filter((x,k)=>k<i||k>=end);
+  let at=rest.length;
+  if(ageId){
+    const ai=rest.findIndex(x=>x.obj.id===ageId);
+    if(ai>=0){ at=rest.length; for(let k=ai+1;k<rest.length;k++){ if(rest[k].kind==="age"){ at=k; break; } } }
+  } else {
+    at=0;                                               // "before any Age" → the very start
+  }
+  const arr=rest.map(x=>x.obj);
+  arr.splice(at,0,...block);
+  arr.forEach((o,k)=>o.order=k);
+  markDirty();
+}
+// move an entry earlier/later in the sequence
+function chronMoveEntry(id, dir){
+  const seq=chronEntries(); const i=seq.findIndex(x=>x.obj.id===id); if(i<0)return;
+  const j=i+dir; if(j<0||j>=seq.length)return;
+  const a=seq[i].obj, b=seq[j].obj;
+  const ao=a.order||0, bo=b.order||0;
+  a.order=bo; b.order=ao;
+  if(a.order===b.order){ seq.forEach((x,k)=>x.obj.order=k); const t=a.order; a.order=b.order; b.order=t; }
+  markDirty();
+}
+function normChronEvent(e){ e=e||{}; const date=typeof e.date==="string"?e.date:"";
+  const y=(typeof e.year==="number"&&isFinite(e.year))?e.year:parseChronYear(date);
+  return {id:e.id||uid(), date, year:(y==null?null:y), title:typeof e.title==="string"?e.title:"New event",
+    description:typeof e.description==="string"?e.description:"",
+    type:typeof e.type==="string"?e.type:"other",
+    color:typeof e.color==="string"?e.color:"",     // blank = follow the event type's colour
+    link:typeof e.link==="string"?e.link:"",        // optional thread/reference URL
+    gap:(typeof e.gap==="number"&&isFinite(e.gap))?e.gap:null,    // years since the previous entry
+    gapMax:(typeof e.gapMax==="number"&&isFinite(e.gapMax))?e.gapMax:null,
+    gapApprox:!!e.gapApprox,
+    order:(typeof e.order==="number"&&isFinite(e.order))?e.order:null}; }
+function normChronicle(c){ c=c||{}; const out=blankChronicle();
+  out.presentDate=typeof c.presentDate==="string"?c.presentDate:"";
+  out.presentYear=(typeof c.presentYear==="number"&&isFinite(c.presentYear))?c.presentYear:parseChronYear(out.presentDate);
+  out.presentMarkerId=typeof c.presentMarkerId==="string"?c.presentMarkerId:"";
+  out.zeroId=typeof c.zeroId==="string"?c.zeroId:"";
+  out.epochOffset=(typeof c.epochOffset==="number"&&isFinite(c.epochOffset))?c.epochOffset:0;
+  out.bufferYears=(typeof c.bufferYears==="number"&&isFinite(c.bufferYears))?c.bufferYears:0;
+  out.relativeReady=!!c.relativeReady;
+  { const cal=(c.calendar&&typeof c.calendar==="object")?c.calendar:{};
+    out.calendar={before:typeof cal.before==="string"?cal.before:"BR",
+                  after:typeof cal.after==="string"?cal.after:"AR",
+                  zero:typeof cal.zero==="string"?cal.zero:""}; }
+  out.events=Array.isArray(c.events)?c.events.map(normChronEvent):[];
+  out.markers=Array.isArray(c.markers)?c.markers.map(normChronMarker):[];
+  if(Array.isArray(c.types)&&c.types.length)out.types=c.types.filter(t=>t&&t.id).map(t=>({id:String(t.id),
+    label:typeof t.label==="string"?t.label:String(t.id), color:t.color||"#8a93a6", glyph:typeof t.glyph==="string"?t.glyph:"◆"}));
+  return out; }
 // a hand-written Relic — an artefact with a picture and wherever it currently rests
 function normRelic(r){ r=r||{}; return {id:r.id||uid(), name:typeof r.name==="string"?r.name:"New Relic",
   kind:typeof r.kind==="string"?r.kind:"Relic", descHtml:typeof r.descHtml==="string"?r.descHtml:"",
@@ -445,6 +776,7 @@ function normalizeCompendium(src){
   if(Array.isArray(cp.places))out.places=cp.places.map(normPlace);
   if(Array.isArray(cp.monsterPages))out.monsterPages=cp.monsterPages.map(normMonsterPage);
   if(Array.isArray(cp.relics))out.relics=cp.relics.map(normRelic);
+  out.chronicle=normChronicle(cp.chronicle);
   out.characters.forEach(c=>{ c.tags=c.tags.filter(t=>out.charTags.includes(t)); if(c.dynastyId&&!out.dynasties.some(d=>d.id===c.dynastyId))c.dynastyId=""; });
   return out;
 }
@@ -481,6 +813,7 @@ function newCharacter(opts){ opts=opts||{}; return normCharacter({name:opts.name
 function allPlaces(){ ensureCompendium(world); if(!Array.isArray(_compendium.places))_compendium.places=[]; return _compendium.places; }
 function placeById(id){ return allPlaces().find(p=>p.id===id)||null; }
 function newPlace(name){ return normPlace({name:name||"New Place"}); }
+function chronicle(){ ensureCompendium(world); if(!_compendium.chronicle)_compendium.chronicle=blankChronicle(); if(!Array.isArray(_compendium.chronicle.events))_compendium.chronicle.events=[]; return _compendium.chronicle; }
 function allRelics(){ ensureCompendium(world); if(!Array.isArray(_compendium.relics))_compendium.relics=[]; return _compendium.relics; }
 function relicById(id){ return allRelics().find(r=>r.id===id)||null; }
 function newRelic(name){ return normRelic({name:name||"New Relic"}); }
@@ -4351,54 +4684,54 @@ function compendiumCats(){
   const cats=[];
   const subCount=(u)=>u.length?`${u.length} realm${u.length===1?"":"s"}`:"";
   // Powers
-  cats.push({ cat:"power", label:"✨ Powers", entries:(world.powers||[]).map(pw=>{
+  cats.push({ cat:"power", label:"Powers", entries:(world.powers||[]).map(pw=>{
     const used=comp_realmNames(r=>realmHasPower(r,pw.id));
     return { id:pw.id, name:pw.name, color:pw.color||"#7c5cff", sub:pw.type||"", used,
       ref:`${pw.type?`<div class="cmpRow"><b>Type</b> ${esc(pw.type)}</div>`:""}${pw.origin?`<div class="cmpRow"><b>Origin</b> ${esc(pw.origin).replace(/\n/g,"<br>")}</div>`:""}`,
       desc:pw.description };
   }) });
   // Discoveries
-  cats.push({ cat:"discovery", label:"🔬 Discoveries", entries:(world.discoveries||[]).map(d=>{
+  cats.push({ cat:"discovery", label:"Discoveries", entries:(world.discoveries||[]).map(d=>{
     const mk=discoveryMaker(d), used=comp_realmNames(r=>realmHasDiscovery(r,d.id));
     return { id:d.id, name:d.name, color:discoveryColor(d), sub:`${esc(d.field||"")} · TL${tlClamp(d.tl)}`, used,
       ref:`<div class="cmpRow"><b>Field</b> ${esc(d.field||"—")} &nbsp; <b>TL</b> ${tlClamp(d.tl)}</div>${mk?`<div class="cmpRow"><b>Discovered by</b> ${esc(mk.name)}</div>`:""}`,
       desc:d.description };
   }) });
   // Characters (people — rulers, commanders, other roles)
-  cats.push({ cat:"character", label:"👤 Characters", entries:allCharacters().map(c=>{
+  cats.push({ cat:"character", label:"Characters", entries:allCharacters().map(c=>{
     const roles=[]; if(c.isRuler)roles.push("Ruler"); charTagsOf(c).forEach(t=>roles.push(t)); const dy=c.dynastyId&&dynastyById(c.dynastyId);
     return { id:c.id, name:c.name, color:charThemeColor(c), sub:[dy?dy.name:"",roles.join(" · ")].filter(Boolean).join(" — "), used:[], ref:"", desc:c.description||"" };
   }) });
   // Dynasties (families with trees)
-  cats.push({ cat:"dynasty", label:"🌳 Dynasties", entries:allDynasties().map(d=>({
+  cats.push({ cat:"dynasty", label:"Dynasties", entries:allDynasties().map(d=>({
     id:d.id, name:d.name, color:d.color, sub:`${dynastyMembers(d.id).length} member${dynastyMembers(d.id).length===1?"":"s"}`, used:[], ref:"", desc:d.description||"" })) });
   // Realms (with their ruler timeline)
-  cats.push({ cat:"realm", label:"🏰 Realms", entries:(world.realms||[]).map(r=>{
+  cats.push({ cat:"realm", label:"Realms", entries:(world.realms||[]).map(r=>{
     const cur=realmCurrentRuler(r);
     return { id:r.id, name:r.name, color:r.color, sub:cur?`Ruler: ${cur.name}`:"", used:[], ref:"", desc:"" };
   }) });
   // Religions
-  cats.push({ cat:"religion", label:"🕮 Religions", entries:(world.lists&&world.lists.religions||[]).map(n=>{
+  cats.push({ cat:"religion", label:"Religions", entries:(world.lists&&world.lists.religions||[]).map(n=>{
     const meta=(world.religionInfo&&world.religionInfo[n])||{}, used=comp_realmNames(r=>r.stateReligion===n);
     return { id:n, name:n, color:catColor("religions",n), sub:subCount(used), used, ref:"", desc:meta.description||"" };
   }) });
   // Cultures
-  cats.push({ cat:"culture", label:"🎭 Cultures", entries:(world.lists&&world.lists.cultures||[]).map(n=>{
+  cats.push({ cat:"culture", label:"Cultures", entries:(world.lists&&world.lists.cultures||[]).map(n=>{
     const used=comp_realmNames(r=>r.dominantCulture===n);
     return { id:n, name:n, color:catColor("cultures",n), sub:subCount(used), used, ref:"", desc:"" };
   }) });
   // Languages
-  cats.push({ cat:"language", label:"🗣 Languages", entries:(world.lists&&world.lists.languages||[]).map(n=>{
+  cats.push({ cat:"language", label:"Languages", entries:(world.lists&&world.lists.languages||[]).map(n=>{
     const used=comp_realmNames(r=>r.dominantLanguage===n);
     return { id:n, name:n, color:catColor("languages",n), sub:subCount(used), used, ref:"", desc:"" };
   }) });
   // Governments
-  cats.push({ cat:"government", label:"🏛 Governments", entries:Array.from(new Set(world.realms.map(r=>r.government).filter(Boolean))).map(n=>{
+  cats.push({ cat:"government", label:"Governments", entries:Array.from(new Set(world.realms.map(r=>r.government).filter(Boolean))).map(n=>{
     const used=comp_realmNames(r=>r.government===n);
     return { id:n, name:n, color:"#7c8698", sub:subCount(used), used, ref:"", desc:"" };
   }) });
   // Modes of production
-  cats.push({ cat:"economy", label:"⚒ Modes of Production", entries:Array.from(new Set(world.realms.map(r=>r.economy).filter(Boolean))).map(n=>{
+  cats.push({ cat:"economy", label:"Modes of Production", entries:Array.from(new Set(world.realms.map(r=>r.economy).filter(Boolean))).map(n=>{
     const used=comp_realmNames(r=>r.economy===n);
     return { id:n, name:n, color:catColor("economies",n), sub:subCount(used), used, ref:"", desc:"" };
   }) });
@@ -4416,7 +4749,7 @@ function compendiumCats(){
       const g=subraceGroup(s);
       entries.push({ id:raceEntryId("sub",s), name:s, color:catColor("subraces",s), sub:`Subspecies${g?` of ${g}`:""}`, used:[], ref:"", desc:"" });
     });
-    cats.push({ cat:"race", label:"🧬 Species", entries });
+    cats.push({ cat:"race", label:"Species", entries });
   }
   // Geography — named regions from the map plus hand-written locations & landmarks
   {
@@ -4428,7 +4761,7 @@ function compendiumCats(){
     allPlaces().forEach(pl=>{
       entries.push({ id:"place:"+pl.id, name:pl.name, color:pl.color, sub:pl.kind||"Landmark", used:[], ref:"", desc:"" });
     });
-    cats.push({ cat:"geography", label:"🗺 Geography", entries });
+    cats.push({ cat:"geography", label:"Geography", entries });
   }
   // Relics & Wonders — every wonder built on the map, plus hand-written relics
   {
@@ -4440,10 +4773,10 @@ function compendiumCats(){
     allRelics().forEach(rl=>{
       entries.push({ id:"relic:"+rl.id, name:rl.name, color:rl.color, sub:rl.kind||"Relic", used:[], ref:"", desc:"" });
     });
-    cats.push({ cat:"relic", label:"🏺 Relics & Wonders", entries });
+    cats.push({ cat:"relic", label:"Relics & Wonders", entries });
   }
   // Monsters — bestiary pages that map creatures can be linked to
-  cats.push({ cat:"monster", label:"🐉 Monsters", entries:allMonsterPages().map(mp=>{
+  cats.push({ cat:"monster", label:"Monsters", entries:allMonsterPages().map(mp=>{
     const n=monstersOnPage(mp.id).length;
     return { id:mp.id, name:mp.name, color:mp.color, sub:n?`${n} on the map`:"", used:[], ref:"", desc:"" };
   }) });
@@ -4487,13 +4820,17 @@ function openCompendium(focusCat, focusVal){
   let active=cats.find(c=>c.cat===focusCat)||cats[0];
   _compState={cat:active.cat, val:focusVal||null, open:null};
   _compHistory=[];
+  _chronWinH=CHRON_WIN_DEFAULT;   // the timeline always opens at its default height
+  _chronScrollTarget="present";
   // a chip click (focusVal) jumps straight to that entry's full page
   if(focusVal!=null && active.entries.some(e=>String(e.id)===String(focusVal))) _compState.open=String(focusVal);
-  const tabs=cats.map(c=>`<button class="cmpTab${c.cat===active.cat?" on":""}" data-cat="${c.cat}">${c.label} <span class="cmpN">${c.entries.length}</span></button>`).join("");
+  const tabs=cats.map(c=>`<button class="cmpTab${c.cat===active.cat?" on":""}" data-cat="${c.cat}">${esc(c.label)} <span class="cmpN">${c.entries.length}</span></button>`).join("");
   openModal(`<div class="cmpWrap">
     <div class="cmpHead"><button class="btn ghost cmpNavBack" id="cmpNavBack" title="Back to the previous page" disabled>◀</button><button class="btn ghost cmpToList" id="cmpToList" title="Back to the category list" style="display:none">☰ List</button><span class="cmpTitle">📖 Compendium</span><span style="flex:1"></span><button class="btn ghost" onclick="closeModal()">✕</button></div>
     <div class="cmpBody"><div class="cmpTabs" id="cmpTabs">${tabs}</div><div class="cmpMain" id="cmpMain"></div></div>
+    <div class="cmpChron" id="cmpChron"></div>
   </div>`);
+  renderChronicle();
   $$("#cmpTabs .cmpTab").forEach(b=>b.onclick=()=>compNav({cat:b.dataset.cat,open:null}));
   { const bb=$("#cmpNavBack"); if(bb)bb.onclick=compBack; }
   { const tl=$("#cmpToList"); if(tl)tl.onclick=()=>compNav({cat:_compState.cat,open:null}); }
@@ -4604,7 +4941,7 @@ function renderCompList(c, main, editable){
   }
   // the Species section uses its own grouped grid, so it has no sort dropdown
   const sortSel=(c.cat==="race")?"":`<select id="cmpSort" class="cmpFilterSel" title="Sort">${compSortsFor(c.cat).map(([v,l])=>`<option value="${v}" ${ui.sort===v?"selected":""}>${esc(l)}</option>`).join("")}</select>`;
-  const label=c.label.replace(/^[^\sA-Za-z]+\s*/,"").toLowerCase();
+  const label=c.label.toLowerCase();
   main.innerHTML=`<div class="cmpListBar"><input id="cmpListSearch" class="txt cmpListSearch" placeholder="🔍 Search ${esc(label)}…" autocomplete="off"/>${filterSel}${sortSel}${addBtn}</div><div id="cmpListItems"></div>`;
   const si=main.querySelector("#cmpListSearch"); if(si){ si.value=ui.q; si.addEventListener("input",()=>{ ui.q=si.value; renderCompListItems(c); }); }
   const fi=main.querySelector("#cmpFilter"); if(fi)fi.addEventListener("change",()=>{ ui.filter=fi.value; renderCompListItems(c); });
@@ -4670,6 +5007,571 @@ function renderCompListItems(c){
       <div class="cmpEntryH"><span class="rvDot" style="background:${e.color||"#7c8698"}"></span><span class="cmpEntryName">${esc(e.name||"—")}</span>${e.sub?`<span class="cmpEntrySub">${esc(e.sub)}</span>`:""}${pin}<span class="cmpEntryGo">›</span></div>
     </div>`; }).join("");
   box.querySelectorAll(".cmpEntry").forEach(el=>el.onclick=()=>compNav({cat:c.cat,open:el.dataset.id}));
+}
+/* ============================================================
+   CHRONICLE — the horizontal timeline along the foot of the Compendium.
+   Events sit along a scrollable axis; it opens centred on the Present.
+   ============================================================ */
+let _chronCollapsed=false, _chronZoom=1, _chronScrollTarget="present";
+/* The timeline window's height — draggable by the grip while the Compendium is open, but it
+   always starts back at the default each time the Compendium is reopened. */
+const CHRON_WIN_DEFAULT=184;
+let _chronWinH=CHRON_WIN_DEFAULT;
+function setChronWinH(h){ _chronWinH=Math.max(140, Math.min(900, Math.round(h)));
+  const s=document.getElementById("chronScroll"); if(s)s.style.height=_chronWinH+"px"; }
+const CHRON_CARD_W=126, CHRON_CARD_H=58, CHRON_GAP=10, CHRON_BASE=12;   // card metrics (fixed)
+const CHRON_SLACK_X=320, CHRON_SLACK_Y=64;   // room to pan past the content on every side
+/* Cards grow/shrink with the zoom. The card's own box and font sizes stay fixed and the whole
+   thing is scaled with one transform, so the text always keeps exact proportion to the card
+   (scaling them separately was what made the sizing look inconsistent).
+   CHRON_BASE_SCALE keeps a lone event comfortably inside the window at 100% zoom. */
+const CHRON_BASE_SCALE=0.8;
+function chronCardScale(z){ return Math.max(0.4, Math.min(1.1, (z==null?_chronZoom:z)*CHRON_BASE_SCALE)); }
+/* Zoom around a point so the timeline stays put under the cursor. While zooming we move the
+   existing nodes rather than rebuilding the DOM (rebuilding every frame is what flickered), then
+   do one full re-render once the gesture settles. */
+let _chronRelayout=null, _chronSettleT=null;
+function chronScheduleSettle(){
+  if(_chronSettleT)clearTimeout(_chronSettleT);
+  _chronSettleT=setTimeout(()=>{ _chronSettleT=null;
+    const s=document.getElementById("chronScroll");
+    if(s&&s.scrollWidth>0)_chronScrollTarget={frac:(s.scrollLeft+s.clientWidth/2)/s.scrollWidth, top:s.scrollTop};
+    renderChronicle();
+  },260);
+}
+function chronZoomAt(factor, clientX){
+  const s=document.getElementById("chronScroll");
+  const z=Math.max(0.2, Math.min(14, _chronZoom*factor));
+  if(z===_chronZoom)return;
+  if(s && _chronRelayout && s.scrollWidth>0){
+    const rect=s.getBoundingClientRect();
+    const mx=(clientX==null? rect.width/2 : Math.max(0,Math.min(rect.width, clientX-rect.left)));
+    const anchor=(s.scrollLeft+mx)/s.scrollWidth;
+    _chronZoom=z; _chronRelayout(z);
+    s.scrollLeft=Math.max(0, anchor*s.scrollWidth-mx);
+    chronScheduleSettle();
+    return;
+  }
+  if(s && s.scrollWidth>0){
+    const rect=s.getBoundingClientRect();
+    const mx=(clientX==null? rect.width/2 : Math.max(0,Math.min(rect.width, clientX-rect.left)));
+    _chronScrollTarget={anchor:(s.scrollLeft+mx)/s.scrollWidth, px:mx};
+  }
+  _chronZoom=z; renderChronicle();
+}
+let _chronWheelRaf=null, _chronWheelAcc=0, _chronWheelX=null;
+function chronWheelZoom(ev){
+  ev.preventDefault();
+  _chronWheelAcc+=ev.deltaY; _chronWheelX=ev.clientX;
+  if(_chronWheelRaf)return;
+  _chronWheelRaf=requestAnimationFrame(()=>{ _chronWheelRaf=null;
+    const d=_chronWheelAcc; _chronWheelAcc=0;
+    if(d)chronZoomAt(Math.pow(1.0016, -d), _chronWheelX);   // smooth, proportional to wheel travel
+  });
+}
+function renderChronicle(){
+  const box=document.getElementById("cmpChron"); if(!box)return;
+  const ch=chronicle(), editable=!VIEWER;
+  // remember where we were looking, unless something asked for a specific target
+  { const prev=box.querySelector("#chronScroll");
+    if(prev && _chronScrollTarget==null && prev.scrollWidth>0)
+      _chronScrollTarget={frac:(prev.scrollLeft+prev.clientWidth/2)/prev.scrollWidth}; }
+  const evs=ch.events.slice().sort((a,b)=>{ const ay=a.year, by=b.year;
+    if(ay==null&&by==null)return (a.date||"").localeCompare(b.date||"");
+    if(ay==null)return 1; if(by==null)return -1; return ay-by; });
+  const head=`<div class="chronHead">
+      <button class="chronCaret" id="chronCaret" title="Collapse / expand">${_chronCollapsed?"▸":"▾"}</button>
+      <b>Timeline</b>
+      <span class="note">${evs.length} event${evs.length===1?"":"s"}</span>
+      ${editable?`<span class="chronPresentEdit">Present: <select id="chronPresentSel" title="Which Phase or Age the Present sits in">${(function(){
+            const ms=chronMarkers().filter(m=>m.year!=null).sort((a,b)=>a.year-b.year);
+            const cur=chronicle().presentMarkerId||"";
+            const auto=presentMarker();
+            let o=`<option value="" ${cur?"":"selected"}>Newest Phase${auto&&!cur?` — ${esc(auto.label||auto.date||"")}`:""}</option>`;
+            o+=ms.map(m=>`<option value="${esc(m.id)}" ${cur===m.id?"selected":""}>${m.kind==="age"?"Age":"Phase"}: ${esc(m.label||m.date||"—")}${m.date?` (${esc(m.date)})`:""}</option>`).join("");
+            return o; })()}</select></span>`
+                :(chronPresentLabel()?`<span class="chronPresentLbl">Present: <b>${esc(chronPresentLabel())}</b></span>`:"")}
+      <span style="margin-left:auto;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+        <select id="chronJump" class="chronJump" title="Skip to an Age, Phase or the Present"></select>
+        ${editable?`<button class="btn tiny primary" id="chronAdd">＋ Event</button>
+                    <button class="btn tiny" id="chronAddPhase" title="Start a new Phase here">＋ Phase</button>
+                    <button class="btn tiny" id="chronAddAge" title="Start a new Age here">＋ Age</button>
+                    <button class="btn tiny" id="chronCal" title="Calendar — era names and where Year 0 sits">🗓 Calendar</button>`:""}
+        <span class="chronZoomBox"><button class="btn tiny" id="chronZoomOut" title="Zoom out">－</button><span class="chronZoomLbl" id="chronZoomLbl">${Math.round(_chronZoom*100)}%</span><button class="btn tiny" id="chronZoomIn" title="Zoom in">＋</button></span>
+        <button class="btn tiny" id="chronCentre" title="Recentre on the Present">⊙ Present</button>
+      </span>
+    </div>`;
+  if(_chronCollapsed){ box.innerHTML=head; box.classList.add("collapsed"); wireChronicleHead(box); updateChronNowChip(); return; }
+  box.classList.remove("collapsed");
+  // ---- layout ----
+  // computed absolute years from the relative chronology (gaps → years → shifted around Year 0)
+  const YM=chronYearMap();
+  const yOf=o=>(YM[o.id]?YM[o.id].year:null);
+  const aOf=o=>!!(YM[o.id]&&YM[o.id].approx);
+  const allMarks=chronMarkers();
+  const marks=allMarks.filter(m=>yOf(m)!=null);
+  const pYear=chronPresentYear();
+  const years=evs.map(e=>yOf(e)).filter(y=>y!=null);
+  if(pYear!=null)years.push(pYear);
+  marks.forEach(m=>years.push(yOf(m)));
+  // always keep Year 0 inside the span, so the remaining buffer shows as real space on the track
+  if(years.length)years.push(0);
+  const cs=chronCardScale();
+  const CARD_W=CHRON_CARD_W*cs, CARD_H=CHRON_CARD_H*cs, GAP=CHRON_GAP*cs, BASE=CHRON_BASE*cs, ROW=CARD_H+GAP;
+  const PAD=90, MIN_W=900, STEP=(CARD_W+26);
+  let inner="", markHTML="", width=MIN_W, presentX=null, zeroX=null, maxDepth=0;
+  let minY=0, span=1, DM=null; const hasYears=years.length>0;   // minY is now a display-position, not a year
+  let placedRef=null, marksRef=null, agesRef=null, phasesRef=null, undatedMarksRef=null;
+  const jump=[];   // {label,x} for the "Jump to" menu
+  if(!evs.length && pYear==null && !allMarks.length){
+    inner=`<div class="chronEmpty note">${editable?"No events yet. Add one, then give it a date like “412” or “Year 412 of the Third Age”.":"No events recorded."}</div>`;
+  } else {
+    let xOf=null, scaledW=MIN_W;
+    if(hasYears){
+      // positions come from the compressed ladder, not raw years
+      DM=chronDisplayMap();
+      const ds=years.map(y=>chronDispOf(DM,y));
+      minY=Math.min(...ds); const maxD=Math.max(...ds); span=Math.max(1,maxD-minY);
+      const px=Math.max(14, Math.min(400, 1100/span))*_chronZoom;
+      scaledW=Math.max(MIN_W*Math.min(1,_chronZoom), span*px+PAD*2);
+      // SLACK shifts everything right so you can also scroll past the earliest event
+      xOf=y=>CHRON_SLACK_X+PAD+((chronDispOf(DM,y)-minY)/span)*(scaledW-PAD*2);
+      if(pYear!=null)presentX=xOf(pYear);
+      zeroX=xOf(0);
+    }
+    // Events: alternate side per DATE so consecutive dates flip above/below; same-date events stack.
+    let tail=CHRON_SLACK_X+(years.length?(scaledW-PAD/2):PAD);
+    const placed=evs.map(e=>{ let x, key; const ey=yOf(e);
+      if(ey!=null && xOf){ x=xOf(ey); key="y"+ey; }
+      else { x=tail; tail+=STEP; key="u"+e.id; }
+      return {e,x,key}; });
+    const sideOf={}, depthOf={}; let bucketIx=0;
+    placed.forEach(p=>{
+      if(sideOf[p.key]===undefined){ sideOf[p.key]=(bucketIx++%2===0); depthOf[p.key]=0; }   // new date → next side
+      p.up=sideOf[p.key]; p.depth=depthOf[p.key]++;
+      if(p.depth>maxDepth)maxDepth=p.depth;
+    });
+    const parts=placed.map(p=>{
+      const e=p.e, col=chronEventColor(e), tl=chronTypeLabel(e.type);
+      const hasLink=!!safeExternalUrl(e.link);
+      const cardOff=BASE+p.depth*ROW;                       // axis → card's near edge
+      const stemStart=p.depth===0?0:(cardOff-GAP);          // stems only fill the gaps, never crossing a card
+      const stemLen=p.depth===0?BASE:GAP;
+      // an event given a range of years draws that span along the axis
+      const ye=YM[e.id]; let rangeHTML="";
+      if(ye&&ye.hasRange&&xOf){
+        const xa=xOf(ye.yearLo), xb=xOf(ye.yearHi), w=Math.abs(xb-xa);
+        if(w>1)rangeHTML=`<div class="chronEvRange" style="left:${(Math.min(xa,xb)-p.x).toFixed(1)}px; width:${w.toFixed(1)}px"
+          title="${esc("Somewhere between "+Math.round(ye.yearLo)+" and "+fmtChronYear(ye.yearHi,false))}"></div>`;
+      }
+      return `<div class="chronEv ${p.up?"up":"down"}${aOf(e)?" approx":""}" data-id="${esc(e.id)}" style="left:${Math.round(p.x)}px; --ec:${col};
+          --cardOff:${cardOff.toFixed(1)}px; --stemStart:${stemStart.toFixed(1)}px; --stemLen:${stemLen.toFixed(1)}px;
+          --cw:${CARD_W.toFixed(1)}px; --chh:${CARD_H.toFixed(1)}px; --cs:${cs.toFixed(3)}">
+        <div class="chronEvCard" title="${esc(tl?tl+" — click for details":"Click for details")}">
+          <div class="chronEvDate">${esc(e.date|| (yOf(e)!=null?fmtChronYear(yOf(e),aOf(e)):"undated"))}${hasLink?' <span class="chronEvLink" title="Has a link">↗</span>':""}</div>
+          <div class="chronEvTitle">${esc(e.title||"Event")}</div>
+          ${tl?`<div class="chronEvType">${esc(tl)}</div>`:""}</div>
+        <div class="chronEvStem"></div>${rangeHTML}<div class="chronEvDot"></div>
+      </div>`; });
+    inner=parts.join("");
+    // undated dividers park after the events so they stay visible and editable
+    const undatedMarks=allMarks.filter(m=>yOf(m)==null);
+    const undatedX={}; undatedMarks.forEach(m=>{ undatedX[m.id]=tail; tail+=STEP; });
+    width=Math.max(CHRON_SLACK_X+scaledW, tail+PAD)+CHRON_SLACK_X;   // slack on both sides
+    placedRef=placed;
+    marksRef=allMarks;
+    const RIGHT=width-CHRON_SLACK_X*0.35;   // where an open-ended span runs to
+    const markX=m=>(yOf(m)!=null&&xOf)?xOf(yOf(m)):(undatedX[m.id]!=null?undatedX[m.id]:PAD);
+    const byYear=(a,b)=>yOf(a)-yOf(b);
+    const ages=allMarks.filter(m=>m.kind==="age"&&yOf(m)!=null).sort(byYear);
+    const phases=allMarks.filter(m=>m.kind==="phase"&&yOf(m)!=null).sort(byYear);
+    agesRef=ages; phasesRef=phases; undatedMarksRef=undatedMarks;
+    // AGES: a tinted band running from their start until the next Age begins (else to the end).
+    ages.forEach((m,i)=>{
+      const x0=markX(m), x1=(i<ages.length-1)?markX(ages[i+1]):RIGHT;
+      jump.push({label:"AGE — "+(m.label||m.date||"?"), x:x0, kind:"age"});
+      // band and label are siblings so the label can stack above the event cards
+      markHTML+=`<div class="chronAge" data-mid="${esc(m.id)}" style="left:${Math.round(x0)}px; width:${Math.max(2,Math.round(x1-x0))}px; --ac:${m.color||"#d9a521"}">
+        <div class="chronAgeFill"></div><div class="chronAgeEdge"></div>
+      </div>
+      <div class="chronAgeLbl" data-mid="${esc(m.id)}" style="left:${Math.round(x0)}px; --ac:${m.color||"#d9a521"}" title="${esc("Age"+(editable?" — click to edit":""))}">
+        <span class="chronMarkOrn">❖</span><span class="chronMarkName">${esc(m.label||"(unnamed age)")}</span>
+        <span class="chronMarkDate">${esc(m.date||fmtChronYear(yOf(m),aOf(m)))}</span></div>`;
+    });
+    // PHASES: a box from their start to the next Phase, sized to enclose the events inside it.
+    phases.forEach((m,i)=>{
+      const x0=markX(m), x1=(i<phases.length-1)?markX(phases[i+1]):RIGHT;
+      const owner=ages.filter(a=>yOf(a)<=yOf(m)).pop();   // the Age this phase sits in
+      let dMax=0, hasEv=false; const evXs=[];
+      placed.forEach(p=>{ if(p.x>=x0-1&&p.x<x1){ hasEv=true; dMax=Math.max(dMax,p.depth); evXs.push(p.x); } });
+      // symmetrical: both halves use the deepest stack on either side, so the box looks even
+      const halfH=(hasEv?BASE+(dMax+1)*CARD_H+dMax*GAP:BASE+CARD_H*0.45)+12;
+      const upH=halfH, dnH=halfH;
+      // the name rides ON the axis, in the first gap between events wide enough to hold it
+      const lblTxt=m.label||"(unnamed phase)";
+      const slot=chronLabelSlot(x0,x1,evXs,CARD_W,chronLabelWidth(lblTxt));
+      const lblLeft=(slot!=null?slot:x0+chronLabelWidth(lblTxt)/2+10)-x0;
+      jump.push({label:"Phase — "+(m.label||m.date||"?")+(owner?" ("+(owner.label||"Age")+")":""), x:x0, kind:"phase"});
+      markHTML+=`<div class="chronPhase" data-mid="${esc(m.id)}" style="left:${Math.round(x0)}px; width:${Math.max(2,Math.round(x1-x0))}px;
+          top:calc(50% - ${upH.toFixed(1)}px); height:${(upH+dnH).toFixed(1)}px">
+        <div class="chronPhaseLbl" style="left:${lblLeft.toFixed(1)}px" title="${esc("Phase"+(owner?" of "+(owner.label||"Age"):"")+" · starts "+(m.date||fmtChronYear(yOf(m),aOf(m)))+(editable?" — click to edit":""))}">
+          <span class="chronMarkName">${esc(lblTxt)}</span></div>
+      </div>`;
+    });
+    // undated dividers keep the simple line form until they're given a date
+    undatedMarks.forEach(m=>{
+      const x=markX(m);
+      jump.push({label:(m.kind==="age"?"AGE — ":"Phase — ")+(m.label||"(undated)"), x, kind:m.kind});
+      markHTML+=`<div class="chronMark ${m.kind}" data-mid="${esc(m.id)}" style="left:${Math.round(x)}px" title="${esc((m.kind==="age"?"Age":"Phase")+(editable?" — click to edit":""))}">
+        <div class="chronMarkHit"></div><div class="chronMarkLine"></div>
+        <div class="chronMarkLbl">${m.kind==="age"?'<span class="chronMarkOrn">❖</span>':""}<span class="chronMarkName">${esc(m.label||"(unnamed)")}</span><span class="chronMarkDate">undated</span></div>
+      </div>`;
+    });
+  }
+  // The window stays a fixed, compact height (never affected by zoom) so the timeline doesn't eat
+  // the Compendium. Deep stacks make the inner track taller and scroll vertically inside it.
+  const WIN_H=_chronWinH;
+  const needH=2*(CHRON_BASE+(maxDepth+1)*CHRON_CARD_H+maxDepth*CHRON_GAP)+8;
+  const trackH=Math.max(WIN_H, needH)+CHRON_SLACK_Y*2;   // headroom above and below to pan into
+  box.innerHTML=`<div class="chronGrip" id="chronGrip" title="Drag up to enlarge the timeline (double-click to reset)"></div>`
+    +head+`<div class="chronWin"><div class="chronScroll" id="chronScroll" style="height:${WIN_H}px"><div class="chronTrack" style="width:${Math.round(width)}px; height:${trackH}px; --vs:${CHRON_SLACK_Y}px">
+      <div class="chronAxis"></div>
+      ${zeroX!=null?`<div class="chronZero" style="left:${Math.round(zeroX)}px"><div class="chronZeroLine"></div><div class="chronZeroLbl">${esc((chronicle().calendar&&chronicle().calendar.zero)||"Year 0")}</div></div>`:""}
+      ${markHTML}
+      ${presentX!=null?`<div class="chronNow" style="left:${Math.round(presentX)}px"></div>`:""}
+      ${inner}
+    </div></div></div>`;
+  // fill the Jump-to menu now that positions are known
+  { const js=box.querySelector("#chronJump");
+    if(js){ const opts=[`<option value="">Jump to…</option>`];
+      if(presentX!=null)opts.push(`<option value="${Math.round(presentX)}">Present</option>`);
+      jump.forEach(j=>opts.push(`<option value="${Math.round(j.x)}">${esc(j.label)}</option>`));
+      js.innerHTML=opts.join("");
+      js.onchange=()=>{ const s=box.querySelector("#chronScroll"); const v=parseFloat(js.value);
+        if(s&&isFinite(v))s.scrollLeft=Math.max(0, v-(s.clientWidth||600)/2); js.value=""; };
+    } }
+  wireChronicleHead(box);
+  /* Cheap re-layout used while zooming: moves the existing nodes instead of rebuilding them.
+     Years never change while zooming, so the computed chronology and every element reference are
+     resolved ONCE here — the per-frame work is then just arithmetic and style writes. */
+  const _track=box.querySelector(".chronTrack");
+  const _elEv={}, _elMark={}, _elAge={}, _elAgeLbl={}, _elPhase={}, _elRange={};
+  if(_track){
+    _track.querySelectorAll(".chronEv").forEach(el=>{ _elEv[el.dataset.id]=el; const r=el.querySelector(".chronEvRange"); if(r)_elRange[el.dataset.id]=r; });
+    _track.querySelectorAll(".chronMark").forEach(el=>_elMark[el.dataset.mid]=el);
+    _track.querySelectorAll(".chronAge").forEach(el=>_elAge[el.dataset.mid]=el);
+    _track.querySelectorAll(".chronAgeLbl").forEach(el=>_elAgeLbl[el.dataset.mid]=el);
+    _track.querySelectorAll(".chronPhase").forEach(el=>_elPhase[el.dataset.mid]=el);
+  }
+  const _elNow=_track?_track.querySelector(".chronNow"):null, _elZero=_track?_track.querySelector(".chronZero"):null;
+  const _YM=YM, _pYear=pYear;
+  _chronRelayout=(!placedRef&&!marksRef)?null:(z)=>{
+    const track=_track; if(!track)return;
+    const cs2=chronCardScale(z);
+    const CH2=CHRON_CARD_H*cs2, GAP2=CHRON_GAP*cs2, BASE2=CHRON_BASE*cs2, ROW2=CH2+GAP2;
+    let xOf2=null, sw=MIN_W;
+    if(hasYears){
+      const px=Math.max(14, Math.min(400, 1100/span))*z;
+      sw=Math.max(MIN_W*Math.min(1,z), span*px+PAD*2);
+      xOf2=y=>CHRON_SLACK_X+PAD+((chronDispOf(DM,y)-minY)/span)*(sw-PAD*2);
+    }
+    let tail2=CHRON_SLACK_X+(hasYears?(sw-PAD/2):PAD);
+    const STEP2=CHRON_CARD_W*cs2+26;
+    const YM2=_YM; const newX={};
+    (placedRef||[]).forEach(p=>{
+      const ey=YM2[p.e.id]?YM2[p.e.id].year:null;
+      let x; if(ey!=null&&xOf2)x=xOf2(ey); else { x=tail2; tail2+=STEP2; }
+      newX[p.e.id]=x;
+      const el=_elEv[p.e.id]; if(!el)return;
+      const cardOff=BASE2+p.depth*ROW2;
+      el.style.left=Math.round(x)+"px";
+      el.style.setProperty("--cs",cs2.toFixed(3));
+      el.style.setProperty("--cardOff",cardOff.toFixed(1)+"px");
+      el.style.setProperty("--stemStart",(p.depth===0?0:(cardOff-GAP2)).toFixed(1)+"px");
+      el.style.setProperty("--stemLen",(p.depth===0?BASE2:GAP2).toFixed(1)+"px");
+      const rb=_elRange[p.e.id], ye2=YM2[p.e.id];
+      if(rb&&ye2&&ye2.hasRange&&xOf2){ const xa=xOf2(ye2.yearLo), xb=xOf2(ye2.yearHi);
+        rb.style.left=(Math.min(xa,xb)-x).toFixed(1)+"px"; rb.style.width=Math.abs(xb-xa).toFixed(1)+"px"; }
+    });
+    // undated dividers sit after the events, so they share the same running tail
+    const uX={}; (undatedMarksRef||[]).forEach(m=>{ uX[m.id]=tail2; tail2+=STEP2;
+      const el=_elMark[m.id]; if(el)el.style.left=Math.round(uX[m.id])+"px"; });
+    const width2=Math.max(CHRON_SLACK_X+sw, tail2+PAD)+CHRON_SLACK_X;
+    const RIGHT2=width2-CHRON_SLACK_X*0.35;
+    const mX=m=>{ const y=YM2[m.id]?YM2[m.id].year:null; return (y!=null&&xOf2)?xOf2(y):(uX[m.id]!=null?uX[m.id]:PAD); };
+    // Age bands and Phase boxes must resize with the zoom too, not just move
+    (agesRef||[]).forEach((m,i)=>{ const el=_elAge[m.id];
+      const x0=mX(m), x1=(i<agesRef.length-1)?mX(agesRef[i+1]):RIGHT2;
+      if(el){ el.style.left=Math.round(x0)+"px"; el.style.width=Math.max(2,Math.round(x1-x0))+"px"; }
+      const lb=_elAgeLbl[m.id]; if(lb)lb.style.left=Math.round(x0)+"px"; });
+    (phasesRef||[]).forEach((m,i)=>{ const el=_elPhase[m.id]; if(!el)return;
+      const x0=mX(m), x1=(i<phasesRef.length-1)?mX(phasesRef[i+1]):RIGHT2;
+      let dMax=0, hasEv=false; const evXs=[];
+      (placedRef||[]).forEach(p=>{ const px=newX[p.e.id]; if(px!=null&&px>=x0-1&&px<x1){ hasEv=true; dMax=Math.max(dMax,p.depth); evXs.push(px); } });
+      const halfH=(hasEv?BASE2+(dMax+1)*CH2+dMax*GAP2:BASE2+CH2*0.45)+12;
+      el.style.left=Math.round(x0)+"px"; el.style.width=Math.max(2,Math.round(x1-x0))+"px";
+      el.style.top=`calc(50% - ${halfH.toFixed(1)}px)`; el.style.height=(halfH*2).toFixed(1)+"px";
+      const lb=el.querySelector(".chronPhaseLbl");
+      if(lb){ const w=chronLabelWidth(m.label||"(unnamed phase)");
+        const slot=chronLabelSlot(x0,x1,evXs,CHRON_CARD_W*cs2,w);
+        lb.style.left=((slot!=null?slot:x0+w/2+10)-x0).toFixed(1)+"px"; } });
+    if(xOf2){ if(_pYear!=null&&_elNow)_elNow.style.left=Math.round(xOf2(_pYear))+"px";
+      if(_elZero)_elZero.style.left=Math.round(xOf2(0))+"px"; }
+    track.style.width=Math.round(width2)+"px";
+    const lbl=document.getElementById("chronZoomLbl"); if(lbl)lbl.textContent=Math.round(z*100)+"%";
+  };
+  const scroll=box.querySelector("#chronScroll");
+  if(scroll){
+    const tgt=_chronScrollTarget; _chronScrollTarget=null;
+    requestAnimationFrame(()=>{ const w=scroll.clientWidth||600;
+      // keep the axis centred, unless we're restoring a pan the user had made
+      scroll.scrollTop=(tgt&&typeof tgt==="object"&&typeof tgt.top==="number")
+        ? tgt.top : Math.max(0,(scroll.scrollHeight-scroll.clientHeight)/2);
+      if(tgt && typeof tgt==="object" && typeof tgt.anchor==="number") scroll.scrollLeft=Math.max(0, tgt.anchor*scroll.scrollWidth-tgt.px);
+      else if(tgt && typeof tgt==="object" && typeof tgt.frac==="number") scroll.scrollLeft=Math.max(0, tgt.frac*scroll.scrollWidth-w/2);
+      else if(presentX!=null) scroll.scrollLeft=Math.max(0, presentX-w/2);
+      else scroll.scrollLeft=scroll.scrollWidth; });
+    scroll.addEventListener("wheel",chronWheelZoom,{passive:false});   // wheel = smooth zoom
+    // drag the background to pan
+    scroll.addEventListener("pointerdown",ev=>{
+      if(ev.target.closest(".chronEv, .chronMark, .chronAgeLbl, .chronPhaseLbl"))return;
+      const sx=ev.clientX, sy=ev.clientY, sl=scroll.scrollLeft, st=scroll.scrollTop; let moved=false;
+      const mv=e2=>{ if(Math.abs(e2.clientX-sx)+Math.abs(e2.clientY-sy)>2)moved=true;
+        scroll.scrollLeft=sl-(e2.clientX-sx); scroll.scrollTop=st-(e2.clientY-sy); };
+      const up=()=>{ scroll.removeEventListener("pointermove",mv); scroll.removeEventListener("pointerup",up); scroll.classList.remove("dragging"); };
+      scroll.addEventListener("pointermove",mv); scroll.addEventListener("pointerup",up); scroll.classList.add("dragging");
+    });
+  }
+  box.querySelectorAll(".chronEv").forEach(el=>el.onclick=ev=>{ ev.stopPropagation();
+    const e=chronicle().events.find(x=>x.id===el.dataset.id);
+    // anchor on the CARD, not the full-height column, so the bubble lands next to what was clicked
+    if(e)showChronicleBubble(e, el.querySelector(".chronEvCard")||el, !VIEWER); });
+  // Age bands and Phase boxes are clicked via their labels (so they never block events);
+  // undated line-dividers stay clickable along their whole column.
+  if(editable){
+    box.querySelectorAll(".chronAgeLbl, .chronPhaseLbl").forEach(el=>el.onclick=ev=>{ ev.stopPropagation();
+      const id=el.dataset.mid||(el.parentElement&&el.parentElement.dataset.mid);
+      const m=chronMarkers().find(x=>x.id===id);
+      if(m)showChronMarkerBubble(m, el); });
+    box.querySelectorAll(".chronMark").forEach(el=>el.onclick=ev=>{ ev.stopPropagation();
+      const m=chronMarkers().find(x=>x.id===el.dataset.mid);
+      if(m)showChronMarkerBubble(m, el.querySelector(".chronMarkLbl")||el); });
+  }
+  // drag the grip to give the timeline any height you like (works in the viewer too)
+  wireChronGrip(box);
+  updateChronNowChip();   // keep the topbar Age/Phase in step with the timeline
+}
+/* Calendar settings: what the eras either side of Year 0 are called, where Year 0 sits, and an
+   optional offset. Everything on the timeline recalculates from these — no dates to rewrite. */
+function openChronCalendar(){
+  const ch=chronicle(); const cal=ch.calendar||(ch.calendar={before:"BR",after:"AR",zero:""});
+  openModal(`<button class="btn close" onclick="closeModal()">✕ Close</button><h2>🗓 Calendar</h2>
+    <p class="note">Entries are dated by how long they are after the one before them, so the calendar can change at any time without touching a single event. The <b>buffer</b> is how many years the timeline begins <i>before</i> Year 0 — it counts down as you add events, and once it runs out the years turn over into the after-era. Raise or lower it whenever Year 0 should fall sooner or later.</p>
+    <div class="field2">
+      <div class="field"><label>Era before Year 0 <span class="note">(BC-like)</span></label><input id="calBefore" value="${esc(cal.before||"BR")}"/></div>
+      <div class="field"><label>Era after Year 0 <span class="note">(AD-like)</span></label><input id="calAfter" value="${esc(cal.after||"AR")}"/></div>
+    </div>
+    <div class="field2">
+      <div class="field"><label>Buffer — years before Year 0</label><input id="calBuffer" type="number" step="1" min="0" value="${(ch.bufferYears||0)}"/></div>
+      <div class="field"><label>Name for Year 0 itself <span class="note">(optional)</span></label><input id="calZeroName" value="${esc(cal.zero||"")}"/></div>
+    </div>
+    <div id="calPreview" class="note" style="margin-top:10px"></div>`);
+  const upd=()=>{ cal.before=$("#calBefore").value||"BR"; cal.after=$("#calAfter").value||"AR"; cal.zero=$("#calZeroName").value||"";
+    ch.bufferYears=Math.max(0, parseFloat($("#calBuffer").value)||0);
+    markDirty(); renderChronicle();
+    const s=chronCompute(); const first=s[0], last=s[s.length-1];
+    const left=chronYearsToZero();
+    const p=$("#calPreview");
+    if(p)p.innerHTML=s.length
+      ? `Runs from <b>${esc(fmtChronYear(first.year,first.approx))}</b> to <b>${esc(fmtChronYear(last.year,last.approx))}</b> across ${s.length} entries.<br>`
+        +(left>0?`<b>${Math.round(left)}</b> years still to go before Year 0.`
+                :`Year 0 has already passed — the timeline is <b>${Math.abs(Math.round(left))}</b> years into the ${esc(cal.after||"after-era")}.`)
+      : "Nothing on the timeline yet.";
+  };
+  ["calBefore","calAfter","calZeroName","calBuffer"].forEach(id=>{ const el=$("#"+id); if(el)el.addEventListener("input",upd); });
+  upd();
+}
+/* The divider above the timeline: drag it UP to give the timeline more of the Compendium. */
+function wireChronGrip(box){
+  const grip=box.querySelector("#chronGrip"); if(!grip)return;
+  grip.addEventListener("pointerdown",ev=>{ ev.preventDefault(); ev.stopPropagation();
+    const sy=ev.clientY, h0=_chronWinH;
+    const mv=e2=>{ e2.preventDefault(); setChronWinH(h0-(e2.clientY-sy)); };   // up = taller
+    const up=()=>{ window.removeEventListener("pointermove",mv,true); window.removeEventListener("pointerup",up,true);
+      document.body.classList.remove("chronResizing"); };
+    window.addEventListener("pointermove",mv,true); window.addEventListener("pointerup",up,true);
+    document.body.classList.add("chronResizing");
+  });
+  grip.addEventListener("dblclick",()=>setChronWinH(CHRON_WIN_DEFAULT));   // reset
+}
+function wireChronicleHead(box){
+  const c=box.querySelector("#chronCaret"); if(c)c.onclick=()=>{ _chronCollapsed=!_chronCollapsed; renderChronicle(); };
+  const p=box.querySelector("#chronPresentSel");
+  if(p)p.addEventListener("change",()=>{ chronicle().presentMarkerId=p.value||""; markDirty(); renderChronicle(); });
+  const a=box.querySelector("#chronAdd");
+  if(a)a.onclick=()=>{ const ch=chronicle();
+    const e=normChronEvent({title:"New event", gap:0});
+    chronInsertIntoCurrentSpan(e);          // lands inside the Age/Phase you're currently in
+    ch.events.push(e); markDirty(); renderChronicle();
+    setTimeout(()=>{ const el=document.querySelector(`.chronEv[data-id="${e.id}"]`); if(el){ el.scrollIntoView({inline:"center",block:"nearest"}); showChronicleBubble(e,el,true); } },30); };
+  const ce=box.querySelector("#chronCentre");
+  if(ce)ce.onclick=()=>{ const s=box.querySelector("#chronScroll"), now=box.querySelector(".chronNow");
+    if(s&&now){ s.scrollLeft=Math.max(0, parseFloat(now.style.left)-(s.clientWidth||600)/2); } else if(s){ s.scrollLeft=s.scrollWidth; } };
+  const zi=box.querySelector("#chronZoomIn"); if(zi)zi.onclick=()=>chronZoomAt(1.35,null);
+  const zo=box.querySelector("#chronZoomOut"); if(zo)zo.onclick=()=>chronZoomAt(1/1.35,null);
+  const addMark=kind=>ev=>{ const ch=chronicle();
+    const btn=ev.currentTarget;   // captured now — currentTarget is null once the callback defers
+    const nAges=chronMarkers().filter(x=>x.kind==="age").length;
+    const m=normChronMarker({kind, label:kind==="age"?"New Age":"New Phase", gap:0,
+      color:kind==="age"?CHRON_AGE_COLORS[nAges%CHRON_AGE_COLORS.length]:"#d9a521"});
+    if(kind==="age"){ m.order=chronEntries().length; }   // a new Age always opens at the end of time
+    else { chronMarkers().push(m); chronMovePhaseToAge(m, (currentChronMarker("age")||{}).id||""); markDirty(); renderChronicle();
+      setTimeout(()=>{ const el=document.querySelector(`.chronPhase[data-mid="${m.id}"] .chronPhaseLbl`)||document.querySelector(`.chronMark[data-mid="${m.id}"] .chronMarkLbl`);
+        if(el){ el.scrollIntoView({inline:"center",block:"nearest"}); setTimeout(()=>showChronMarkerBubble(m, el),20); }
+        else showChronMarkerBubble(m, btn); },40);
+      return; }
+    chronMarkers().push(m); markDirty(); renderChronicle();
+    setTimeout(()=>{
+      const el=document.querySelector(`.chronMark[data-mid="${m.id}"] .chronMarkLbl`);
+      if(el){ el.scrollIntoView({inline:"center",block:"nearest"});
+        setTimeout(()=>showChronMarkerBubble(m, el),20); }
+      else showChronMarkerBubble(m, btn);   // fall back to the button we clicked
+    },40); };
+  const ap=box.querySelector("#chronAddPhase"); if(ap)ap.onclick=addMark("phase");
+  const aa=box.querySelector("#chronAddAge"); if(aa)aa.onclick=addMark("age");
+  const cal=box.querySelector("#chronCal"); if(cal)cal.onclick=openChronCalendar;
+}
+// the single floating timeline bubble (declared before anything that touches it)
+var _chronBubble=null;
+/* Place a timeline bubble beside its anchor, always fully inside the viewport. Prefers below,
+   flips above when there's more room there, and clamps so it can never sit off-screen. */
+function chronPlaceBubble(b, anchor){
+  const bw=b.offsetWidth, bh=b.offsetHeight, M=8;
+  // no usable anchor (e.g. the node was re-rendered away) → centre it rather than throwing
+  if(!anchor || typeof anchor.getBoundingClientRect!=="function"){
+    b.style.left=Math.max(M,(window.innerWidth-bw)/2)+"px";
+    b.style.top=Math.max(M,(window.innerHeight-bh)/2)+"px"; return;
+  }
+  const r=anchor.getBoundingClientRect();
+  b.style.left=Math.max(M, Math.min(window.innerWidth-bw-M, r.left+r.width/2-bw/2))+"px";
+  const below=window.innerHeight-r.bottom-M, above=r.top-M;
+  let top=(below>=bh || below>=above) ? r.bottom+M : r.top-bh-M;   // prefer below; flip only if roomier
+  top=Math.max(M, Math.min(window.innerHeight-bh-M, top));
+  b.style.top=top+"px";
+}
+// Editing an Age / Phase divider.
+function showChronMarkerBubble(m, anchor){
+  closeChronicleBubble();
+  const b=document.createElement("div"); b.className="chronBubble"; b.style.setProperty("--ec", m.kind==="age"?"#d9a521":"#7c8698");
+  b.innerHTML=`<button class="fbX chronBX">✕</button>
+    <div class="chronBubDate">${m.kind==="age"?"Age":"Phase"} · starts ${esc(chronEntryDateText(m))}</div>
+    <label class="chronF"><span>Name</span><input class="cmName" value="${esc(m.label||"")}" placeholder="${m.kind==="age"?"e.g. The Third Age":"e.g. Phase 4"}"/></label>
+    <label class="chronF"><span>Years since the previous entry <span class="note">(“~30” approximate, “10-20” a range)</span></span>
+      <div class="chronColRow"><input class="cmGap" value="${esc(gapText(m))}" placeholder="e.g. 12, ~30, 10-20"/>
+        <button class="btn tiny cmUp" title="Move earlier">▲</button><button class="btn tiny cmDn" title="Move later">▼</button></div></label>
+    <label class="chronF"><span>Date label <span class="note">(optional — overrides the calculated date)</span></span><input class="cmDate" value="${esc(m.date||"")}" placeholder="auto"/></label>
+    <label class="chronF"><span>Kind</span><select class="cmKind"><option value="phase" ${m.kind!=="age"?"selected":""}>Phase (box around its span)</option><option value="age" ${m.kind==="age"?"selected":""}>Age (tinted band)</option></select></label>
+    ${m.kind==="age"?`<label class="chronF"><span>Age colour <span class="note">(tints the timeline behind it)</span></span><input class="cmCol" type="color" value="${toHex(m.color||"#d9a521")}"/></label>`:
+      `<label class="chronF"><span>Part of which Age <span class="note">(moves it into that Age)</span></span><select class="cmAge">${(function(){
+          const ages=chronEntries().filter(x=>x.kind==="age").map(x=>x.obj);
+          const cur=chronPhaseAge(m);
+          let o=`<option value="" ${cur?"":"selected"}>— before any Age —</option>`;
+          o+=ages.map(a=>`<option value="${esc(a.id)}" ${cur&&cur.id===a.id?"selected":""}>${esc(a.label||"(unnamed age)")}</option>`).join("");
+          return o; })()}</select></label>`}
+    <div class="btnrow"><button class="btn tiny danger cmDel">🗑 Delete divider</button></div>`;
+  document.body.appendChild(b);
+  { const x=b.querySelector(".chronBX"); if(x)x.onclick=closeChronicleBubble; }   // wired first, so it always closes
+  _chronBubble=b;
+  try{ chronPlaceBubble(b, anchor); }catch(_){ chronPlaceBubble(b, null); }
+  const q=s=>b.querySelector(s);
+  q(".cmName").addEventListener("input",e=>{ m.label=e.target.value; markDirty(); });
+  q(".cmName").addEventListener("change",()=>renderChronicle());
+  q(".cmDate").addEventListener("input",e=>{ m.date=e.target.value; markDirty(); });
+  q(".cmDate").addEventListener("change",()=>renderChronicle());
+  q(".cmGap").addEventListener("change",e=>{ const g=parseGapInput(e.target.value);
+    m.gap=g.gap; m.gapMax=g.gapMax; m.gapApprox=g.gapApprox; markDirty(); closeChronicleBubble(); renderChronicle(); });
+  q(".cmUp").onclick=()=>{ chronMoveEntry(m.id,-1); closeChronicleBubble(); renderChronicle(); };
+  q(".cmDn").onclick=()=>{ chronMoveEntry(m.id,1); closeChronicleBubble(); renderChronicle(); };
+  q(".cmKind").addEventListener("change",e=>{ m.kind=e.target.value==="age"?"age":"phase"; markDirty(); closeChronicleBubble(); renderChronicle(); });
+  { const cc=q(".cmCol"); if(cc)cc.addEventListener("input",e=>{ m.color=e.target.value; markDirty(); renderChronicle(); }); }
+  { const ca=q(".cmAge"); if(ca)ca.addEventListener("change",e=>{ chronMovePhaseToAge(m, e.target.value||"");
+      closeChronicleBubble(); renderChronicle(); }); }
+  q(".cmDel").onclick=()=>{ if(!confirm("Delete this divider?"))return; const ch=chronicle();
+    ch.markers=chronMarkers().filter(x=>x.id!==m.id); markDirty(); closeChronicleBubble(); renderChronicle(); };
+  _chronBubble=b;
+  setTimeout(()=>document.addEventListener("mousedown",_chronBubbleOutside,true),0);
+}
+// Click an event: a bubble with its date, title and description (editable in the editor).
+function closeChronicleBubble(){
+  try{ if(_chronBubble && typeof _chronBubble.remove==="function")_chronBubble.remove(); }catch(_){}
+  _chronBubble=null;
+  try{ document.removeEventListener("mousedown",_chronBubbleOutside,true); }catch(_){}
+}
+function _chronBubbleOutside(e){ if(_chronBubble && !_chronBubble.contains(e.target)
+  && !(e.target.closest&&e.target.closest(".chronEv, .chronMark, .chronAgeLbl, .chronPhaseLbl"))) closeChronicleBubble(); }
+function showChronicleBubble(ev, anchor, editable){
+  closeChronicleBubble();
+  const col=chronEventColor(ev), href=safeExternalUrl(ev.link);
+  const b=document.createElement("div"); b.className="chronBubble"; b.style.setProperty("--ec", col);
+  const appHref=discordAppUrl(href);
+  const linkBtn = href
+    ? (appHref
+        ? `<button class="btn tiny chronBApp" title="Opens the Discord app if it's installed, otherwise your browser">Open in Discord ↗</button>`
+          +`<a class="btn tiny ghost chronBOpen" href="${esc(href)}" target="_blank" rel="noopener noreferrer" title="Open in the browser instead">Browser</a>`
+        : `<a class="btn tiny chronBOpen" href="${esc(href)}" target="_blank" rel="noopener noreferrer">Open link ↗</a>`)
+    : "";
+  b.innerHTML = editable
+    ? `<button class="fbX chronBX">✕</button>
+       <div class="chronBubDate">${esc(chronEntryDateText(ev))}</div>
+       <label class="chronF"><span>Years since the previous entry <span class="note">(“~30” approximate, “10-20” a range)</span></span>
+         <div class="chronColRow"><input class="chronBGap" value="${esc(gapText(ev))}" placeholder="e.g. 12, ~30, 10-20"/>
+           <button class="btn tiny chronBUp" title="Move earlier">▲</button><button class="btn tiny chronBDn" title="Move later">▼</button></div></label>
+       <label class="chronF"><span>Date label <span class="note">(optional — overrides the calculated date)</span></span><input class="chronBDate" value="${esc(ev.date||"")}" placeholder="auto"/></label>
+       <label class="chronF"><span>Title</span><input class="chronBTitle" value="${esc(ev.title||"")}"/></label>
+       <label class="chronF"><span>Type</span><select class="chronBType">${chronTypes().map(t=>`<option value="${esc(t.id)}" ${ev.type===t.id?"selected":""}>${esc(t.label)}</option>`).join("")}</select></label>
+       <div class="chronF"><span>Colour ${ev.color?"(custom)":"(from type)"}</span>
+         <div class="chronColRow"><input class="chronBCol" type="color" value="${toHex(col)}"/><button class="btn tiny chronBColClr" title="Use the type's colour">↺ type</button></div></div>
+       <label class="chronF"><span>Link <span class="note">(optional — http/https only)</span></span><input class="chronBLink" value="${esc(ev.link||"")}" placeholder="https://discord.com/channels/…"/></label>
+       <label class="chronF"><span>Description</span><textarea class="chronBDesc" rows="4">${esc(ev.description||"")}</textarea></label>
+       <div class="btnrow">${linkBtn}<button class="btn tiny danger chronBDel">🗑 Delete event</button></div>`
+    : `<button class="fbX chronBX">✕</button>
+       <div class="chronBubDate">${esc(chronEntryDateText(ev))}${chronTypeLabel(ev.type)?` · ${esc(chronTypeLabel(ev.type))}`:""}</div>
+       <div class="chronBubTitle">${esc(ev.title||"Event")}</div>
+       ${ev.description?`<div class="chronBubDesc">${esc(ev.description).replace(/\n/g,"<br>")}</div>`:'<div class="note">No description.</div>'}
+       ${linkBtn?`<div class="btnrow" style="margin-top:8px">${linkBtn}</div>`:""}`;
+  document.body.appendChild(b);
+  { const x=b.querySelector(".chronBX"); if(x)x.onclick=closeChronicleBubble; }   // wired first, so it always closes
+  _chronBubble=b;
+  try{ chronPlaceBubble(b, anchor); }catch(_){ chronPlaceBubble(b, null); }
+  { const ab=b.querySelector(".chronBApp"); if(ab)ab.onclick=()=>openPreferApp(appHref, href); }
+  if(editable){
+    const q=s=>b.querySelector(s);
+    q(".chronBDate").addEventListener("input",e=>{ ev.date=e.target.value; markDirty(); });
+    q(".chronBDate").addEventListener("change",()=>renderChronicle());
+    // after a re-render the old node is gone, so re-open only against a live one
+    const reopen=()=>{ setTimeout(()=>{
+        const el=document.querySelector(`.chronEv[data-id="${ev.id}"] .chronEvCard`);
+        if(el)showChronicleBubble(ev, el, true); else closeChronicleBubble();
+      },0); };
+    q(".chronBGap").addEventListener("change",e=>{ const g=parseGapInput(e.target.value);
+      ev.gap=g.gap; ev.gapMax=g.gapMax; ev.gapApprox=g.gapApprox; markDirty(); renderChronicle(); reopen(); });
+    q(".chronBUp").onclick=()=>{ chronMoveEntry(ev.id,-1); renderChronicle(); reopen(); };
+    q(".chronBDn").onclick=()=>{ chronMoveEntry(ev.id,1); renderChronicle(); reopen(); };
+    q(".chronBTitle").addEventListener("input",e=>{ ev.title=e.target.value; markDirty(); });
+    q(".chronBTitle").addEventListener("change",()=>renderChronicle());
+    q(".chronBType").addEventListener("change",e=>{ ev.type=e.target.value; markDirty(); renderChronicle(); reopen(); });
+    q(".chronBCol").addEventListener("input",e=>{ ev.color=e.target.value; markDirty(); });
+    q(".chronBCol").addEventListener("change",()=>renderChronicle());
+    q(".chronBColClr").onclick=()=>{ ev.color=""; markDirty(); renderChronicle(); reopen(); };
+    q(".chronBLink").addEventListener("input",e=>{ ev.link=e.target.value; markDirty(); });
+    q(".chronBLink").addEventListener("change",e=>{ const v=e.target.value.trim();
+      if(v&&!safeExternalUrl(v))flash("That link was ignored — only http:// or https:// addresses are allowed.");
+      renderChronicle(); });
+    q(".chronBDesc").addEventListener("input",e=>{ ev.description=e.target.value; markDirty(); });
+    q(".chronBDel").onclick=()=>{ if(!confirm("Delete this event?"))return; const ch=chronicle(); ch.events=ch.events.filter(x=>x.id!==ev.id); markDirty(); closeChronicleBubble(); renderChronicle(); };
+  }
+  _chronBubble=b;
+  setTimeout(()=>document.addEventListener("mousedown",_chronBubbleOutside,true),0);
 }
 // Rich-text editing (bold/italic/underline/font size) for long descriptions.
 function richToolbarHTML(){
@@ -6434,7 +7336,7 @@ function zoomBy(f){
    ============================================================ */
 function openModal(html){const h=$("#modalHost");h.innerHTML=`<div class="modal">${html}</div>`;h.classList.remove("hidden");
   h.onclick=e=>{if(e.target===h)closeModal();};}
-function closeModal(){$("#modalHost").classList.add("hidden");$("#modalHost").innerHTML="";}
+function closeModal(){ if(typeof closeChronicleBubble==="function")closeChronicleBubble(); $("#modalHost").classList.add("hidden");$("#modalHost").innerHTML="";}
 
 /* ============================================================
    EXPORT MAP (PNG): whole map / current view / custom region,
@@ -7095,6 +7997,17 @@ function renderGM2(){
         <button class="btn tiny gmFCDn" data-c="${esc(c.id)}" ${ci===featureCatDefs().length-1?"disabled":""} title="Move down">↓</button>
         <button class="btn tiny gmFCDel" data-c="${esc(c.id)}" style="color:var(--bad)" title="Delete type">✕</button>
       </td></tr>`; }).join("");
+  const chronTypeRows=chronTypes().map((t,ti)=>{
+    const n=chronicle().events.filter(e=>e.type===t.id).length;
+    return `<tr>
+      <td><input class="gmCTCol" data-c="${esc(t.id)}" type="color" value="${toHex(t.color)}" title="Type colour"/></td>
+      <td><input class="gmCTLabel" data-c="${esc(t.id)}" value="${esc(t.label)}"/></td>
+      <td class="note">${n}</td>
+      <td style="white-space:nowrap">
+        <button class="btn tiny gmCTUp" data-c="${esc(t.id)}" ${ti===0?"disabled":""} title="Move up">↑</button>
+        <button class="btn tiny gmCTDn" data-c="${esc(t.id)}" ${ti===chronTypes().length-1?"disabled":""} title="Move down">↓</button>
+        <button class="btn tiny gmCTDel" data-c="${esc(t.id)}" style="color:var(--bad)" title="Delete type">✕</button>
+      </td></tr>`; }).join("");
   const subRows=(world.lists.subraces||[]).map(sr=>{ const gp=subraceGroup(sr);
     const gOpts=(world.lists.races||[]).map(g=>`<option value="${esc(g)}" ${gp===g?"selected":""}>${esc(g)}</option>`).join("")+((world.lists.races||[]).includes(gp)?"":`<option value="${esc(gp)}" selected>${esc(gp)}</option>`);
     return `<tr>
@@ -7161,6 +8074,12 @@ function renderGM2(){
         <p class="note">Feature names are written freely per province; these are the <b>types</b> that colour them. Give each a colour and a map glyph, add your own beyond the built-ins, or delete one (its features fall back to the first type). They show as a key in the province view and as clickable filters in the Regions map legend.</p>
         <table class="gm2tbl"><thead><tr><th>Colour</th><th>Type</th><th>Glyph</th><th>Used by</th><th></th></tr></thead><tbody>${featCatRows||'<tr><td class="note">No feature types.</td></tr>'}</tbody></table>
         <div class="btnrow" style="margin-top:8px"><button class="btn tiny" id="gmAddFeatCat">＋ Add feature type</button></div>
+      </section>
+      <section class="gmBlock gmSpanAll">
+        <div class="gmBlockH">Timeline event types</div>
+        <p class="note">The kinds of event on the Compendium's Timeline. Each gives its events a default colour and a glyph; an individual event can still override the colour. Deleting a type moves its events to the first one.</p>
+        <table class="gm2tbl"><thead><tr><th>Colour</th><th>Type</th><th>Events</th><th></th></tr></thead><tbody>${chronTypeRows||'<tr><td class="note">No event types.</td></tr>'}</tbody></table>
+        <div class="btnrow" style="margin-top:8px"><button class="btn tiny" id="gmAddChronType">＋ Add event type</button></div>
       </section>
       <section class="gmBlock gmSpanAll">
         <div class="gmBlockH">⛰ Terrain types &amp; modifiers</div>
@@ -7275,6 +8194,23 @@ function renderGM2(){
   { const a=$("#gmAddFeatCat"); if(a)a.onclick=()=>{ const defs=featureCatDefs();
       let base="type",n=base,k=2; while(defs.some(x=>x.id===n))n=base+(k++);
       defs.push({id:n,label:"New feature type",color:autoPastelHex(),glyph:"❖"}); markDirty(); renderLegend(); renderGM2(); }; }
+  // ---- chronicle event types: colour / label / glyph / reorder / delete / add ----
+  const ctFind=id=>chronTypes().find(x=>x.id===id);
+  host.querySelectorAll(".gmCTCol").forEach(el=>el.addEventListener("input",e=>{ const t=ctFind(el.dataset.c); if(t){ t.color=e.target.value; markDirty(); renderChronicle(); } }));
+  host.querySelectorAll(".gmCTLabel").forEach(el=>el.addEventListener("input",e=>{ const t=ctFind(el.dataset.c); if(t){ t.label=e.target.value; markDirty(); renderChronicle(); } }));
+  host.querySelectorAll(".gmCTUp").forEach(el=>el.addEventListener("click",()=>{ const a=chronTypes(), i=a.findIndex(x=>x.id===el.dataset.c); if(i>0){ [a[i-1],a[i]]=[a[i],a[i-1]]; markDirty(); renderGM2(); } }));
+  host.querySelectorAll(".gmCTDn").forEach(el=>el.addEventListener("click",()=>{ const a=chronTypes(), i=a.findIndex(x=>x.id===el.dataset.c); if(i>=0&&i<a.length-1){ [a[i+1],a[i]]=[a[i],a[i+1]]; markDirty(); renderGM2(); } }));
+  host.querySelectorAll(".gmCTDel").forEach(el=>el.addEventListener("click",()=>{
+    const a=chronTypes(); if(a.length<=1){ flash("Keep at least one event type."); return; }
+    const id=el.dataset.c, t=ctFind(id); if(!t)return;
+    if(!confirm(`Delete the “${t.label}” event type? Its events move to the first type.`))return;
+    const ch=chronicle(); ch.types=a.filter(x=>x.id!==id);
+    const fb=ch.types[0].id; ch.events.forEach(e=>{ if(e.type===id)e.type=fb; });
+    markDirty(); renderChronicle(); renderGM2();
+  }));
+  { const a=$("#gmAddChronType"); if(a)a.onclick=()=>{ const ts=chronTypes();
+      let base="evtype",n=base,k=2; while(ts.some(x=>x.id===n))n=base+(k++);
+      ts.push({id:n,label:"New event type",color:autoPastelHex()}); markDirty(); renderGM2(); }; }
   // ---- terrain rows ----
   host.querySelectorAll(".gmTCol").forEach(el=>el.addEventListener("input",e=>{ world.colors.terrains=world.colors.terrains||{}; world.colors.terrains[el.dataset.t]=e.target.value; renderMap(); renderLegend(); markDirty(); }));
   host.querySelectorAll(".gmTGrow").forEach(el=>el.addEventListener("input",e=>{ t.terrainGrow[el.dataset.t]=Math.max(0,+e.target.value||0); markDirty(); }));
@@ -7443,7 +8379,7 @@ async function openMenu(){
       <button class="btn" id="mNew">＋ New world</button>
       <button class="btn" id="mSaveAs">💾 Save now</button>
       <button class="btn" id="mExport">⬇ Export JSON to herald folder</button>
-      <button class="btn" id="mTimelineSave">🕑 Save timeline snapshot (Phase/Turn)…</button>
+      <button class="btn" id="mTimelineSave">🕑 Save snapshot (Phase/Turn)…</button>
       <button class="btn" id="mArchiveData">🗄 Archive full data to disk…</button>
       <button class="btn primary" id="mPublish">🌐 Publish &amp; push live…</button>
       <button class="btn" id="mGitStatus">🔎 Check publish/git status…</button>
@@ -7498,7 +8434,7 @@ function currentAgeName(){ const e=(world.eras||[]).find(x=>x.id===world.current
 // editor: save the current world as a timeline snapshot
 function openTimelineSave(){
   const age=currentAgeName();
-  openModal(`<button class="btn close" onclick="closeModal()">✕ Close</button><h2>🕑 Save timeline snapshot</h2>
+  openModal(`<button class="btn close" onclick="closeModal()">✕ Close</button><h2>🕑 Save snapshot</h2>
     <p class="note">Saves the current world as a turn players can revisit in the viewer's Timeline. Filed under the current age: <b>${esc(age)}</b> (set the age in the top bar / Ages editor).</p>
     <div class="field2">
       <div class="field"><label>Phase</label><input id="tlPhase" type="number" min="0" step="1" value="${_lastPhase}"/></div>
@@ -7534,12 +8470,12 @@ function orderAges(ages){   // chronological: by the world's era order, then ext
     if(ia!==ib) return (ia<0?1e9:ia)-(ib<0?1e9:ib); return a.age.localeCompare(b.age); });
 }
 async function openTimeline(){
-  openModal(`<button class="btn close" onclick="closeModal()">✕ Close</button><h2>🕑 Timeline</h2>
+  openModal(`<button class="btn close" onclick="closeModal()">✕ Close</button><h2>🕑 Snapshots</h2>
     <p class="note">Load a past turn to explore the map as it was — pan, zoom, switch map modes and click provinces just like the present. Grouped by Age, in chronological order.</p>
     <div id="tlBody"><div class="note">Loading…</div></div>`);
   const {mode,ages}=await fetchTimeline();
   const host=$("#tlBody"); if(!host)return;
-  if(mode==="none" || !ages.length){ host.innerHTML='<div class="note">No saved snapshots yet. In the editor: ⋯ menu → “Save timeline snapshot”.</div>'; return; }
+  if(mode==="none" || !ages.length){ host.innerHTML='<div class="note">No saved snapshots yet. In the editor: ⋯ menu → “Save snapshot”.</div>'; return; }
   const ordered=orderAges(ages);
   host.innerHTML =
     (_timelineViewing?`<div class="tlNow">Viewing <b>${esc(_timelineViewing.age)} · ${esc(_timelineViewing.label)}</b><button class="btn tiny" id="tlPresent">⟲ Return to present</button></div>`:"")
@@ -7606,7 +8542,7 @@ function updateTimelineBanner(){
   let b=document.getElementById("tlBanner");
   if(!_timelineViewing){ if(b)b.remove(); return; }
   if(!b){ b=document.createElement("div"); b.id="tlBanner"; ($("#stage")||document.body).appendChild(b); }
-  b.innerHTML=`🕑 Viewing <b>${esc(_timelineViewing.age)} · ${esc(_timelineViewing.label)}</b><button class="btn tiny" id="tlBannerBack">⟲ Present</button><button class="btn tiny" id="tlBannerOpen">Timeline…</button>`;
+  b.innerHTML=`🕑 Viewing <b>${esc(_timelineViewing.age)} · ${esc(_timelineViewing.label)}</b><button class="btn tiny" id="tlBannerBack">⟲ Present</button><button class="btn tiny" id="tlBannerOpen">Snapshots…</button>`;
   $("#tlBannerBack").onclick=returnToPresent;
   $("#tlBannerOpen").onclick=openTimeline;
 }
@@ -7673,7 +8609,8 @@ async function forceCancelDeploys(){
 let flashTimer=null;
 function flash(msg){const h=$("#hint");h.textContent=msg;h.classList.add("show");clearTimeout(flashTimer);flashTimer=setTimeout(()=>h.classList.remove("show"),2600);}
 function rebuildEraSelect(){
-  const s=$("#eraSelect");s.innerHTML=world.eras.map(e=>`<option value="${e.id}" ${e.id===world.currentEraId?"selected":""}>${esc(e.name)}</option>`).join("");
+  const s=$("#eraSelect"); if(!s)return;   // the era dropdown was retired from the topbar
+  s.innerHTML=world.eras.map(e=>`<option value="${e.id}" ${e.id===world.currentEraId?"selected":""}>${esc(e.name)}</option>`).join("");
 }
 
 /* ============================================================
@@ -7681,6 +8618,7 @@ function rebuildEraSelect(){
    ============================================================ */
 function afterLoad(){
   ensureCompendium(world); syncCompendiumToWorld();   // global compendium: build once, keep across snapshot loads
+  updateChronNowChip();
   $("#worldName").value=world.name;
   loadPings();
   rebuildEraSelect();
@@ -7834,7 +8772,7 @@ function _popPanelDismiss(ev){
 function updateMobile(){ document.body.classList.toggle("mobile", window.innerWidth<=760); if(!document.body.classList.contains("mobile"))_mmOpen=false; refreshMapmodeBar(); buildMapLegend(); if(state.selRealm)renderTechPanel(); }
 function wireTopbar(){
   $("#worldName").addEventListener("input",e=>{world.name=e.target.value;markDirty();});
-  $("#eraSelect").addEventListener("change",e=>{world.currentEraId=e.target.value;markDirty();});
+  { const es=$("#eraSelect"); if(es)es.addEventListener("change",e=>{world.currentEraId=e.target.value;markDirty();}); }
   // toggle bar — Continents = continent names (any mode), Realms = realm outlines
   // (any mode but political), Terrain = terrain outlines (any mode but terrain).
   const syncToggleBtns=()=>{
@@ -7871,6 +8809,7 @@ function wireTopbar(){
   const bv=$("#btnView"); if(bv)bv.onclick=togglePreviewViewer;
   { const bt=$("#btnTimeline"); if(bt)bt.onclick=openTimeline; }
   { const bc=$("#btnCompendium"); if(bc)bc.onclick=()=>openCompendium(); }
+  { const cn=$("#chronNowChip"); if(cn)cn.onclick=()=>openCompendium(); }
   $("#worldView").onclick=()=>{worldView();};
   $("#btnPanels").onclick=()=>{
     if(document.body.classList.contains("mobile")){ const open=document.body.classList.toggle("m-drawer"); $("#btnPanels").classList.toggle("on",open); return; }
@@ -7878,7 +8817,7 @@ function wireTopbar(){
   const insClose=$("#insClose"); if(insClose)insClose.onclick=()=>{document.body.classList.remove("has-sel");document.body.classList.remove("m-drawer");};
   updateMobile(); window.addEventListener("resize",updateMobile);
   $("#btnLists").onclick=openLists;
-  $("#manageEras").onclick=openEras;
+  { const me=$("#manageEras"); if(me)me.onclick=openEras; }
   $("#btnSave").onclick=()=>saveWorld(false);
   $("#btnMenu").onclick=openMenu;
   $("#addContinent").onclick=()=>{

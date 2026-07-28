@@ -385,6 +385,176 @@ details.rvProvinces[open]>summary::before{content:"▾"}
 .cmpLoreEdit{width:100%; box-sizing:border-box; font-size:14.5px; line-height:1.6; padding:11px 13px;
   border:1px solid var(--line); border-radius:9px; background:var(--panel); color:var(--ink); font-family:inherit; resize:vertical}
 .cmpLoreView{font-size:15px; line-height:1.65; white-space:normal}
+/* ===== Chronicle: horizontal timeline along the foot of the Compendium ===== */
+.cmpChron{flex:0 0 auto; border-top:1px solid var(--line); padding-top:8px; margin-top:6px}
+.chronHead{display:flex; align-items:center; gap:8px; font-size:13px; flex-wrap:wrap; padding:0 2px 6px}
+.chronCaret{width:22px; height:22px; border:1px solid var(--line); border-radius:6px; background:var(--panel);
+  color:var(--muted); cursor:pointer; font-size:11px; padding:0}
+.chronPresentEdit{display:flex; align-items:center; gap:5px; font-size:12px; color:var(--muted)}
+.chronPresentEdit input{width:140px; padding:4px 8px; font-size:13px}
+.chronPresentLbl{font-size:12px; color:var(--muted)}
+.chronScroll{overflow-x:auto; overflow-y:auto; height:184px; border:1px solid var(--line); border-radius:10px;
+  background:linear-gradient(var(--panel2), var(--panel)); overscroll-behavior:contain}
+.chronTrack{position:relative; min-height:100%; min-width:100%}
+/* the axis line is centred on the track: its 2px sits from 50% to 50%+2px, so markers align to 50%+1px */
+.chronAxis{position:absolute; left:0; right:0; top:50%; height:0; border-top:2px solid color-mix(in srgb, var(--accent) 40%, var(--line))}
+/* Year 0 — the turn of the era. The gap between the newest entry and this line is the buffer. */
+.chronZero{position:absolute; top:0; bottom:0; z-index:3; pointer-events:none}
+.chronZeroLine{position:absolute; top:calc(var(--vs,0px) + 4px); bottom:calc(var(--vs,0px) + 4px); left:0; width:0;
+  border-left:2px solid color-mix(in srgb, var(--ink) 45%, transparent)}
+.chronZeroLbl{position:absolute; top:calc(var(--vs,0px) + 30px); left:6px; white-space:nowrap; font-size:10.5px;
+  font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:var(--ink);
+  background:var(--panel); border:1px solid var(--line); border-radius:9px; padding:1px 8px}
+/* the Present: an invisible anchor kept only so “⊙ Present” can recentre on it */
+.chronNow{position:absolute; top:0; bottom:0; width:0; z-index:0; pointer-events:none}
+/* Events: a zero-width anchor at the event's x. The dot is pinned to the axis; each card sits
+   --cardOff from the line, and its stem only fills the GAP before it, so stacked cards are never
+   crossed by another event's line. Card metrics scale with zoom (--cs). */
+.chronEv{--ec:#c9a86f; --cardOff:14px; --stemStart:0px; --stemLen:14px; --cw:150px; --chh:50px; --cs:1;
+  position:absolute; left:0; top:0; bottom:0; width:0; z-index:3; cursor:pointer}
+.chronEvDot{position:absolute; left:0; top:calc(50% + 1px); transform:translate(-50%,-50%);
+  width:calc(11px * var(--cs)); height:calc(11px * var(--cs)); min-width:7px; min-height:7px;
+  border-radius:50%; background:var(--ec); border:2px solid var(--panel);
+  box-shadow:0 0 0 1px color-mix(in srgb, var(--ec) 70%, var(--line)); z-index:4}
+.chronEvStem{position:absolute; left:0; width:0; border-left:2px solid color-mix(in srgb, var(--ec) 65%, var(--line));
+  transform:translateX(-1px); height:var(--stemLen); z-index:1}
+.chronEv.up .chronEvStem{bottom:calc(50% - 1px + var(--stemStart))}
+.chronEv.down .chronEvStem{top:calc(50% + 1px + var(--stemStart))}
+/* The card box + fonts are fixed; the whole card is then scaled by --cs with its axis-facing edge
+   as the origin, so text and card always scale together and the near edge stays on its offset. */
+.chronEvCard{position:absolute; left:0; width:126px; height:58px;
+  box-sizing:border-box; overflow:hidden; z-index:2;
+  display:flex; flex-direction:column; justify-content:center; gap:0;
+  background:color-mix(in srgb, var(--ec) 16%, var(--panel));
+  border:2px solid color-mix(in srgb, var(--ec) 55%, var(--line)); border-radius:8px;
+  padding:3px 6px; text-align:center;
+  box-shadow:0 1px 4px rgba(0,0,0,.16); transition:box-shadow .1s, border-color .1s}
+.chronEv.up .chronEvCard{bottom:calc(50% - 1px + var(--cardOff));
+  transform:translateX(-50%) scale(var(--cs)); transform-origin:50% 100%}
+.chronEv.down .chronEvCard{top:calc(50% + 1px + var(--cardOff));
+  transform:translateX(-50%) scale(var(--cs)); transform-origin:50% 0%}
+/* an event given a span of years: a bar along the axis from its earliest to its latest date,
+   with end caps, and the dot still marking the midpoint */
+.chronEvRange{position:absolute; top:calc(50% + 1px); transform:translateY(-50%); height:7px; z-index:3;
+  border-radius:4px; background:color-mix(in srgb, var(--ec) 42%, transparent);
+  box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--ec) 65%, transparent)}
+.chronEvRange::before, .chronEvRange::after{content:""; position:absolute; top:-3px; width:2px; height:13px;
+  border-radius:1px; background:var(--ec)}
+.chronEvRange::before{left:0}
+.chronEvRange::after{right:0}
+/* an approximate date (from a ~ or a range, or inherited from one earlier in the chain) */
+.chronEv.approx .chronEvCard{border-style:dashed}
+.chronEv.approx .chronEvDate{font-style:italic}
+.chronEv:hover{z-index:8}
+.chronEv:hover .chronEvCard{box-shadow:0 4px 14px rgba(0,0,0,.3); border-color:var(--ec)}
+.chronEvDate{font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:.2px;
+  color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; line-height:1.3}
+.chronEvTitle{font-size:11px; font-weight:700; line-height:1.15; color:var(--ink);
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden}
+/* Age / Phase dividers */
+/* AGES: a tinted band running the full height, from their start until the next Age.
+   The fill is click-through so it never blocks events — only its label chip is clickable. */
+.chronAge{--ac:#d9a521; position:absolute; top:0; bottom:0; z-index:0; pointer-events:none}
+.chronAgeFill{position:absolute; inset:0; background:color-mix(in srgb, var(--ac) 9%, transparent)}
+.chronAgeEdge{position:absolute; left:0; top:0; bottom:0; width:0; border-left:3px solid var(--ac); opacity:.85}
+/* the Age's label is a track-level sibling of its band, so it always draws above event cards */
+.chronAgeLbl{--ac:#d9a521; position:absolute; margin-left:8px; top:calc(var(--vs,0px) + 4px);
+  pointer-events:auto; cursor:pointer; z-index:8;
+  display:inline-flex; align-items:center; gap:5px; white-space:nowrap; overflow:hidden;
+  padding:2px 11px; border-radius:9px; border:2px solid var(--ac);
+  background:linear-gradient(color-mix(in srgb, var(--ac) 22%, var(--panel)), var(--panel));
+  font-family:"Georgia","Palatino Linotype",serif; font-weight:700; font-size:12px;
+  color:color-mix(in srgb, var(--ac) 55%, var(--ink)); box-shadow:0 2px 8px rgba(0,0,0,.24)}
+.chronAgeLbl:hover{filter:brightness(1.12)}
+/* PHASES: a box enclosing their span, tall enough to wrap whatever events sit inside it.
+   It sits ABOVE the event cards so its label is never buried (the fill is click-through,
+   and the box is sized around the events so its border rarely crosses one). */
+.chronPhase{position:absolute; z-index:7; pointer-events:none;
+  border:1.5px dashed color-mix(in srgb, var(--muted) 55%, var(--line)); border-radius:10px;
+  background:transparent}
+/* the Phase's name rides on the axis itself, centred in the first roomy gap between events */
+.chronPhaseLbl{position:absolute; top:50%; transform:translate(-50%,-50%); pointer-events:auto; cursor:pointer;
+  display:inline-flex; align-items:center; white-space:nowrap; overflow:hidden;
+  padding:1px 10px; border-radius:9px; border:1px solid var(--line);
+  background:var(--panel); box-shadow:0 1px 4px rgba(0,0,0,.2);
+  font-size:10.5px; font-weight:700; letter-spacing:.2px; color:var(--muted); z-index:10}
+.chronPhaseLbl:hover{border-color:var(--accent); color:var(--ink)}
+/* --vs is the track's vertical pan slack: labels are inset by it so they stay inside the
+   visible band (otherwise they sit off-screen at the very top/bottom of the taller track). */
+.chronMark{position:absolute; top:0; bottom:0; z-index:9; cursor:pointer}
+/* a wide invisible strip so the whole divider line is clickable, not just its label */
+.chronMarkHit{position:absolute; left:-11px; width:22px; top:calc(var(--vs,0px) + 4px); bottom:calc(var(--vs,0px) + 4px);
+  border-radius:6px}
+.chronMark:hover .chronMarkHit{background:color-mix(in srgb, var(--accent) 12%, transparent)}
+.chronMarkLine{position:absolute; left:0; top:calc(var(--vs,0px) + 12px); bottom:calc(var(--vs,0px) + 12px);
+  width:0; transform:translateX(-1px);
+  border-left:2px dashed color-mix(in srgb, var(--muted) 60%, var(--line))}
+.chronMark.age .chronMarkLine{top:calc(var(--vs,0px) + 4px); bottom:calc(var(--vs,0px) + 4px);
+  border-left:3px solid #d9a521; transform:translateX(-1.5px);
+  box-shadow:-3px 0 0 rgba(217,165,33,.28), 3px 0 0 rgba(217,165,33,.28)}
+.chronMarkLbl{position:absolute; left:0; bottom:calc(var(--vs,0px) + 2px); transform:translateX(-50%); white-space:nowrap;
+  display:flex; align-items:center; gap:4px; padding:2px 9px; border-radius:9px; cursor:pointer; z-index:6;
+  background:var(--panel2); border:1px solid var(--line); font-size:10.5px; color:var(--muted)}
+.chronMark.age .chronMarkLbl{top:calc(var(--vs,0px) + 2px); bottom:auto; background:linear-gradient(#fff8e6,#f3e4bd); color:#5b3f10;
+  border:2px solid #d9a521; font-family:"Georgia","Palatino Linotype",serif; font-weight:700; font-size:12px;
+  padding:2px 12px; box-shadow:0 2px 8px rgba(0,0,0,.2)}
+.chronMark:hover .chronMarkLbl{border-color:var(--accent)}
+.chronMarkOrn{color:#b8860b}
+.chronMarkName{font-weight:700}
+.chronMarkDate{opacity:.7; font-weight:400}
+.chronEmpty{padding:70px 20px; text-align:center}
+.cmpChron.collapsed .chronScroll{display:none}
+/* event detail bubble */
+.chronBubble{--ec:#c9a86f; position:fixed; z-index:120; width:min(380px,94vw); box-sizing:border-box;
+  max-height:min(80vh,620px); overflow-y:auto; background:var(--panel);
+  border:1px solid var(--line); border-top:4px solid var(--ec); border-radius:11px; padding:12px 14px;
+  box-shadow:0 12px 34px rgba(0,0,0,.3)}
+.chronBubble .fbX{position:absolute; top:6px; right:8px; background:transparent; border:none; color:var(--muted);
+  cursor:pointer; font-size:14px}
+.chronBubDate{font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.4px; color:var(--muted)}
+.chronBubTitle{font-family:"Georgia","Palatino Linotype",serif; font-weight:700; font-size:18px; margin:2px 0 7px;
+  padding-right:18px; color:var(--ink)}
+.chronBubDesc{font-size:13.5px; line-height:1.6; white-space:normal; max-height:40vh; overflow:auto}
+.chronF{display:flex; flex-direction:column; gap:3px; margin:7px 0}
+.chronF>span{font-size:10.5px; text-transform:uppercase; letter-spacing:.4px; color:var(--muted); font-weight:700}
+.chronF input, .chronF textarea{width:100%; box-sizing:border-box; padding:6px 9px; border:1px solid var(--line);
+  border-radius:7px; background:var(--panel2); color:var(--ink); font-size:13.5px; font-family:inherit}
+.chronF input[type="color"]{height:32px; padding:2px}
+.chronF select{width:100%; box-sizing:border-box; padding:6px 9px; border:1px solid var(--line);
+  border-radius:7px; background:var(--panel2); color:var(--ink); font-size:13.5px}
+.chronColRow{display:flex; align-items:center; gap:6px}
+.chronColRow input[type="color"]{flex:0 0 52px; height:32px; padding:2px}
+.chronBOpen{text-decoration:none; display:inline-flex; align-items:center}
+.chronBubble .btnrow{display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:8px}
+.chronEvLink{font-size:10px; opacity:.75}
+.chronEvType{font-size:8px; text-transform:uppercase; letter-spacing:.3px; font-weight:700; line-height:1.4;
+  color:color-mix(in srgb, var(--ec) 70%, var(--ink))}
+.chronZoomBox{display:inline-flex; align-items:center; gap:3px; border:1px solid var(--line); border-radius:8px;
+  padding:2px 4px; background:var(--panel)}
+.chronZoomLbl{font-size:11px; color:var(--muted); min-width:34px; text-align:center; font-weight:700}
+.chronJump{max-width:190px; padding:4px 8px; border:1px solid var(--line); border-radius:8px;
+  background:var(--panel); color:var(--ink); font-size:12.5px}
+/* topbar chip: current Age / Phase from the timeline, tinted to the Age's own colour */
+.chronNowChip{--ac:#d9a521; display:inline-flex; align-items:center; gap:6px; cursor:pointer; font-family:inherit;
+  border:1px solid color-mix(in srgb,var(--ac) 55%,var(--line));
+  background:linear-gradient(color-mix(in srgb,var(--ac) 16%,var(--panel)), var(--panel))}
+.chronNowChip:hover{border-color:var(--ac)}
+.chronNowChip .cnAge{font-family:"Georgia","Palatino Linotype",serif; font-weight:700; color:color-mix(in srgb,var(--ac) 62%,var(--ink))}
+.chronNowChip .cnPhase{font-weight:700}
+.chronNowChip .cnSep{color:var(--muted)}
+.chronScroll{cursor:grab}
+.chronScroll.dragging{cursor:grabbing}
+/* the timeline window: holds the scroller, the pinned current-Age chip and the resize grip */
+.chronWin{position:relative}
+/* the divider between the Compendium body and the timeline — drag it up to enlarge the timeline */
+.chronGrip{height:14px; margin:-6px 0 2px; cursor:ns-resize; touch-action:none;
+  display:flex; align-items:center; justify-content:center; border-radius:7px}
+.chronGrip::after{content:""; width:56px; height:4px; border-radius:2px; background:var(--line); transition:background .1s, width .1s}
+.chronGrip:hover{background:color-mix(in srgb, var(--accent) 8%, transparent)}
+.chronGrip:hover::after{background:var(--accent); width:78px}
+body.chronResizing{cursor:ns-resize; user-select:none}
+body.chronResizing .chronGrip::after{background:var(--accent); width:78px}
+.chronEv, .chronMarkLbl{cursor:pointer}
 /* ===== Species section: square species tiles with square subspecies buttons ===== */
 .spGrid{display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:14px}
 .spTile{--sc:#7c8698; border:2px solid color-mix(in srgb, var(--sc) 50%, var(--line)); border-radius:14px;
@@ -1012,6 +1182,8 @@ body.viewer #inspector .insTitle input:disabled{font-weight:700; font-size:17px}
   .wikiTitle{font-size:24px}
   .dynEditName{flex:1 0 100%}
   .dynTreeView{height:380px}
+  .chronScroll{height:158px}
+  .chronPresentEdit input{width:110px}
   .pvPie{padding:8px 6px}
   .pvPie svg{width:84px; height:84px}
 
