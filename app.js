@@ -422,7 +422,7 @@ function presentMarker(){
 }
 function chronPresentYear(){ const m=presentMarker(); if(!m)return chronicle().presentYear;
   const e=chronYearMap()[m.id]; return e?e.year:(m.year!=null?m.year:chronicle().presentYear); }
-function chronPresentLabel(){ const m=presentMarker(); if(m)return m.label||m.date||"Present"; return chronicle().presentDate||"Present"; }
+function chronPresentLabel(){ const m=presentMarker(); if(m)return chronMarkerTitle(m); return chronicle().presentDate||"Present"; }
 function chronPresentDateText(){ const m=presentMarker(); if(m&&m.date)return m.date; return chronicle().presentDate||""; }
 /* The Age / Phase the Present falls inside: the latest divider of that kind at or before the
    Present. With no Present set we take the last one chronologically. */
@@ -447,10 +447,10 @@ function updateChronNowChip(){
   b.style.setProperty("--ac", (age&&age.color)||"#d9a521");   // match the current Age's colour
   const parts=[];
   if(age)parts.push(`<span class="cnAge">❖ ${esc(age.label||age.date||"Age")}</span>`);
-  if(ph)parts.push(`<span class="cnPhase">${esc(ph.label||ph.date||"Phase")}</span>`);
+  if(ph)parts.push(`<span class="cnPhase">${esc(chronPhaseTitle(ph))}</span>`);
   b.innerHTML=parts.join('<span class="cnSep">·</span>');
   const ch=chronicle();
-  b.title=[age?("Age: "+(age.label||age.date||"—")):"", ph?("Phase: "+(ph.label||ph.date||"—")):"",
+  b.title=[age?("Age: "+(age.label||"—")):"", ph?chronPhaseTitle(ph):"",
            chronPresentLabel()?("Present: "+chronPresentLabel()):""].filter(Boolean).join("  •  ")+"  — click to open the Timeline";
 }
 function chronTypes(){ const ch=chronicle(); if(!Array.isArray(ch.types)||!ch.types.length)ch.types=CHRON_TYPES_SEED.map(x=>({...x})); return ch.types; }
@@ -647,6 +647,20 @@ function chronLabelSlot(x0, x1, eventXs, cardW, labelW){
   return null;
 }
 function chronLabelWidth(text){ return Math.max(58, String(text||"").length*6.1+22); }
+/* Phases are numbered automatically within their Age (each new Age restarts at 1). Their `label`
+   is an optional name on top of that number — "Phase 2" or "Phase 2 — The Sundering". */
+function chronPhaseNumber(m){
+  const seq=chronEntries(); let n=0;
+  for(const x of seq){
+    if(x.kind==="age")n=0;
+    else if(x.kind==="phase"){ n++; if(x.obj.id===m.id)return n; }
+  }
+  return n||1;
+}
+function chronPhaseTitle(m){ const nm=(m&&m.label||"").trim();
+  return "Phase "+chronPhaseNumber(m)+(nm?" — "+nm:""); }
+// display title for any divider
+function chronMarkerTitle(m){ return m.kind==="age" ? (m.label||"(unnamed age)") : chronPhaseTitle(m); }
 // which Age a Phase currently sits inside (the last Age before it in the sequence)
 function chronPhaseAge(phase){
   const seq=chronEntries(); const i=seq.findIndex(x=>x.obj.id===phase.id); if(i<0)return null;
@@ -1732,8 +1746,8 @@ let _geoDirty=true, _renderQueued=false, _provGeo=[], _contBox={}, _stars=null;
 let _coastSegs=[];   // ocean-tile edges that border a land province (dark coastline), rebuilt with geometry
 let _labelGroups=[], _labelMode=null, _labelsDirty=true, _medProvW=20;
 let _landCache={};   // continentId -> {canvas,x,y,w,h} silhouette of its provinces
-let _realmBorderCache={};   // continentId -> {canvas,x,y,w,h} overlay of realm borders
-let _terrainBorderCache={};   // continentId -> {canvas,x,y,w,h} overlay of terrain borders
+let _realmBorderCache=null;   // vector realm-border segments (see buildBorderSegs)
+let _terrainBorderCache=null;   // vector terrain-border segments (see buildBorderSegs)
 let _contProvCount={}, _contLabelRects={}, _customLabelRects={};   // province counts + on-screen name boxes
 let _keyLocMap={};   // provinceId -> "capital" | "admin" (so names can dodge the markers)
 let pingLayer={strokes:[],pins:[]};   // player annotations (viewer-local, persisted in localStorage)
@@ -1942,7 +1956,7 @@ function rebuildGeo(){
   _contProvCount={}; world.provinces.forEach(p=>{_contProvCount[p.continentId]=(_contProvCount[p.continentId]||0)+1;});
   _keyLocMap={}; world.realms.forEach(r=>{if(r.capitalId)_keyLocMap[r.capitalId]="capital";(r.adminCenters||[]).forEach(pid=>{if(!_keyLocMap[pid])_keyLocMap[pid]="admin";});});
   _landCache={};   // silhouettes rebuilt lazily for the new geometry
-  _realmBorderCache={}; _terrainBorderCache={};   // border overlays rebuilt lazily too
+  _realmBorderCache=null; _terrainBorderCache=null;   // border overlays rebuilt lazily too
   // typical province width (world units) → drives the region/province zoom handoff
   if(_provGeo.length){const ws=_provGeo.map(g=>g.maxx-g.minx).sort((a,b)=>a-b);_medProvW=Math.max(2,ws[Math.floor(ws.length/2)]);}
   computeCoastSegs();   // dark coastline only where ocean tiles touch land
@@ -1997,67 +2011,106 @@ function darkenColor(col,f){
   else{m=/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i.exec(col||"");if(m){r=+m[1];g=+m[2];b=+m[3];}}
   return [Math.round(r*f),Math.round(g*f),Math.round(b*f)];
 }
-// Generic: outline every place where two adjacent provinces have a different
-// value of keyOf(p). Each border pixel is painted colorOf(key) for its own side.
-function buildBorderCanvas(cid, keyOf, colorOf){
-  const ps=_provGeo.filter(g=>{const k=keyOf(g.p);return g.p.continentId===cid && k!=null && k!=="";});
-  if(!ps.length)return null;
-  let minx=1e9,miny=1e9,maxx=-1e9,maxy=-1e9;
-  ps.forEach(g=>{if(g.minx<minx)minx=g.minx;if(g.miny<miny)miny=g.miny;if(g.maxx>maxx)maxx=g.maxx;if(g.maxy>maxy)maxy=g.maxy;});
-  const pad=6; minx-=pad;miny-=pad;maxx+=pad;maxy+=pad;
-  const w=maxx-minx,h=maxy-miny;
-  const q=Math.min(3,Math.max(0.4,1500/Math.max(w,h)));
-  const W=Math.max(1,Math.round(w*q)),H=Math.max(1,Math.round(h*q));
-  const tmp=document.createElement("canvas");tmp.width=W;tmp.height=H;
-  const tx=tmp.getContext("2d");tx.imageSmoothingEnabled=false;tx.scale(q,q);tx.translate(-minx,-miny);
-  // synthetic colors → robust adjacency detection; remember each key's display colour
-  const idOf={}, revMap={}, colByK=[null]; let n=0;
-  const synthFor=key=>{const s=String(key);
-    if(idOf[s]===undefined){const k=idOf[s]=++n;const R=(k*73)%254+1,G=(k*151)%254+1,B=(k*211)%254+1;revMap[R+","+G+","+B]=k;colByK[k]=colorOf(key);}
-    const k=idOf[s];return `rgb(${(k*73)%254+1},${(k*151)%254+1},${(k*211)%254+1})`;};
-  tx.lineJoin="round"; tx.lineWidth=2/q;
-  for(const g of ps){const col=synthFor(keyOf(g.p));tx.fillStyle=col;tx.strokeStyle=col;const pts=g.pts;if(!pts.length)continue;
-    tx.beginPath();tx.moveTo(pts[0][0],pts[0][1]);for(let i=1;i<pts.length;i++)tx.lineTo(pts[i][0],pts[i][1]);tx.closePath();tx.fill();tx.stroke();}
-  const src=tx.getImageData(0,0,W,H).data;
-  const kAt=a=>(src[a+3]>128?(revMap[src[a]+","+src[a+1]+","+src[a+2]]||0):0);
-  const mark=new Uint16Array(W*H);
-  const px=(x,y)=>y*W+x, at=(x,y)=>(y*W+x)*4;
-  for(let y=0;y<H;y++)for(let x=0;x<W;x++){
-    const ka=kAt(at(x,y));
-    if(x+1<W){const kb=kAt(at(x+1,y));if(ka!==kb){if(ka)mark[px(x,y)]=ka;if(kb)mark[px(x+1,y)]=kb;}}
-    if(y+1<H){const kb=kAt(at(x,y+1));if(ka!==kb){if(ka)mark[px(x,y)]=ka;if(kb)mark[px(x,y+1)]=kb;}}
-  }
-  // thicken by one pixel (4-neighbour dilation, keeping each pixel's colour)
-  const grow=mark.slice();
-  for(let y=0;y<H;y++)for(let x=0;x<W;x++){const k=mark[px(x,y)];if(!k)continue;
-    if(x>0&&!grow[px(x-1,y)])grow[px(x-1,y)]=k; if(x+1<W&&!grow[px(x+1,y)])grow[px(x+1,y)]=k;
-    if(y>0&&!grow[px(x,y-1)])grow[px(x,y-1)]=k; if(y+1<H&&!grow[px(x,y+1)])grow[px(x,y+1)]=k;}
-  const out=document.createElement("canvas");out.width=W;out.height=H;
-  const octx=out.getContext("2d");const od=octx.createImageData(W,H);const o=od.data;
-  for(let i=0;i<grow.length;i++){const k=grow[i];if(!k)continue;const c=colByK[k];const a=i*4;o[a]=c[0];o[a+1]=c[1];o[a+2]=c[2];o[a+3]=245;}
-  octx.putImageData(od,0,0);
-  return {canvas:out,x:minx,y:miny,w,h};
+/* Generic border extraction — VECTOR, not raster.
+   Finds every stretch of province outline where the province across it has a different
+   value of keyOf(p), and returns those stretches as line segments grouped by colour.
+   Because these are real vectors stroked at a constant *device* width, borders stay
+   hairline-crisp at every zoom level (the old version baked them into a low-resolution
+   bitmap, which is what made them look blurry when scaled up).
+
+   Each segment is [ax,ay,bx,by,nx,ny] where (nx,ny) is the unit normal pointing INTO the
+   owning province, so the line can be nudged inward at draw time and two realms meeting
+   show as two adjacent lines in their own colours (as the raster version did). */
+const BORDER_STEP=7;        // world units: how finely an edge is sampled for neighbours
+function _borderGrid(ps){   // uniform bucket index over province bounding boxes
+  const cell=Math.max(8,_medProvW||20), g=new Map();
+  const key=(i,j)=>i+","+j;
+  ps.forEach(gp=>{
+    const i0=Math.floor(gp.minx/cell),i1=Math.floor(gp.maxx/cell);
+    const j0=Math.floor(gp.miny/cell),j1=Math.floor(gp.maxy/cell);
+    for(let i=i0;i<=i1;i++)for(let j=j0;j<=j1;j++){
+      const k=key(i,j); let a=g.get(k); if(!a)g.set(k,a=[]); a.push(gp); }
+  });
+  return (x,y)=>g.get(key(Math.floor(x/cell),Math.floor(y/cell)))||null;
 }
-function buildRealmBorderCanvas(cid){
+function buildBorderSegs(keyOf, colorOf){
+  if(!_provGeo.length)return [];
+  const lookup=_borderGrid(_provGeo);
+  // province at a point, restricted to the bucket the point falls in (topmost wins, as provinceAt does)
+  const at=(x,y)=>{ const bucket=lookup(x,y); if(!bucket)return null;
+    for(let i=bucket.length-1;i>=0;i--){ const g=bucket[i];
+      if(x<g.minx||x>g.maxx||y<g.miny||y>g.maxy)continue;
+      if(pointInPoly(g.pts,x,y))return g.p; }
+    return null; };
+  const byCol=new Map();   // colour string -> flat segment list
+  const push=(col,ax,ay,bx,by,nx,ny)=>{ let a=byCol.get(col); if(!a)byCol.set(col,a=[]); a.push(ax,ay,bx,by,nx,ny); };
+  for(const g of _provGeo){
+    const ka=keyOf(g.p); if(ka==null||ka==="")continue;
+    const pts=g.pts; if(pts.length<2)continue;
+    const col=colorOf(ka); if(!col)continue;
+    // Winding tells us exactly which side is inside, for every edge at once — far more reliable
+    // than probing a point near the edge (that misfires on short edges and concave notches).
+    let area2=0;
+    for(let i=0,j=pts.length-1;i<pts.length;j=i++)area2+=pts[j][0]*pts[i][1]-pts[i][0]*pts[j][1];
+    const ccw=area2>0;
+    for(let i=0;i<pts.length;i++){
+      const a=pts[i], b=pts[(i+1)%pts.length];
+      const ex=b[0]-a[0], ey=b[1]-a[1], len=Math.hypot(ex,ey); if(len<1e-6)continue;
+      // unit normal pointing INTO this province
+      const nx=(ccw?-ey:ey)/len, ny=(ccw?ex:-ex)/len;
+      const steps=Math.max(1,Math.ceil(len/BORDER_STEP));
+      let runT0=-1;   // start of the current run of border sub-segments along this edge
+      for(let s=0;s<steps;s++){
+        const t0=s/steps, t1=(s+1)/steps, tm=(t0+t1)/2;
+        const mx=a[0]+ex*tm, my=a[1]+ey*tm;
+        // probe just OUTSIDE the edge; try a little further before deciding there is no neighbour
+        // (at() yields a province object, not a _provGeo entry — pass it to keyOf directly)
+        let other=at(mx-nx*1.2, my-ny*1.2);
+        if(!other)other=at(mx-nx*3.0, my-ny*3.0);
+        const kb=other?keyOf(other):null;
+        const isBorder=(kb==null||kb==="")?true:(String(kb)!==String(ka));
+        if(isBorder){ if(runT0<0)runT0=t0; }
+        else if(runT0>=0){ push(col,a[0]+ex*runT0,a[1]+ey*runT0,a[0]+ex*t0,a[1]+ey*t0,nx,ny); runT0=-1; }
+      }
+      if(runT0>=0)push(col,a[0]+ex*runT0,a[1]+ey*runT0,b[0],b[1],nx,ny);
+    }
+  }
+  return [...byCol.entries()].map(([col,segs])=>({col,segs}));
+}
+function buildRealmBorderSegs(){
   const rc={}; world.realms.forEach(r=>rc[r.id]=r);
-  return buildBorderCanvas(cid, p=>p.realmId||null, id=>darkenColor(toHex(rc[id]?rc[id].color:"#445066"),0.78));
+  return buildBorderSegs(p=>p.realmId||null, id=>rgbCss(darkenColor(toHex(rc[id]?rc[id].color:"#445066"),0.78)));
 }
-function buildTerrainBorderCanvas(cid){
-  return buildBorderCanvas(cid, p=>p.terrain||null, t=>darkenColor(toHex(catColor("terrains",t)),0.7));
+function buildTerrainBorderSegs(){
+  return buildBorderSegs(p=>p.terrain||null, t=>rgbCss(darkenColor(toHex(catColor("terrains",t)),0.7)));
 }
-// Draw the cached realm-border overlays (assumes ctx already in world transform).
-function drawRealmBorders(ctx){
-  for(const c of world.continents){
-    let bc=_realmBorderCache[c.id]; if(bc===undefined)bc=_realmBorderCache[c.id]=buildRealmBorderCanvas(c.id);
-    if(bc)ctx.drawImage(bc.canvas,bc.x,bc.y,bc.w,bc.h);
+function rgbCss(c){ return "rgb("+c[0]+","+c[1]+","+c[2]+")"; }
+// Stroke a set of border segments. `s` is the current world→device scale, so the line keeps a
+// constant on-screen width (and a constant inward offset) no matter how far we're zoomed in.
+function drawBorderSegs(ctx,groups,s,widthPx){
+  if(!groups||!groups.length)return;
+  const w=widthPx/s, off=w*0.5;
+  ctx.save(); ctx.lineWidth=w; ctx.lineCap="round"; ctx.lineJoin="round"; ctx.globalAlpha=0.96;
+  for(const grp of groups){
+    const a=grp.segs; if(!a.length)continue;
+    ctx.strokeStyle=grp.col; ctx.beginPath();
+    for(let i=0;i<a.length;i+=6){
+      const dx=a[i+4]*off, dy=a[i+5]*off;
+      ctx.moveTo(a[i]+dx,a[i+1]+dy); ctx.lineTo(a[i+2]+dx,a[i+3]+dy);
+    }
+    ctx.stroke();
   }
+  ctx.restore();
 }
-// Draw the cached terrain-border overlays (resource-painting aid).
-function drawTerrainBorders(ctx){
-  for(const c of world.continents){
-    let bc=_terrainBorderCache[c.id]; if(bc===undefined)bc=_terrainBorderCache[c.id]=buildTerrainBorderCanvas(c.id);
-    if(bc)ctx.drawImage(bc.canvas,bc.x,bc.y,bc.w,bc.h);
-  }
+// Draw the cached realm-border overlay (assumes ctx already in world transform).
+function drawRealmBorders(ctx,s){
+  if(!_realmBorderCache)_realmBorderCache=buildRealmBorderSegs();
+  drawBorderSegs(ctx,_realmBorderCache,s,3.6);
+}
+// Draw the cached terrain-border overlay (resource-painting aid).
+function drawTerrainBorders(ctx,s){
+  if(!_terrainBorderCache)_terrainBorderCache=buildTerrainBorderSegs();
+  drawBorderSegs(ctx,_terrainBorderCache,s,2.6);
 }
 function contBoxC(cid){ return _contBox[cid] || continentBox(cid); }
 // distance scale bar (miles), drawn in device space anchored at bottom-right (rx,by)
@@ -2560,9 +2613,9 @@ function drawFrame(){
 
   // realm-border overlay — Realms toggle, on any mapmode except political (always on for Tech Level,
   // where realms share TL colours and need their boundaries + names to stay legible)
-  if(state.mapmode!=="political" && (state.realmOverlay || state.mapmode==="tech")) drawRealmBorders(ctx);
+  if(state.mapmode!=="political" && (state.realmOverlay || state.mapmode==="tech")) drawRealmBorders(ctx,s);
   // terrain-region outline overlay — Terrain toggle, on any mapmode except terrain
-  if(state.mapmode!=="terrain" && state.terrainOverlay) drawTerrainBorders(ctx);
+  if(state.mapmode!=="terrain" && state.terrainOverlay) drawTerrainBorders(ctx,s);
 
   // player ping/annotation strokes (world space, over the map)
   drawPingsWorld(ctx);
@@ -5087,8 +5140,8 @@ function renderChronicle(){
             const ms=chronMarkers().filter(m=>m.year!=null).sort((a,b)=>a.year-b.year);
             const cur=chronicle().presentMarkerId||"";
             const auto=presentMarker();
-            let o=`<option value="" ${cur?"":"selected"}>Newest Phase${auto&&!cur?` — ${esc(auto.label||auto.date||"")}`:""}</option>`;
-            o+=ms.map(m=>`<option value="${esc(m.id)}" ${cur===m.id?"selected":""}>${m.kind==="age"?"Age":"Phase"}: ${esc(m.label||m.date||"—")}${m.date?` (${esc(m.date)})`:""}</option>`).join("");
+            let o=`<option value="" ${cur?"":"selected"}>Newest Phase${auto&&!cur?` — ${esc(chronMarkerTitle(auto))}`:""}</option>`;
+            o+=ms.map(m=>`<option value="${esc(m.id)}" ${cur===m.id?"selected":""}>${m.kind==="age"?"Age: ":""}${esc(chronMarkerTitle(m))}</option>`).join("");
             return o; })()}</select></span>`
                 :(chronPresentLabel()?`<span class="chronPresentLbl">Present: <b>${esc(chronPresentLabel())}</b></span>`:"")}
       <span style="margin-left:auto;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
@@ -5208,23 +5261,23 @@ function renderChronicle(){
       const halfH=(hasEv?BASE+(dMax+1)*CARD_H+dMax*GAP:BASE+CARD_H*0.45)+12;
       const upH=halfH, dnH=halfH;
       // the name rides ON the axis, in the first gap between events wide enough to hold it
-      const lblTxt=m.label||"(unnamed phase)";
+      const lblTxt=chronPhaseTitle(m);
       const slot=chronLabelSlot(x0,x1,evXs,CARD_W,chronLabelWidth(lblTxt));
       const lblLeft=(slot!=null?slot:x0+chronLabelWidth(lblTxt)/2+10)-x0;
-      jump.push({label:"Phase — "+(m.label||m.date||"?")+(owner?" ("+(owner.label||"Age")+")":""), x:x0, kind:"phase"});
+      jump.push({label:chronPhaseTitle(m)+(owner?" ("+(owner.label||"Age")+")":""), x:x0, kind:"phase"});
       markHTML+=`<div class="chronPhase" data-mid="${esc(m.id)}" style="left:${Math.round(x0)}px; width:${Math.max(2,Math.round(x1-x0))}px;
           top:calc(50% - ${upH.toFixed(1)}px); height:${(upH+dnH).toFixed(1)}px">
-        <div class="chronPhaseLbl" style="left:${lblLeft.toFixed(1)}px" title="${esc("Phase"+(owner?" of "+(owner.label||"Age"):"")+" · starts "+(m.date||fmtChronYear(yOf(m),aOf(m)))+(editable?" — click to edit":""))}">
+        <div class="chronPhaseLbl" style="left:${lblLeft.toFixed(1)}px" title="${esc(lblTxt+(owner?" of "+(owner.label||"Age"):"")+" · starts "+(m.date||fmtChronYear(yOf(m),aOf(m)))+(editable?" — click to edit":""))}">
           <span class="chronMarkName">${esc(lblTxt)}</span></div>
       </div>`;
     });
     // undated dividers keep the simple line form until they're given a date
     undatedMarks.forEach(m=>{
       const x=markX(m);
-      jump.push({label:(m.kind==="age"?"AGE — ":"Phase — ")+(m.label||"(undated)"), x, kind:m.kind});
+      jump.push({label:(m.kind==="age"?"AGE — ":"")+chronMarkerTitle(m), x, kind:m.kind});
       markHTML+=`<div class="chronMark ${m.kind}" data-mid="${esc(m.id)}" style="left:${Math.round(x)}px" title="${esc((m.kind==="age"?"Age":"Phase")+(editable?" — click to edit":""))}">
         <div class="chronMarkHit"></div><div class="chronMarkLine"></div>
-        <div class="chronMarkLbl">${m.kind==="age"?'<span class="chronMarkOrn">❖</span>':""}<span class="chronMarkName">${esc(m.label||"(unnamed)")}</span><span class="chronMarkDate">undated</span></div>
+        <div class="chronMarkLbl">${m.kind==="age"?'<span class="chronMarkOrn">❖</span>':""}<span class="chronMarkName">${esc(chronMarkerTitle(m))}</span><span class="chronMarkDate">undated</span></div>
       </div>`;
     });
   }
@@ -5312,7 +5365,7 @@ function renderChronicle(){
       el.style.left=Math.round(x0)+"px"; el.style.width=Math.max(2,Math.round(x1-x0))+"px";
       el.style.top=`calc(50% - ${halfH.toFixed(1)}px)`; el.style.height=(halfH*2).toFixed(1)+"px";
       const lb=el.querySelector(".chronPhaseLbl");
-      if(lb){ const w=chronLabelWidth(m.label||"(unnamed phase)");
+      if(lb){ const w=chronLabelWidth(chronPhaseTitle(m));
         const slot=chronLabelSlot(x0,x1,evXs,CHRON_CARD_W*cs2,w);
         lb.style.left=((slot!=null?slot:x0+w/2+10)-x0).toFixed(1)+"px"; } });
     if(xOf2){ if(_pYear!=null&&_elNow)_elNow.style.left=Math.round(xOf2(_pYear))+"px";
@@ -5422,7 +5475,7 @@ function wireChronicleHead(box){
   const addMark=kind=>ev=>{ const ch=chronicle();
     const btn=ev.currentTarget;   // captured now — currentTarget is null once the callback defers
     const nAges=chronMarkers().filter(x=>x.kind==="age").length;
-    const m=normChronMarker({kind, label:kind==="age"?"New Age":"New Phase", gap:0,
+    const m=normChronMarker({kind, label:kind==="age"?"New Age":"", gap:0,   // Phases are numbered; the name is optional
       color:kind==="age"?CHRON_AGE_COLORS[nAges%CHRON_AGE_COLORS.length]:"#d9a521"});
     if(kind==="age"){ m.order=chronEntries().length; }   // a new Age always opens at the end of time
     else { chronMarkers().push(m); chronMovePhaseToAge(m, (currentChronMarker("age")||{}).id||""); markDirty(); renderChronicle();
@@ -5464,8 +5517,9 @@ function showChronMarkerBubble(m, anchor){
   closeChronicleBubble();
   const b=document.createElement("div"); b.className="chronBubble"; b.style.setProperty("--ec", m.kind==="age"?"#d9a521":"#7c8698");
   b.innerHTML=`<button class="fbX chronBX">✕</button>
-    <div class="chronBubDate">${m.kind==="age"?"Age":"Phase"} · starts ${esc(chronEntryDateText(m))}</div>
-    <label class="chronF"><span>Name</span><input class="cmName" value="${esc(m.label||"")}" placeholder="${m.kind==="age"?"e.g. The Third Age":"e.g. Phase 4"}"/></label>
+    <div class="chronBubDate">${m.kind==="age"?"Age":esc("Phase "+chronPhaseNumber(m))} · starts ${esc(chronEntryDateText(m))}</div>
+    <label class="chronF"><span>${m.kind==="age"?"Name":`Name <span class="note">(optional — shown after “Phase ${chronPhaseNumber(m)}”)</span>`}</span>
+      <input class="cmName" value="${esc(m.label||"")}" placeholder="${m.kind==="age"?"e.g. The Third Age":"e.g. The Sundering"}"/></label>
     <label class="chronF"><span>Years since the previous entry <span class="note">(“~30” approximate, “10-20” a range)</span></span>
       <div class="chronColRow"><input class="cmGap" value="${esc(gapText(m))}" placeholder="e.g. 12, ~30, 10-20"/>
         <button class="btn tiny cmUp" title="Move earlier">▲</button><button class="btn tiny cmDn" title="Move later">▼</button></div></label>
@@ -7389,7 +7443,7 @@ function exportRender(rect,outW,mode,legend,legendPos,provNames=true){
       ctx.beginPath(); ctx.moveTo(pts[0][0],pts[0][1]); for(let i=1;i<pts.length;i++)ctx.lineTo(pts[i][0],pts[i][1]); ctx.closePath(); ctx.stroke(); }
   }
   drawWater(ctx,s);
-  if(renderMode!=="political" && (state.realmOverlay || renderMode==="tech")) drawRealmBorders(ctx);
+  if(renderMode!=="political" && (state.realmOverlay || renderMode==="tech")) drawRealmBorders(ctx,s);
   ctx.setTransform(1,0,0,1,0,0);ctx.textAlign="center";ctx.textBaseline="middle";
   const keySz=Math.max(5,Math.round(mapW/360));   // capital/admin marker size (shared) — small so it doesn't crowd labels
   // markers first, so names/labels render on top of the capital stars & admin diamonds
