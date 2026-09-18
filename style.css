@@ -975,12 +975,21 @@ body.viewer .viewerchrome{ display:inline-flex !important; }
 .elViewName{font-weight:700; font-size:14px; margin-bottom:3px}
 .elTally{margin-top:6px; padding-top:5px; border-top:1px dashed var(--line); font-size:12.5px; color:var(--muted)}
 .elTally b{color:var(--ink); font-size:13px}
-/* elite emblem ("embroidery") + gold trim */
-.elEmblem{display:inline-flex; align-items:center; gap:4px; font-size:15px; line-height:1;
-  padding:2px 8px; border-radius:20px; margin:0 0 5px; font-weight:700; color:#4a3510;
-  background:linear-gradient(180deg,#f6e6ac,#c9a53c); box-shadow:0 1px 2px rgba(0,0,0,.22)}
-.elRow.embroidered{outline:2px solid #c9a53c; outline-offset:-4px;
-  background:linear-gradient(180deg, color-mix(in srgb,#c9a53c 8%,var(--panel2)), var(--panel2))}
+/* Optional gilding on an element: bronze / silver / gold.
+   The metal is drawn as an OUTLINE sitting just outside the row's border. An element's
+   custom colour (inline border-color + inset left stripe) therefore lands just inside it
+   as a liner, so gilding and colour layer as concentric rings instead of overwriting one
+   another. Outline takes no layout space, so neither changes the row's size.
+   Without a colour, the border-color below makes the frame read as solid metal. */
+.elRow.gilded{border-color:var(--gild-edge); outline:2px solid var(--gild-edge); outline-offset:0;
+  background:linear-gradient(180deg, color-mix(in srgb,var(--gild-edge) 9%,var(--panel2)), var(--panel2))}
+.gild-bronze{--gild-edge:#a9713c; --gild-lite:#e8c49a; --gild-ink:#4a2f14}
+.gild-silver{--gild-edge:#98a2ab; --gild-lite:#eef2f6; --gild-ink:#2b3238}
+.gild-gold{--gild-edge:#c9a53c; --gild-lite:#f6e6ac; --gild-ink:#4a3510}
+.elGildChip{display:inline-block; font-size:11px; line-height:1.4; letter-spacing:.3px;
+  padding:2px 9px; border-radius:20px; margin:0 0 5px; font-weight:700; color:var(--gild-ink);
+  background:linear-gradient(180deg,var(--gild-lite),var(--gild-edge));
+  box-shadow:0 1px 2px rgba(0,0,0,.22)}
 #forceAddBtn{position:absolute; left:12px; bottom:12px; z-index:6; box-shadow:0 2px 8px rgba(0,0,0,.18)}
 .bside{border:1px solid var(--line); border-radius:8px; padding:8px 10px; margin:6px 0; background:var(--panel2)}
 .bside .bname{font-weight:700; font-size:14px}

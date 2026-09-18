@@ -1142,11 +1142,21 @@ function elementWT(e){ return round2((+e.wt||0)*elCount(e)); }                  
 function elTallyHTML(e){ const m=elementMult(e); return `${elCount(e)}× &nbsp;·&nbsp; TS <b>${elementTS(e)}</b>${e.pts>0?` &nbsp;·&nbsp; (TS) <b>${elementPTS(e)}</b>`:""} &nbsp;·&nbsp; WT <b>${elementWT(e)}</b>${m!==1?` &nbsp;<span class="note">(quality ×${round2(m)})</span>`:""}`; }
 function forceTS(f){ return round2((f.elements||[]).reduce((a,e)=>a+elementTS(e),0)); }
 function forcePTS(f){ return round2((f.elements||[]).reduce((a,e)=>a+elementPTS(e),0)); }
+/* Optional "gilding": a metal rank on an element, shown as a metallic frame.
+   This deliberately owns a DIFFERENT visual channel from e.color — the gilding is the
+   frame, the custom colour is the left stripe — so the two can be used together
+   without fighting over the same border. */
+const GILDS={bronze:{label:"Bronze"}, silver:{label:"Silver"}, gold:{label:"Gold"}};
+function elGild(e){ return (e && GILDS[e.gild]) ? e.gild : ""; }
 function migrateElement(e){
   e.name = typeof e.name==="string"?e.name:"";
   e.count = Math.max(1, Math.round(+e.count||1));
   e.color = typeof e.color==="string"?e.color:"";          // optional element colour (none by default)
-  e.embroidery = typeof e.embroidery==="string"?e.embroidery:"";  // optional elite/notable emblem
+  e.embroidery = typeof e.embroidery==="string"?e.embroidery:"";  // legacy free-text emblem (kept so old saves load)
+  e.gild = GILDS[e.gild] ? e.gild : "";                    // "" | bronze | silver | gold
+  // Old saves marked elite elements with a pasted emoji. Carry those over as gold gilding
+  // so nothing silently loses its mark when an old snapshot is opened.
+  if(!e.gild && e.embroidery.trim()) e.gild="gold";
   e.ts=+e.ts||0; e.pts=+e.pts||0; e.wt=+e.wt||0; e.tl=+e.tl||0;
   if(typeof e.mob!=="string") e.mob = e.mob ? "Foot" : "0 (none)";
   if(!ELEMENT_CLASSES.includes(e.cls)) e.cls="Fire (F)";
@@ -1158,7 +1168,7 @@ function migrateElement(e){
 function newElement(typeId){
   const list=elementTypeList();
   const t=(typeId&&list.find(x=>x.id===typeId))||list[0]||{name:"",cls:"Fire (F)",ts:5,pts:0,wt:0,mob:"Foot",tl:1,features:[],equip:"Basic",troop:"Average"};
-  return migrateElement({name:t.name||"", count:t.count||1, color:t.color||"", embroidery:t.embroidery||"", ts:t.ts, pts:t.pts, cls:t.cls, wt:t.wt, mob:t.mob, tl:t.tl, features:(t.features||[]).slice(), equip:t.equip, troop:t.troop, type:t.name||""});
+  return migrateElement({name:t.name||"", count:t.count||1, color:t.color||"", gild:t.gild||"", ts:t.ts, pts:t.pts, cls:t.cls, wt:t.wt, mob:t.mob, tl:t.tl, features:(t.features||[]).slice(), equip:t.equip, troop:t.troop, type:t.name||""});
 }
 function newForce(x,y,realmId){ return {id:uid(), name:"New Force", domain:"land", x:Math.round(x), y:Math.round(y), realmId:realmId||null, scale:1,
   elements:[newElement()],
@@ -1226,25 +1236,37 @@ function elementFieldGrid(e, ro, withType){
     </div>
     <div class="field"><label>Optional features</label>${elFeaturesHTML(e,ro)}</div>
     ${ro?"":`<div class="field2">
-      <div class="field"><label>Colour <span class="note">(optional)</span></label>
+      <div class="field"><label>Colour <span class="note">(liner &amp; stripe)</span></label>
         <span style="display:flex;align-items:center;gap:6px">
           <input type="checkbox" class="elColorOn" ${e.color?"checked":""} title="Give this element a colour"/>
           <input type="color" class="elColor" value="${e.color||'#c0392b'}" ${!e.color?"disabled":""} style="width:40px;height:28px;padding:1px"/>
         </span>
       </div>
-      <div class="field"><label>Embroidery <span class="note">(elite emblem)</span></label>
-        <input class="elEmb" value="${esc(e.embroidery||'')}" placeholder="e.g. ★ ⚜ 👑" maxlength="10"/></div>
+      <div class="field"><label>Gilding <span class="note">(outer frame)</span></label>
+        <select class="elGild" title="Optional metal rank — a metallic frame around this element. Combines with Colour, which becomes a liner just inside it.">
+          <option value="" ${!elGild(e)?"selected":""}>None</option>
+          ${Object.keys(GILDS).map(k=>`<option value="${k}" ${elGild(e)===k?"selected":""}>${GILDS[k].label}</option>`).join("")}
+        </select></div>
     </div>`}
     <div class="elTally">${elTallyHTML(e)}</div>`;
 }
 // apply the element's colour accent + elite emblem to its row (works in editor and read-only viewer)
 function applyElStyle(row, e){
-  row.style.borderColor = e.color || "";
+  const g=elGild(e);
+  // The two stack as concentric layers rather than competing for one edge:
+  //   gilding -> the OUTER metal frame (CSS outline) + wash + chip
+  //   colour  -> the border just inside it (a liner) + the left stripe
+  // With both set you get a metal frame with a coloured liner; with only one, that one
+  // simply takes the edge on its own.
+  row.classList.remove("gilded","gild-bronze","gild-silver","gild-gold");
+  if(g) row.classList.add("gilded","gild-"+g);
   row.style.boxShadow = e.color ? `inset 5px 0 0 ${e.color}` : "";
-  row.classList.toggle("embroidered", !!e.embroidery);
-  let em=row.querySelector(":scope > .elEmblem");
-  if(e.embroidery){ if(!em){ em=document.createElement("span"); em.className="elEmblem"; em.title="Notable / elite"; row.insertBefore(em, row.firstChild); } em.textContent=e.embroidery; }
-  else if(em){ em.remove(); }
+  row.style.borderColor = e.color || "";
+  const old=row.querySelector(":scope > .elEmblem"); if(old)old.remove();   // legacy emoji pill
+  let chip=row.querySelector(":scope > .elGildChip");
+  if(g){ if(!chip){ chip=document.createElement("span"); row.insertBefore(chip, row.firstChild); }
+    chip.className="elGildChip gild-"+g; chip.title="Gilded — "+GILDS[g].label; chip.textContent=GILDS[g].label; }
+  else if(chip){ chip.remove(); }
 }
 // Wire the field grid inside `row` to element `e`. Updates the block tally in place
 // (so text fields keep focus). `rerender` rebuilds the list (used when features change);
@@ -1263,7 +1285,7 @@ function bindElementFields(row, e, rerender, onTotals){
   on(".elTl","input",x=>{e.tl=+x.target.value||0; markDirty();});
   on(".elEquip","change",x=>{e.equip=x.target.value; tally();});
   on(".elTroop","change",x=>{e.troop=x.target.value; tally();});
-  on(".elEmb","input",x=>{e.embroidery=x.target.value; applyElStyle(row,e); markDirty();});
+  on(".elGild","change",x=>{e.gild=GILDS[x.target.value]?x.target.value:""; applyElStyle(row,e); markDirty();});
   const con=q(".elColorOn"), cp=q(".elColor");
   if(con)con.addEventListener("change",x=>{ e.color = x.target.checked ? (cp?cp.value:"#c0392b") : ""; if(cp)cp.disabled=!x.target.checked; applyElStyle(row,e); markDirty(); });
   if(cp)cp.addEventListener("input",x=>{ e.color=x.target.value; if(con)con.checked=true; applyElStyle(row,e); markDirty(); });
@@ -2011,6 +2033,19 @@ function darkenColor(col,f){
   else{m=/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i.exec(col||"");if(m){r=+m[1];g=+m[2];b=+m[3];}}
   return [Math.round(r*f),Math.round(g*f),Math.round(b*f)];
 }
+/* Readable ink on an arbitrary fill colour.
+   Anywhere a realm / religion / category colour is used as the BACKGROUND for text, the
+   text colour must be derived from it. Hard-coding white means a realm whose colour IS
+   white (White-Upon-Shore) (or any very pale colour) renders white-on-white and the
+   label disappears. Use bestTextOn(bg) for those, never a literal "#fff". */
+function relLuminance(col){                    // WCAG relative luminance: 0 (black) … 1 (white)
+  const c=darkenColor(toHex(col),1);           // darkenColor with f=1 is just a colour parser
+  const f=v=>{ v/=255; return v<=0.03928 ? v/12.92 : Math.pow((v+0.055)/1.055,2.4); };
+  return 0.2126*f(c[0])+0.7152*f(c[1])+0.0722*f(c[2]);
+}
+function bestTextOn(col){ return relLuminance(col)>0.2 ? "#16202b" : "#ffffff"; }
+// A pale fill also needs an outline or it vanishes against the pale map/paper behind it.
+function needsCasing(col){ return relLuminance(col)>0.55; }
 /* Generic border extraction — VECTOR, not raster.
    Finds every stretch of province outline where the province across it has a different
    value of keyOf(p), and returns those stretches as line segments grouped by colour.
@@ -2251,10 +2286,16 @@ function drawForces(ctx,cam,s,cw,ch){
     ctx.lineWidth=selm?3.5:2.5;ctx.strokeStyle=(state.moveMode==="force"&&selm)?"#e0b24e":col;ctx.stroke();
     // thin dark casing just outside the ring so the token never blends into a same-coloured province
     ctx.beginPath();ctx.arc(X,Y,R+(selm?2.4:1.8),0,7);ctx.lineWidth=1.3;ctx.strokeStyle="rgba(14,18,26,.72)";ctx.stroke();
+    // …and a hairline just inside it, so a pale ring stays readable as a ring against the white body
+    if(needsCasing(col)){ctx.beginPath();ctx.arc(X,Y,R-(selm?1.9:1.4),0,7);ctx.lineWidth=0.9;ctx.strokeStyle="rgba(14,18,26,.42)";ctx.stroke();}
     ctx.font=`${Math.round(16*sc)}px "Segoe UI Emoji",system-ui,sans-serif`;ctx.fillText((FORCE_DOMAINS[f.domain]||FORCE_DOMAINS.land).icon,X,Y);
     // TS badge
     ctx.font="700 10px system-ui,sans-serif";const ts=""+forceTS(f);
-    const bw=ctx.measureText(ts).width+8;ctx.fillStyle=col;roundRect(ctx,X+R*0.55,Y+R*0.4,bw,14,7);ctx.fill();ctx.fillStyle="#fff";ctx.fillText(ts,X+R*0.55+bw/2,Y+R*0.4+7);
+    const bw=ctx.measureText(ts).width+8;
+    ctx.fillStyle=col;roundRect(ctx,X+R*0.55,Y+R*0.4,bw,14,7);ctx.fill();
+    // a pale realm colour needs a casing, or the badge itself is lost against pale terrain
+    if(needsCasing(col)){ctx.lineWidth=1;ctx.strokeStyle="rgba(14,18,26,.6)";ctx.stroke();}
+    ctx.fillStyle=bestTextOn(col);ctx.fillText(ts,X+R*0.55+bw/2,Y+R*0.4+7);
     if(f.name){ctx.font="600 11px system-ui,sans-serif";ctx.lineWidth=3.2;ctx.strokeStyle="rgba(255,255,255,.92)";ctx.strokeText(f.name,X,Y-R-7);ctx.fillStyle="#22313f";ctx.fillText(f.name,X,Y-R-7);}
   }
   // battle overlays
@@ -2292,8 +2333,10 @@ function drawHolySiteMarkers(ctx,cam,s,cw,ch){
     const img=sym?getSymImg(sym):null;
     if(img && img.complete && img.naturalWidth){ ctx.save(); ctx.beginPath(); ctx.arc(X,Y,9,0,7); ctx.clip(); ctx.drawImage(img,X-9,Y-9,18,18); ctx.restore(); }
     else { ctx.fillStyle="#e0a020"; ctx.fillText("☀",X,Y); }
-    if(rels.length>1){ ctx.fillStyle=catColor("religions",rel); ctx.beginPath(); ctx.arc(X+8,Y-8,4.5,0,7); ctx.fill();
-      ctx.fillStyle="#fff"; ctx.font='8px system-ui,sans-serif'; ctx.fillText(String(rels.length),X+8,Y-8); ctx.font='15px "Segoe UI Emoji",system-ui,sans-serif'; }
+    if(rels.length>1){ const rc=catColor("religions",rel);
+      ctx.fillStyle=rc; ctx.beginPath(); ctx.arc(X+8,Y-8,4.5,0,7); ctx.fill();
+      if(needsCasing(rc)){ ctx.lineWidth=0.9; ctx.strokeStyle="rgba(14,18,26,.6)"; ctx.stroke(); }
+      ctx.fillStyle=bestTextOn(rc); ctx.font='8px system-ui,sans-serif'; ctx.fillText(String(rels.length),X+8,Y-8); ctx.font='15px "Segoe UI Emoji",system-ui,sans-serif'; }
   }
   ctx.restore();
 }
@@ -3932,9 +3975,11 @@ function renderForceView(){
     const tsCell = mult!==1 ? `${e.ts||0} → <b>${each}</b>` : `${e.ts||0}`;
     const ptsCell = mult!==1 ? `${e.pts||0} → ${eachP}` : `${e.pts||0}`;
     const feats=(e.features||[]).length?e.features.map(x=>`<span class="tag">${esc(x)}</span>`).join(" "):"—";
+    // same layering as applyElStyle: metal frame outside, colour liner + stripe inside
+    const g=elGild(e);
     const style=e.color?` style="border-color:${e.color};box-shadow:inset 5px 0 0 ${e.color}"`:"";
-    return `<div class="elRow${e.embroidery?' embroidered':''}"${style}>
-      ${e.embroidery?`<span class="elEmblem">${esc(e.embroidery)}</span>`:""}
+    return `<div class="elRow${g?" gilded gild-"+g:""}"${style}>
+      ${g?`<span class="elGildChip gild-${g}">${GILDS[g].label}</span>`:""}
       <div class="elViewName">${esc(e.name||("Element "+(i+1)))}${elCount(e)>1?` <span class="note">×${elCount(e)}</span>`:""}</div>
       ${row("Class",esc(e.cls))}
       ${row("Mobility",esc(e.mob))}
