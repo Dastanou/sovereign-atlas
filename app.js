@@ -8432,17 +8432,15 @@ async function openMenu(){
       <button class="btn primary" id="mPopulate">🎲 GM Screen (populate, grow &amp; tune)…</button>
       <button class="btn" id="mNew">＋ New world</button>
       <button class="btn" id="mSaveAs">💾 Save now</button>
-      <button class="btn" id="mExport">⬇ Export JSON to herald folder</button>
+      <button class="btn" id="mExport">⬇ Export JSON</button>
       <button class="btn" id="mTimelineSave">🕑 Save snapshot (Phase/Turn)…</button>
       <button class="btn" id="mArchiveData">🗄 Archive full data to disk…</button>
-      <button class="btn primary" id="mPublish">🌐 Publish &amp; push live…</button>
-      <button class="btn" id="mGitStatus">🔎 Check publish/git status…</button>
-      <button class="btn" id="mGitCancel">🛠 Repair GitHub Pages deploy…</button>
+      <button class="btn primary" id="mPublish">🌐 Upload latest to the site</button>
       <button class="btn" id="mExportSvg">⬇ Export map (PNG)…</button>
       <button class="btn" id="mExportAll">⬇ Export maps (Herald)…</button>
       <button class="btn" id="mImport">⬆ Import / restore JSON</button>
     </div>
-    <p class="note"><b>Export JSON</b> downloads one file containing <i>everything</i> — every province's population, religions, cultures, languages, resources, realms, history and notes. <b>Archive full data to disk</b> saves that same complete snapshot (date-stamped) to a folder so you build up a history you can return to. <b>Import / restore JSON</b> loads any such file back.</p>
+    <p class="note"><b>Export JSON</b> saves one file containing <i>everything</i> — every province's population, religions, cultures, languages, resources, realms, history and notes — into the <b>exports</b> folder next to the app. <b>Archive full data to disk</b> saves that same complete snapshot (date-stamped) to a folder you choose, so you build up a history you can return to. <b>Import / restore JSON</b> loads any such file back.</p>
     <input type="file" id="fileInput" accept="application/json" class="hidden"/>
     <div class="sectionH">Map scale</div>
     <div class="field2">
@@ -8461,6 +8459,7 @@ async function openMenu(){
     {_compendium=null;world=normalize(sampleWorld());world.name="New World";world.continents=[];world.provinces=[];world.realms=[];afterLoad();closeModal();}};
   $("#mSaveAs").onclick=()=>saveWorld(false);
   $("#mExport").onclick=async()=>{
+    syncCompendiumToWorld();   // the compendium lives outside `world` — fold it in before serialising
     const name=world.name+" "+tstamp()+".json";
     const data=btoa(unescape(encodeURIComponent(JSON.stringify(world,null,2))));   // base64, unicode-safe
     try{
@@ -8472,8 +8471,6 @@ async function openMenu(){
   $("#mPopulate").onclick=()=>{closeModal();openGMScreen();};
   $("#mArchiveData").onclick=archiveDataToDisk;
   $("#mPublish").onclick=publishViewer;
-  $("#mGitStatus").onclick=checkGitStatus;
-  $("#mGitCancel").onclick=forceCancelDeploys;
   $("#mExportSvg").onclick=()=>{closeModal();openExport();};
   $("#mExportAll").onclick=()=>{closeModal();openExportAll();};
   $("#mImport").onclick=()=>$("#fileInput").click();
@@ -8608,29 +8605,55 @@ function div(cls){const d=document.createElement("div");d.className=cls;return d
 function esc(s){return (s??"").toString().replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
 function downloadText(name,text){const b=new Blob([text],{type:"text/plain"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=name;a.click();}
 function tstamp(){const d=new Date(),p=n=>String(n).padStart(2,"0");return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}-${p(d.getMinutes())}`;}
-let _dataArchiveDir="Z:\\herald\\data";
-let _viewerPublishDir="Z:\\herald\\viewer";
-let _exportDir="Z:\\herald\\data";
+// Both of these are relative names, so the server creates them inside the Project Sovereign
+// folder — exports stay on this PC rather than going out to the herald share.
+let _dataArchiveDir="";          // blank until the first archive; filled with the real path below
+let _exportDir="exports";
+let _appPaths=null;
+async function appPaths(){       // absolute paths for this install, fetched once
+  if(!_appPaths){ try{ _appPaths=await fetch("/api/paths").then(r=>r.json()); }catch(_){ _appPaths={}; } }
+  return _appPaths;
+}
+/* One button, one step: rebuild the player site from the current world and push it straight
+   to the live site over the GitHub API. Nothing is written to a network share and there is no
+   local clone of the site repo — the target is asked for once and then remembered by the
+   server in publish.json. */
 async function publishViewer(){
-  const folder=prompt("Publish the player viewer & push it live into this folder:",_viewerPublishDir);
-  if(!folder)return; _viewerPublishDir=folder.trim();
+  if(VIEWER)return;
   syncCompendiumToWorld();
+  const post=(url,body)=>fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body||{})}).then(r=>r.json());
   try{
-    flash("Publishing…");
-    const res=await fetch("/api/publish",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({folder:_viewerPublishDir,world})});
-    const j=await res.json();
-    if(!j.ok){flash("Error: "+(j.error||"publish failed"));return;}
-    // one button: publish then upload straight to GitHub via the API (no git push)
-    flash("Published — uploading to GitHub…");
-    const gr=await fetch("/api/ghupload",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({folder:_viewerPublishDir})});
-    const gj=await gr.json();
-    if(gj.ok) flash("Published & uploaded ✓ — GitHub deploys in ~1 minute.");
-    else alert("Published the files, but the GitHub upload didn't complete:\n\n"+(gj.output||gj.error||"unknown"));
+    flash("Building the site…");
+    const j=await post("/api/publish",{world});
+    if(!j.ok){flash("Error: "+(j.error||"build failed"));return;}
+    flash("Uploading to the site…");
+    let gj=await post("/api/ghupload",{});
+    // First run (or a token that's been revoked): ask once, then it's remembered.
+    if(gj.needsSetup){
+      const body={};
+      if((gj.missing||[]).includes("repo")){
+        const t=prompt("Which GitHub repo hosts the player site?\n\nEnter it as owner/repo — for example  dastan/herald-atlas",gj.suggest||"");
+        if(!t)return flash("Upload cancelled.");
+        body.target=t.trim();
+      }
+      if((gj.missing||[]).includes("token")){
+        const tok=prompt((gj.output?gj.output+"\n\n":"")+
+          "Paste a GitHub token with 'Contents: Read and write' on that repo.\n\nIt is stored on this machine only, in publish.json next to sovereign.py.");
+        if(!tok)return flash("Upload cancelled.");
+        body.token=tok.trim();
+      }
+      flash("Uploading to the site…");
+      gj=await post("/api/ghupload",body);
+    }
+    if(gj.ok) flash("Uploaded ✓ — live in about a minute.");
+    else alert("The site was built, but the upload didn't complete:\n\n"+(gj.output||gj.error||"unknown"));
   }catch(e){flash("Error: "+e.message);}
 }
 async function archiveDataToDisk(){
-  const folder=prompt("Save a complete, date-stamped data snapshot into this folder:",_dataArchiveDir);
+  const def=_dataArchiveDir || (await appPaths()).archive || "archive";
+  const folder=prompt("Save a complete, date-stamped data snapshot into this folder:",def);
   if(!folder)return; _dataArchiveDir=folder.trim();
+  syncCompendiumToWorld();   // the compendium lives outside `world` — fold it in before serialising
   const name=world.name+" "+tstamp()+".json";
   const data=btoa(unescape(encodeURIComponent(JSON.stringify(world,null,2))));   // base64, unicode-safe
   try{
@@ -8639,26 +8662,6 @@ async function archiveDataToDisk(){
     if(j.ok)flash("Archived full data → "+j.folder+"\\"+name);
     else flash("Error: "+(j.error||"archive failed"));
   }catch(e){flash("Error: "+e.message);}
-}
-async function checkGitStatus(){
-  const folder=prompt("Check the git/publish status of this folder:",_viewerPublishDir);
-  if(!folder)return; _viewerPublishDir=folder.trim();
-  flash("Checking git status…");
-  try{
-    const r=await fetch("/api/gitstatus",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({folder:_viewerPublishDir})});
-    const j=await r.json();
-    alert(j.output||j.error||"No response.");
-  }catch(e){alert("Error: "+e.message);}
-}
-async function forceCancelDeploys(){
-  const folder=prompt("Repair GitHub Pages for the repo in this folder (switch to Actions build, clear stuck deployments, cancel stuck runs):",_viewerPublishDir);
-  if(!folder)return; _viewerPublishDir=folder.trim();
-  flash("Repairing GitHub Pages deploy…");
-  try{
-    const r=await fetch("/api/gitcancel",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({folder:_viewerPublishDir})});
-    const j=await r.json();
-    alert(j.output||j.error||"No response.");
-  }catch(e){alert("Error: "+e.message);}
 }
 let flashTimer=null;
 function flash(msg){const h=$("#hint");h.textContent=msg;h.classList.add("show");clearTimeout(flashTimer);flashTimer=setTimeout(()=>h.classList.remove("show"),2600);}
