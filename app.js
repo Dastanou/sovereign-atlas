@@ -2248,18 +2248,31 @@ function forceAt(wx,wy){
   for(let i=world.forces.length-1;i>=0;i--){const f=world.forces[i];const r=(15*(f.scale||1))/state.cam.scale;const dx=f.x-wx,dy=f.y-wy;if(dx*dx+dy*dy<r*r)return f;}
   return null;
 }
-// Keep force tokens from landing exactly on top of each other, so overlapping
-// (battling) forces stay individually clickable and can be separated again.
+/* Keep force tokens from landing exactly on top of each other, so overlapping
+   (battling) forces stay individually clickable and can be separated again.
+
+   The limit is derived from how big the tokens actually are ON SCREEN at the current
+   zoom, not a fixed distance in world units. Tokens are drawn at a constant pixel size,
+   so a flat world-space gap (this used to be 16) shrinks to nothing when you zoom out
+   and balloons into a huge visible gap when you zoom in — which is when you are most
+   likely to be placing tokens deliberately. Tying it to the on-screen radius means
+   "as close as they look when you drop them" is what you get, at any zoom. */
+const TOKEN_PACK=0.38;   // centres may close to this fraction of the two radii (heavy overlap allowed)
+function forceRadiusWorld(f){ return (15*(f.scale||1))/(state.cam.scale||1); }
+function forceMinGap(a,b){
+  const s=state.cam.scale||1;
+  return Math.max(2/s, (forceRadiusWorld(a)+forceRadiusWorld(b))*TOKEN_PACK);   // 2px floor keeps both clickable
+}
 function separateForce(f, minGap){
-  minGap = minGap || 16;
   for(let iter=0; iter<12; iter++){
     let moved=false;
     for(const o of world.forces){ if(o.id===f.id)continue;
+      const lim=(minGap!=null)?minGap:forceMinGap(f,o);
       let dx=f.x-o.x, dy=f.y-o.y, d=Math.hypot(dx,dy);
-      if(d<minGap){
+      if(d<lim){
         if(d<0.01){ dx=(Math.random()*2-1); dy=(Math.random()*2-1); d=Math.hypot(dx,dy)||1; }
-        const push=(minGap-d);
-        f.x=Math.round(f.x+dx/d*push); f.y=Math.round(f.y+dy/d*push); moved=true;
+        const push=(lim-d);
+        f.x=round2(f.x+dx/d*push); f.y=round2(f.y+dy/d*push); moved=true;
       }
     }
     if(!moved)break;
@@ -7199,7 +7212,7 @@ function setupMapInteraction(){
     if(state.rulerOn){ if(state.rulerDone){ state.rulerPts=[]; state.rulerDone=false; } state.rulerPts.push([wx,wy]); state.rulerCur=null; requestRender(); return; }
     if(state.mapmode==="military"){
       // sticky move: while Move is toggled on, every click relocates the selected force
-      if(state.moveMode==="force" && state.selForce && !VIEWER){ const f=world.forces.find(x=>x.id===state.selForce); if(f){ beginEdit(); f.x=Math.round(wx); f.y=Math.round(wy); separateForce(f); markDirty(); renderMap(); } return; }
+      if(state.moveMode==="force" && state.selForce && !VIEWER){ const f=world.forces.find(x=>x.id===state.selForce); if(f){ beginEdit(); f.x=round2(wx); f.y=round2(wy); separateForce(f); markDirty(); renderMap(); } return; }
       const bt=battleAt(wx,wy); if(bt){ selectBattle(bt[0].id,bt[1].id); return; }
       const f=forceAt(wx,wy); if(f){ selectForce(f.id); return; }
       if(state.selForce||state.selBattle){ state.selForce=null; state.selBattle=null; state.moveMode=null; clearSelection(); }
@@ -7342,7 +7355,7 @@ function handleTapWorld(wx,wy){
   if(state.rulerOn){ if(state.rulerDone){state.rulerPts=[];state.rulerDone=false;} state.rulerPts.push([wx,wy]); state.rulerCur=null; requestRender(); return; }
   if(state.pingOn && (state.pingTool==="pin"||state.pingTool==="numpin")){ const pn={x:wx,y:wy,color:state.pingColor}; if(state.pingTool==="numpin")pn.n=nextPinNum(); pingLayer.pins.push(pn); savePings(); requestRender(); return; }
   if(state.mapmode==="military"){
-    if(state.moveMode==="force" && state.selForce && !VIEWER){ const f=world.forces.find(x=>x.id===state.selForce); if(f){beginEdit();f.x=Math.round(wx);f.y=Math.round(wy);separateForce(f);markDirty();renderMap();} return; }
+    if(state.moveMode==="force" && state.selForce && !VIEWER){ const f=world.forces.find(x=>x.id===state.selForce); if(f){beginEdit();f.x=round2(wx);f.y=round2(wy);separateForce(f);markDirty();renderMap();} return; }
     const bt=battleAt(wx,wy); if(bt){ selectBattle(bt[0].id,bt[1].id); return; }
     const f=forceAt(wx,wy); if(f){ selectForce(f.id); return; }
     if(state.selForce||state.selBattle){ state.selForce=null;state.selBattle=null;state.moveMode=null; clearSelection(); } return;
