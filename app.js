@@ -1036,7 +1036,7 @@ function renderFeatureCatLegend(box){
   });
 }
 function selectRegion(id){
-  state.selRegion=id; state.selProvince=null;state.selRealm=null;state.selReligion=null;state.selWater=null;state.selLabel=null;state.selForce=null;state.selBattle=null;state.selMonster=null;
+  state.selRegion=id; state.selProvince=null;state.selRealm=null;state.selReligion=null;state.selWater=null;state.selLabel=null;state.selForce=null;state.selMonster=null;
   document.body.classList.add("has-sel");
   hideTechPanel();renderMap(); renderRegionEditor(); renderWonderPanel();
 }
@@ -1102,8 +1102,45 @@ const FEATURE_CAT_GLYPH={wonder:"🏛️",resource:"💎",misc:"❖"};
 /* Province-feature TYPES are user-editable (GM Screen): each has an id, a label, a colour and a
    glyph. The built-ins below seed new/old worlds; "wonder" stays hidden (Wonders are their own
    objects now) so nothing breaks in existing saves. */
-const FEATURE_CATS_SEED=[{id:"resource",label:"Resource feature",color:"#5fb26a",glyph:"💎"},
-                         {id:"misc",label:"Misc",color:"#8a93a6",glyph:"❖"}];
+const FEATURE_CATS_SEED=[{id:"resource",label:"Resource feature",color:"#5fb26a",glyph:"💎",modes:["resource"]},
+                         {id:"defence",label:"Defenses",color:"#8c6fb0",glyph:"🏰",modes:["military"]},
+                         {id:"terrainfeat",label:"Terrain feature",color:"#a8794a",glyph:"⛰️",modes:["terrain"]},
+                         {id:"misc",label:"Misc",color:"#8a93a6",glyph:"❖",modes:[]}];
+/* Which mapmodes a feature type may be pinned to. Anything with its own token layer
+   (monsters) is excluded — its glyphs would fight the tokens for the same spot. */
+const FEATURE_MODES=["political","terrain","resource","religion","culture","race","language",
+                     "population","settlement","economy","region","tech","military"];
+function featureModeLabel(m){ const r=MAPMODE_BAR.find(x=>x[0]===m); return r?r[2]:m; }
+function featureCatModes(c){ return Array.isArray(c&&c.modes)?c.modes.filter(m=>FEATURE_MODES.includes(m)):[]; }
+function featureCatsForMode(mode){ return featureCatDefs().filter(c=>featureCatModes(c).includes(mode)).map(c=>c.id); }
+/* A default glyph (and, for types saved before "shows on" existed, a default map) for a
+   feature type, matched on what the type is called. Two separate uses:
+     - the glyph fills in any type still showing the placeholder ❖, at any time;
+     - the maps only seed a type that has no `modes` list yet.
+   Anything you set yourself — a glyph you typed, or maps you picked — is never overwritten,
+   and every one of these is editable in the GM screen. First match wins, so order the
+   specific patterns above the general ones. */
+const FEATURE_CAT_HINTS=[
+  [/resource|good|trade|commodit/,                                  "💎", ["resource"]],
+  [/defen[cs]|fort|castle|wall|strong|citadel|keep|garrison|tower/, "🏰", ["military"]],
+  [/bzvgor|rock|stone|boulder|crag|monolith|menhir/,                "🪨", ["terrain"]],
+  [/ruin|derelict|abandon|remnant|rubble/,                          "🏚️", ["terrain"]],
+  [/hazard|danger|peril|blight|curse|hostile|toxic/,                "⚠️", ["terrain"]],
+  [/mine|quarry|excavat/,                                           "⛏️", ["resource"]],
+  [/cave|cavern|underdark|underground|tunnel|chasm/,                "🕳️", ["terrain"]],
+  [/forest|wood|jungle|grove|thicket/,                              "🌲", ["terrain"]],
+  [/river|lake|water|spring|oasis|well|fount/,                      "💧", ["terrain"]],
+  [/tomb|grave|crypt|barrow|burial|necro/,                          "⚰️", ["terrain"]],
+  [/magic|arcane|ley|eldritch|anomal|rift|portal/,                  "✨", ["terrain"]],
+  [/battle|warfield|siege|muster/,                                  "⚔️", ["military"]],
+  [/shrine|temple|holy|sacred|sanctum/,                             "⛩️", ["religion"]],
+  [/terrain|geograph|landscape|landmark|natural/,                   "⛰️", ["terrain"]],
+];
+function featureCatHint(c){
+  const t=((c.id||"")+" "+(c.label||"")).toLowerCase();
+  for(const h of FEATURE_CAT_HINTS) if(h[0].test(t)) return {glyph:h[1], modes:h[2]};
+  return {glyph:"", modes:[]};
+}
 function featureCatDefs(){ if(!Array.isArray(world.featureCatDefs)||!world.featureCatDefs.length)world.featureCatDefs=FEATURE_CATS_SEED.map(x=>({...x})); return world.featureCatDefs; }
 function featureCatDef(id){ return featureCatDefs().find(c=>c.id===id) || (id==="wonder"?{id:"wonder",label:"Wonder",color:"#e0b34e",glyph:"🏛️"}:null); }
 function featureCatColor(id){ const d=featureCatDef(id); return d?d.color:(FEATURE_CAT_COLORS[id]||"#8a93a6"); }
@@ -1190,7 +1227,6 @@ const DEFAULT_CREATURE_TYPES=[
 function creatureType(id){ return (world.creatureTypes||[]).find(t=>t.id===id) || null; }
 function creatureTypeColorOf(m){ const t=m&&creatureType(m.creatureType); return t?t.color:"#7a3b3b"; }
 function creatureTypeName(m){ const t=m&&creatureType(m.creatureType); return t?t.name:""; }
-function roll3d6(){ return (1+Math.floor(Math.random()*6))+(1+Math.floor(Math.random()*6))+(1+Math.floor(Math.random()*6)); }
 // ---- element field builders (shared by the GM template editor and the force editor) ----
 function elClsSelect(v,ro){ return `<select class="elCls" ${ro?"disabled":""}>${ELEMENT_CLASSES.map(c=>`<option ${c===v?"selected":""}>${esc(c)}</option>`).join("")}</select>`; }
 function elMobSelect(v,ro){ let h=`<select class="elMob" ${ro?"disabled":""}>`;
@@ -1330,7 +1366,6 @@ let state = {
   terrainOverlay: false,    // non-political modes: overlay terrain-region outlines
   selForce: null,           // military mode: selected force id
   forceMoveId: null,        // military mode: force awaiting a move-to click
-  selBattle: null,          // military mode: selected battle (pair of force ids)
   hiddenResMode: false,     // resource mode: show & paint hidden/strategic resources
   pingOn: false,            // annotation/ping overlay active
   pingTool: "brush",        // brush | pin | erase | pan
@@ -1475,7 +1510,15 @@ function normalize(w){
   if(!w.lists.languages.includes("No Language")) w.lists.languages.unshift("No Language");
   // feature TYPES are user-defined (GM Screen); seed the built-ins for old/new worlds
   if(!Array.isArray(w.featureCatDefs)||!w.featureCatDefs.length) w.featureCatDefs=FEATURE_CATS_SEED.map(x=>({...x}));
-  w.featureCatDefs=w.featureCatDefs.filter(c=>c&&c.id).map(c=>({id:String(c.id), label:typeof c.label==="string"?c.label:String(c.id), color:c.color||"#8a93a6", glyph:typeof c.glyph==="string"?c.glyph:"❖"}));
+  w.featureCatDefs=w.featureCatDefs.filter(c=>c&&c.id).map(c=>{
+    const d={id:String(c.id), label:typeof c.label==="string"?c.label:String(c.id),
+             color:c.color||"#8a93a6", glyph:typeof c.glyph==="string"?c.glyph:"❖"};
+    const hint=featureCatHint(d);
+    if(Array.isArray(c.modes)) d.modes=c.modes.filter(m=>FEATURE_MODES.includes(m));  // your choice — keep it
+    else d.modes=hint.modes.slice();                  // predates "shows on": infer from the name
+    if(hint.glyph && (!d.glyph || d.glyph==="❖")) d.glyph=hint.glyph;   // only ever fills an unset glyph
+    return d;
+  });
   w.featureCats=w.featureCats||{};
   (w.lists.features||[]).forEach(f=>{ if(!w.featureCats[f]) w.featureCats[f]=FEATURE_CATS_DEFAULT[f]||"misc"; });
   // features placed on provinces keep a type even if their old type was removed
@@ -2200,17 +2243,26 @@ function drawKeyLocations(ctx,ox,oy,s,cw,ch,sz){
       star(X,Y,sz);ctx.fillStyle="#f4c430";ctx.fill();ctx.lineWidth=Math.max(1.4,sz*0.18);ctx.strokeStyle="#6e5210";ctx.stroke();}
   });
 }
-// Feature icons: wonders on the Settlements map, resource features on the Resource map.
-function drawFeatureIcons(ctx,cam,s,cw,ch,cat){
-  const glyph=featureCatGlyph(cat), col=featureCatColor(cat);
+/* Feature glyphs on the map. Each feature TYPE says which mapmodes it appears on (its
+   `modes`, set in the GM screen), so e.g. Defenses can mark the Military map the same way
+   Resource features mark the Resource map. A province may match several types at once, so
+   the badges are spread horizontally instead of being stamped on the same point. */
+function drawFeatureIcons(ctx,cam,s,cw,ch,cats){
+  const list=(Array.isArray(cats)?cats:[cats]).filter(Boolean);
+  if(!list.length) return;
   ctx.save(); ctx.font='15px "Segoe UI Emoji",system-ui,sans-serif'; ctx.textAlign="center"; ctx.textBaseline="middle";
   for(const g of _provGeo){
     if((g.maxx-g.minx)*s<12) continue;                 // skip tiny provinces at overview zoom
-    const p=g.p; if(!(p.features && p.features.some(f=>featureCat(f)===cat))) continue;
-    const X=(g.cx-cam.x)*s, Y=(g.cy-cam.y)*s-8; if(X<-20||Y<-20||X>cw+20||Y>ch+20) continue;
-    ctx.beginPath(); ctx.arc(X,Y,10,0,7); ctx.fillStyle="rgba(255,255,255,.85)"; ctx.fill();
-    ctx.lineWidth=1.6; ctx.strokeStyle=col; ctx.stroke();
-    ctx.fillText(glyph,X,Y);
+    const feats=g.p.features; if(!feats || !feats.length) continue;
+    const hits=list.filter(cat=>feats.some(f=>featureCat(f)===cat));
+    if(!hits.length) continue;
+    const Y=(g.cy-cam.y)*s-8, step=22, x0=(g.cx-cam.x)*s-((hits.length-1)*step)/2;
+    for(let i=0;i<hits.length;i++){
+      const X=x0+i*step; if(X<-20||Y<-20||X>cw+20||Y>ch+20) continue;
+      ctx.beginPath(); ctx.arc(X,Y,10,0,7); ctx.fillStyle="rgba(255,255,255,.85)"; ctx.fill();
+      ctx.lineWidth=1.6; ctx.strokeStyle=featureCatColor(hits[i]); ctx.stroke();
+      ctx.fillText(featureCatGlyph(hits[i]),X,Y);
+    }
   }
   ctx.restore();
 }
@@ -2243,7 +2295,7 @@ function monsterAt(wx,wy){
   for(let i=world.monsters.length-1;i>=0;i--){const m=world.monsters[i];const r=13*(m.scale||1.4)*1.3;const dx=m.x-wx,dy=m.y-wy;if(dx*dx+dy*dy<r*r)return m;}
   return null;
 }
-// Military map: force tokens + battle overlays.
+// Military map: force tokens.
 function forceAt(wx,wy){
   for(let i=world.forces.length-1;i>=0;i--){const f=world.forces[i];const r=(15*(f.scale||1))/state.cam.scale;const dx=f.x-wx,dy=f.y-wy;if(dx*dx+dy*dy<r*r)return f;}
   return null;
@@ -2278,14 +2330,6 @@ function separateForce(f, minGap){
     if(!moved)break;
   }
 }
-function detectBattles(){   // pairs of opposing forces close enough to fight
-  const out=[], F=world.forces, near=28;
-  for(let i=0;i<F.length;i++)for(let j=i+1;j<F.length;j++){
-    const a=F[i],b=F[j]; if(a.realmId&&b.realmId&&a.realmId===b.realmId)continue;   // same realm = not a battle
-    const dx=a.x-b.x,dy=a.y-b.y; if(dx*dx+dy*dy<=near*near) out.push([a,b]);
-  }
-  return out;
-}
 function drawForces(ctx,cam,s,cw,ch){
   ctx.save(); ctx.textAlign="center"; ctx.textBaseline="middle";
   for(const f of world.forces){
@@ -2311,18 +2355,7 @@ function drawForces(ctx,cam,s,cw,ch){
     ctx.fillStyle=bestTextOn(col);ctx.fillText(ts,X+R*0.55+bw/2,Y+R*0.4+7);
     if(f.name){ctx.font="600 11px system-ui,sans-serif";ctx.lineWidth=3.2;ctx.strokeStyle="rgba(255,255,255,.92)";ctx.strokeText(f.name,X,Y-R-7);ctx.fillStyle="#22313f";ctx.fillText(f.name,X,Y-R-7);}
   }
-  // battle overlays
-  for(const [a,b] of detectBattles()){
-    const mx=((a.x+b.x)/2-cam.x)*s, my=((a.y+b.y)/2-cam.y)*s; if(mx<-40||my<-40||mx>cw+40||my>ch+40)continue;
-    ctx.beginPath();ctx.arc(mx,my,17,0,7);ctx.fillStyle="#d8746ce6";ctx.fill();ctx.lineWidth=2.5;ctx.strokeStyle="#fff";ctx.stroke();
-    ctx.font='18px "Segoe UI Emoji",system-ui,sans-serif';ctx.fillText("💥",mx,my);
-  }
   ctx.restore();
-}
-function battleAt(wx,wy){
-  const r=18/state.cam.scale, r2=r*r;
-  for(const [a,b] of detectBattles()){const mx=(a.x+b.x)/2,my=(a.y+b.y)/2,dx=mx-wx,dy=my-wy;if(dx*dx+dy*dy<r2)return [a,b];}
-  return null;
 }
 // Resource-map icons: ✦ on prestige-good provinces, and (when toggled) hidden/strategic resource glyphs.
 // cache of loaded religion-symbol images for on-map holy-site markers
@@ -2774,7 +2807,9 @@ function drawFrame(){
   // mapmode overlays — drawn independently of the province-name zoom fade so
   // forces/monsters/markers never disappear when you zoom in far enough for
   // province names to appear. Each has its own size/viewport culling.
-  if(state.mapmode==="resource"){ drawFeatureIcons(ctx,cam,s,cw,ch,"resource"); drawResourceIcons(ctx,cam,s,cw,ch); }
+  // province-feature glyphs for every type pinned to this mapmode (GM screen → "Shows on")
+  drawFeatureIcons(ctx,cam,s,cw,ch,featureCatsForMode(state.mapmode));
+  if(state.mapmode==="resource") drawResourceIcons(ctx,cam,s,cw,ch);
   else if(state.mapmode==="monster") drawMonsters(ctx,cam,s,cw,ch);
   else if(state.mapmode==="military") drawForces(ctx,cam,s,cw,ch);
   else if(state.mapmode==="religion") drawHolySiteMarkers(ctx,cam,s,cw,ch);
@@ -3815,7 +3850,7 @@ function armSelectionDismiss(){
 }
 function clearSelection(){   // click on empty void: deselect and hide the inspector
   if(state.selProvince) commitProvincePops(state.selProvince);
-  state.selProvince=null;state.selRealm=null;state.selReligion=null;state.selWater=null;state.selLabel=null;state.selForce=null;state.selBattle=null;state.selMonster=null;state.selResource=null;state.selRaceGroup=null;state.legendFilter=null;
+  state.selProvince=null;state.selRealm=null;state.selReligion=null;state.selWater=null;state.selLabel=null;state.selForce=null;state.selMonster=null;state.selResource=null;state.selRaceGroup=null;state.legendFilter=null;
   if(state.terrainSel)state.terrainSel.clear();
   state.selRegion=null;
   document.body.classList.remove("has-sel");
@@ -3823,17 +3858,12 @@ function clearSelection(){   // click on empty void: deselect and hide the inspe
   hideTechPanel();renderMap();renderLegend();renderWonderPanel();
 }
 function selectForce(id){
-  state.selForce=id;state.selBattle=null;state.selMonster=null;state.selProvince=null;state.selRealm=null;state.selReligion=null;state.selWater=null;state.selLabel=null;
+  state.selForce=id;state.selMonster=null;state.selProvince=null;state.selRealm=null;state.selReligion=null;state.selWater=null;state.selLabel=null;
   document.body.classList.add("has-sel");
   hideTechPanel();renderMap();renderForceEditor();renderLegend();renderWonderPanel();
 }
-function selectBattle(aId,bId){
-  state.selBattle=[aId,bId];state.selForce=null;state.selMonster=null;state.moveMode=null;state.selProvince=null;state.selRealm=null;state.selReligion=null;state.selWater=null;state.selLabel=null;
-  document.body.classList.add("has-sel");
-  renderMap();renderBattleView();renderWonderPanel();
-}
 function selectMonster(id){
-  state.selMonster=id;state.selForce=null;state.selBattle=null;state.selProvince=null;state.selRealm=null;state.selReligion=null;state.selWater=null;state.selLabel=null;
+  state.selMonster=id;state.selForce=null;state.selProvince=null;state.selRealm=null;state.selReligion=null;state.selWater=null;state.selLabel=null;
   document.body.classList.add("has-sel");
   hideTechPanel();renderMap();renderMonsterEditor();renderLegend();renderWonderPanel();
 }
@@ -3974,7 +4004,7 @@ function renderReligionView(){
 }
 
 /* ============================================================
-   MILITARY — force editor & battle framework (GURPS Mass Combat)
+   MILITARY — force editor
    ============================================================ */
 // Read-only army view (site + mobile viewer): everything as plain text, no controls.
 function renderForceView(){
@@ -4160,7 +4190,6 @@ function splitForce(f){
     closeModal(); markDirty(); selectForce(det.id); renderLegend(); flash("Detachment “"+det.name+"” split off from “"+f.name+"”.");
   };
 }
-// Pre-rolled GURPS Mass Combat battle summary (framework — no logistics).
 function monsterIconHTML(m,cls){ return isImgIcon(m.icon)?`<img class="${cls||''}" src="${esc(m.icon)}"/>`:`<span class="${cls||''} monEmoji">${esc(m.icon||"🐉")}</span>`; }
 function renderMonsterEditor(){
   const ins=$("#inspector"); const m=world.monsters.find(x=>x.id===state.selMonster);
@@ -4208,56 +4237,6 @@ function renderMonsterEditor(){
     renderMap();renderLegend();renderMonsterEditor();markDirty(); flash("Loaded preset “"+(pr.name||"")+"” — edit freely for this creature."); });
   $("#mmove").addEventListener("click",()=>{ if(state.moveMode==="monster"){ state.moveMode=null; } else { state.moveMode="monster"; flash("Move mode on — click the map to relocate “"+(m.name||"creature")+"”. Click Move again (or Esc) to stop."); } renderMap(); renderMonsterEditor(); });
   $("#mdel").addEventListener("click",()=>{ if(!confirm("Delete this creature?"))return; beginEdit(); world.monsters=world.monsters.filter(x=>x.id!==m.id); state.selMonster=null; state.moveMode=null; clearSelection(); ins.innerHTML='<div class="empty">Creature deleted.</div>'; markDirty(); });
-}
-function battleSummary(a,b){
-  const tsa=forceTS(a), tsb=forceTS(b);
-  const stratA=a.commander?.strategy||10, stratB=b.commander?.strategy||10;
-  const rA=roll3d6(), rB=roll3d6();
-  // strategy contest margin (skill − roll); higher wins the pre-battle maneuver
-  const marA=stratA-rA, marB=stratB-rB;
-  const manoeuvre = marA===marB ? "Even" : (marA>marB? a.name : b.name);
-  // effective TS after a small strategy edge (±10% per margin step, capped)
-  const edge=Math.max(-3,Math.min(3,marA-marB));
-  const effA=Math.round(tsa*(1+0.10*Math.max(0,edge))), effB=Math.round(tsb*(1+0.10*Math.max(0,-edge)));
-  const ratio = effB? (effA/effB) : 99;
-  let victor, vlabel;
-  if(ratio>=2){victor=a.name;vlabel="Decisive";}
-  else if(ratio>=1.25){victor=a.name;vlabel="Clear";}
-  else if(ratio>1/1.25){victor="—";vlabel="Indecisive";}
-  else if(ratio>1/2){victor=b.name;vlabel="Clear";}
-  else {victor=b.name;vlabel="Decisive";}
-  // casualty fractions scale with how lopsided the fight is (framework placeholder)
-  const base=0.10, lose=Math.min(0.6, base + Math.abs(Math.log(ratio))*0.18);
-  const win=Math.max(0.03, base - Math.abs(Math.log(ratio))*0.05);
-  const aLoss = victor===a.name?win:(victor===b.name?lose:base);
-  const bLoss = victor===b.name?win:(victor===a.name?lose:base);
-  return {tsa,tsb,rA,rB,stratA,stratB,manoeuvre,effA,effB,ratio,victor,vlabel,
-          aCas:Math.round(tsa*aLoss),bCas:Math.round(tsb*bLoss)};
-}
-function renderBattleView(){
-  const ins=$("#inspector"); if(!state.selBattle){ins.innerHTML='<div class="empty">No battle.</div>';return;}
-  const a=world.forces.find(x=>x.id===state.selBattle[0]), b=world.forces.find(x=>x.id===state.selBattle[1]);
-  if(!a||!b){ins.innerHTML='<div class="empty">Battle resolved — forces moved apart.</div>';state.selBattle=null;return;}
-  const s=state.battleRoll&&state.battleRoll.key===a.id+b.id? state.battleRoll.data : (state.battleRoll={key:a.id+b.id,data:battleSummary(a,b)}).data;
-  const side=(f,cas,eff)=>`<div class="bside">
-      <div class="bname">${esc(f.name)}</div>
-      <div class="note">${(FORCE_DOMAINS[f.domain]||FORCE_DOMAINS.land).label} · TS ${forceTS(f)}${f.commander?.name?` · Cmdr ${esc(f.commander.name)}`:""}</div>
-      <div class="brow2"><span>Strategy roll</span><b>${f===a?s.stratA+" vs 3d6="+s.rA:s.stratB+" vs 3d6="+s.rB}</b></div>
-      <div class="brow2"><span>Effective TS</span><b>${eff}</b></div>
-      <div class="brow2"><span>Est. casualties</span><b>${cas.toLocaleString()} TS</b></div>
-    </div>`;
-  ins.innerHTML=`
-    <div class="insTitle" style="display:flex;align-items:center;gap:8px">💥 Battle</div>
-    <div class="note">Pre-rolled GURPS Mass Combat summary (framework — no logistics). Reroll for a fresh engagement.</div>
-    ${side(a,s.aCas,s.effA)}
-    <div style="text-align:center;font-size:20px;margin:6px 0">⚔️</div>
-    ${side(b,s.bCas,s.effB)}
-    <div class="sectionH">Result</div>
-    <div class="brow2"><span>Pre-battle maneuver</span><b>${esc(s.manoeuvre)}</b></div>
-    <div class="brow2"><span>Force ratio</span><b>${s.ratio>=99?"∞":s.ratio.toFixed(2)} : 1</b></div>
-    <div class="brow2"><span>Outcome</span><b>${s.vlabel}${s.victor!=="—"?" — "+esc(s.victor):" (draw)"}</b></div>
-    ${VIEWER?"":`<div class="btnrow" style="margin-top:10px"><button class="btn" id="brebtn">🎲 Reroll battle</button></div>`}`;
-  if(!VIEWER){ const rb=$("#brebtn"); if(rb)rb.addEventListener("click",()=>{ state.battleRoll={key:a.id+b.id,data:battleSummary(a,b)}; renderBattleView(); }); }
 }
 
 /* ============================================================
@@ -7213,9 +7192,8 @@ function setupMapInteraction(){
     if(state.mapmode==="military"){
       // sticky move: while Move is toggled on, every click relocates the selected force
       if(state.moveMode==="force" && state.selForce && !VIEWER){ const f=world.forces.find(x=>x.id===state.selForce); if(f){ beginEdit(); f.x=round2(wx); f.y=round2(wy); separateForce(f); markDirty(); renderMap(); } return; }
-      const bt=battleAt(wx,wy); if(bt){ selectBattle(bt[0].id,bt[1].id); return; }
       const f=forceAt(wx,wy); if(f){ selectForce(f.id); return; }
-      if(state.selForce||state.selBattle){ state.selForce=null; state.selBattle=null; state.moveMode=null; clearSelection(); }
+      if(state.selForce){ state.selForce=null; state.moveMode=null; clearSelection(); }
       return;
     }
     if(state.mapmode==="monster"){
@@ -7356,9 +7334,8 @@ function handleTapWorld(wx,wy){
   if(state.pingOn && (state.pingTool==="pin"||state.pingTool==="numpin")){ const pn={x:wx,y:wy,color:state.pingColor}; if(state.pingTool==="numpin")pn.n=nextPinNum(); pingLayer.pins.push(pn); savePings(); requestRender(); return; }
   if(state.mapmode==="military"){
     if(state.moveMode==="force" && state.selForce && !VIEWER){ const f=world.forces.find(x=>x.id===state.selForce); if(f){beginEdit();f.x=round2(wx);f.y=round2(wy);separateForce(f);markDirty();renderMap();} return; }
-    const bt=battleAt(wx,wy); if(bt){ selectBattle(bt[0].id,bt[1].id); return; }
     const f=forceAt(wx,wy); if(f){ selectForce(f.id); return; }
-    if(state.selForce||state.selBattle){ state.selForce=null;state.selBattle=null;state.moveMode=null; clearSelection(); } return;
+    if(state.selForce){ state.selForce=null;state.moveMode=null; clearSelection(); } return;
   }
   if(state.mapmode==="monster"){
     if(state.moveMode==="monster" && state.selMonster && !VIEWER){ const m=world.monsters.find(x=>x.id===state.selMonster); if(m){beginEdit();m.x=Math.round(wx);m.y=Math.round(wy);markDirty();renderMap();} return; }
@@ -8103,6 +8080,12 @@ function renderGM2(){
       <td><input class="gmFCCol" data-c="${esc(c.id)}" type="color" value="${toHex(c.color)}" title="Type colour"/></td>
       <td><input class="gmFCLabel" data-c="${esc(c.id)}" value="${esc(c.label)}"/></td>
       <td><input class="gmFCGlyph" data-c="${esc(c.id)}" value="${esc(c.glyph||"❖")}" style="width:56px;text-align:center" title="Map glyph"/></td>
+      <td>
+        <div class="gmModes">${featureCatModes(c).map(m=>`<span class="tag">${esc(featureModeLabel(m))}<span class="x gmFCModeDel" data-c="${esc(c.id)}" data-m="${esc(m)}" title="Stop showing on this map">✕</span></span>`).join("")
+          || '<span class="note">nowhere</span>'}</div>
+        <select class="gmFCModeAdd" data-c="${esc(c.id)}"><option value="">＋ add map…</option>${
+          FEATURE_MODES.filter(m=>!featureCatModes(c).includes(m)).map(m=>`<option value="${esc(m)}">${esc(featureModeLabel(m))}</option>`).join("")}</select>
+      </td>
       <td class="note">${n} province${n===1?"":"s"}</td>
       <td style="white-space:nowrap">
         <button class="btn tiny gmFCUp" data-c="${esc(c.id)}" ${ci===0?"disabled":""} title="Move up">↑</button>
@@ -8184,7 +8167,8 @@ function renderGM2(){
       <section class="gmBlock gmSpanAll">
         <div class="gmBlockH">❖ Province feature types</div>
         <p class="note">Feature names are written freely per province; these are the <b>types</b> that colour them. Give each a colour and a map glyph, add your own beyond the built-ins, or delete one (its features fall back to the first type). They show as a key in the province view and as clickable filters in the Regions map legend.</p>
-        <table class="gm2tbl"><thead><tr><th>Colour</th><th>Type</th><th>Glyph</th><th>Used by</th><th></th></tr></thead><tbody>${featCatRows||'<tr><td class="note">No feature types.</td></tr>'}</tbody></table>
+        <p class="note"><b>Shows on</b> pins a type's glyph to whichever map modes you choose — so Defenses can mark the Military map the way Resource features mark the Resource map. Leave it empty and the type never draws on the map. A province with several pinned types shows their glyphs side by side.</p>
+        <table class="gm2tbl"><thead><tr><th>Colour</th><th>Type</th><th>Glyph</th><th>Shows on</th><th>Used by</th><th></th></tr></thead><tbody>${featCatRows||'<tr><td class="note">No feature types.</td></tr>'}</tbody></table>
         <div class="btnrow" style="margin-top:8px"><button class="btn tiny" id="gmAddFeatCat">＋ Add feature type</button></div>
       </section>
       <section class="gmBlock gmSpanAll">
@@ -8291,6 +8275,18 @@ function renderGM2(){
   host.querySelectorAll(".gmFCCol").forEach(el=>el.addEventListener("input",e=>{ const c=fcFind(el.dataset.c); if(c){ c.color=e.target.value; renderMap(); renderLegend(); markDirty(); } }));
   host.querySelectorAll(".gmFCLabel").forEach(el=>el.addEventListener("input",e=>{ const c=fcFind(el.dataset.c); if(c){ c.label=e.target.value; renderLegend(); markDirty(); } }));
   host.querySelectorAll(".gmFCGlyph").forEach(el=>el.addEventListener("input",e=>{ const c=fcFind(el.dataset.c); if(c){ c.glyph=e.target.value||"❖"; renderMap(); renderLegend(); markDirty(); } }));
+  // "Shows on": which mapmodes this feature type draws its glyph on
+  host.querySelectorAll(".gmFCModeAdd").forEach(el=>el.addEventListener("change",e=>{
+    const c=fcFind(el.dataset.c), m=e.target.value; e.target.value="";
+    if(!c||!m||!FEATURE_MODES.includes(m))return;
+    c.modes=featureCatModes(c); if(!c.modes.includes(m))c.modes.push(m);
+    markDirty(); renderMap(); renderLegend(); renderGM2();
+  }));
+  host.querySelectorAll(".gmFCModeDel").forEach(el=>el.addEventListener("click",()=>{
+    const c=fcFind(el.dataset.c); if(!c)return;
+    c.modes=featureCatModes(c).filter(m=>m!==el.dataset.m);
+    markDirty(); renderMap(); renderLegend(); renderGM2();
+  }));
   host.querySelectorAll(".gmFCUp").forEach(el=>el.addEventListener("click",()=>{ const a=featureCatDefs(), i=a.findIndex(x=>x.id===el.dataset.c); if(i>0){ [a[i-1],a[i]]=[a[i],a[i-1]]; markDirty(); renderLegend(); renderGM2(); } }));
   host.querySelectorAll(".gmFCDn").forEach(el=>el.addEventListener("click",()=>{ const a=featureCatDefs(), i=a.findIndex(x=>x.id===el.dataset.c); if(i>=0&&i<a.length-1){ [a[i+1],a[i]]=[a[i],a[i+1]]; markDirty(); renderLegend(); renderGM2(); } }));
   host.querySelectorAll(".gmFCDel").forEach(el=>el.addEventListener("click",()=>{
@@ -8305,7 +8301,7 @@ function renderGM2(){
   }));
   { const a=$("#gmAddFeatCat"); if(a)a.onclick=()=>{ const defs=featureCatDefs();
       let base="type",n=base,k=2; while(defs.some(x=>x.id===n))n=base+(k++);
-      defs.push({id:n,label:"New feature type",color:autoPastelHex(),glyph:"❖"}); markDirty(); renderLegend(); renderGM2(); }; }
+      defs.push({id:n,label:"New feature type",color:autoPastelHex(),glyph:"❖",modes:[]}); markDirty(); renderLegend(); renderGM2(); }; }
   // ---- chronicle event types: colour / label / glyph / reorder / delete / add ----
   const ctFind=id=>chronTypes().find(x=>x.id===id);
   host.querySelectorAll(".gmCTCol").forEach(el=>el.addEventListener("input",e=>{ const t=ctFind(el.dataset.c); if(t){ t.color=e.target.value; markDirty(); renderChronicle(); } }));
@@ -8824,9 +8820,9 @@ function setMapmode(m){
   state.convertSelecting=false; state.convertPickCenter=false;   // pause conversion picking when switching maps
   state.paintMixGroups=[];                       // mix-paint groups are axis-specific — reset on map change
   updateResSpot();
-  if(m!=="military" && (state.selForce||state.selBattle)){ state.selForce=null; state.selBattle=null; state.moveMode=null; }
+  if(m!=="military" && state.selForce){ state.selForce=null; state.moveMode=null; }
   if(m!=="monster" && state.selMonster){ state.selMonster=null; state.moveMode=null; }
-  if(m!=="military"&&m!=="monster"&&(state.selForce||state.selBattle||state.selMonster)){ clearSelection(); }
+  if(m!=="military"&&m!=="monster"&&(state.selForce||state.selMonster)){ clearSelection(); }
   const ms=$("#mapmode"); if(ms)ms.value=m;
   renderMap(); renderLegend();
   if(state.tool==="paint")flash(paintHint());
@@ -8990,7 +8986,6 @@ function togglePreviewViewer(){
   // refresh the open inspector for whichever thing is selected
   if(state.selForce) renderForceEditor();
   else if(state.selMonster) renderMonsterEditor();
-  else if(state.selBattle) renderBattleView();
   else if(state.selProvince) renderProvinceEditor();
   else if(state.selRealm) renderRealmEditor();
   else if(state.selReligion) renderReligionEditor();
