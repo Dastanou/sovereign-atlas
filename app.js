@@ -1171,12 +1171,32 @@ const DEFAULT_ELEMENT_TYPES=[
 function elementTypeList(){ return (world&&Array.isArray(world.elementTypes)&&world.elementTypes.length)?world.elementTypes:DEFAULT_ELEMENT_TYPES; }
 function round2(n){ return Math.round(n*100)/100; }                          // trim float noise, keep halves
 function elementMult(e){ return 1 + (EQUIP_QUALITY[e.equip]??0) + (TROOP_QUALITY[e.troop]??0); }   // quality-adjusted TS multiplier
+/* Optional features that scale an element's BASE TS. These apply to the raw per-element TS
+   first; the equipment/training multiplier then works on that already-scaled base, so a
+   Super-Soldier element is worth double before quality is considered at all.
+   Keys are matched loosely (letters only, case-insensitive) so "Super-Soldier",
+   "Super Soldier" and "supersoldier" all count. */
+const FEATURE_TS_MULT={supersoldier:2};
+function elementBaseMult(e){
+  let m=1;
+  for(const f of (e&&e.features)||[]){
+    const k=String(f).toLowerCase().replace(/[^a-z]/g,"");
+    if(FEATURE_TS_MULT[k]) m*=FEATURE_TS_MULT[k];
+  }
+  return m;
+}
+function elementBaseTS(e){ return (+e.ts||0)*elementBaseMult(e); }    // per-element TS after feature scaling
 function elCount(e){ return Math.max(1, Math.round(+e.count||1)); }          // how many of this element in the block
 // block value = base × count × quality, rounded LAST (e.g. 1 TS × 5 × 1.5 = 7.5, not 10)
-function elementTS(e){ return round2((+e.ts||0)*elCount(e)*elementMult(e)); }    // block TS (counts toward total)
+function elementTS(e){ return round2(elementBaseTS(e)*elCount(e)*elementMult(e)); }  // block TS (counts toward total)
 function elementPTS(e){ return round2((+e.pts||0)*elCount(e)*elementMult(e)); }  // block parenthetical (TS), separate
 function elementWT(e){ return round2((+e.wt||0)*elCount(e)); }                    // block transport weight
-function elTallyHTML(e){ const m=elementMult(e); return `${elCount(e)}× &nbsp;·&nbsp; TS <b>${elementTS(e)}</b>${e.pts>0?` &nbsp;·&nbsp; (TS) <b>${elementPTS(e)}</b>`:""} &nbsp;·&nbsp; WT <b>${elementWT(e)}</b>${m!==1?` &nbsp;<span class="note">(quality ×${round2(m)})</span>`:""}`; }
+function elTallyHTML(e){
+  const m=elementMult(e), bm=elementBaseMult(e), bits=[];
+  if(bm!==1)bits.push("base ×"+round2(bm));
+  if(m!==1)bits.push("quality ×"+round2(m));
+  return `${elCount(e)}× &nbsp;·&nbsp; TS <b>${elementTS(e)}</b>${e.pts>0?` &nbsp;·&nbsp; (TS) <b>${elementPTS(e)}</b>`:""} &nbsp;·&nbsp; WT <b>${elementWT(e)}</b>${bits.length?` &nbsp;<span class="note">(${bits.join(" · ")})</span>`:""}`;
+}
 function forceTS(f){ return round2((f.elements||[]).reduce((a,e)=>a+elementTS(e),0)); }
 function forcePTS(f){ return round2((f.elements||[]).reduce((a,e)=>a+elementPTS(e),0)); }
 /* Optional "gilding": a metal rank on an element, shown as a metallic frame.
@@ -1325,8 +1345,11 @@ function bindElementFields(row, e, rerender, onTotals){
   const con=q(".elColorOn"), cp=q(".elColor");
   if(con)con.addEventListener("change",x=>{ e.color = x.target.checked ? (cp?cp.value:"#c0392b") : ""; if(cp)cp.disabled=!x.target.checked; applyElStyle(row,e); markDirty(); });
   if(cp)cp.addEventListener("input",x=>{ e.color=x.target.value; if(con)con.checked=true; applyElStyle(row,e); markDirty(); });
-  const fa=q(".elFeatAdd"); if(fa)fa.addEventListener("change",x=>{ const v=x.target.value; x.target.value=""; if(v&&addElementFeature(e,v)&&rerender)rerender(); });
-  q(".elFeats") && q(".elFeats").querySelectorAll(".tag .x").forEach(xb=>xb.onclick=()=>{ const i=+xb.parentElement.dataset.i; e.features.splice(i,1); if(rerender)rerender(); });
+  // features can change TS (Super-Soldier doubles the base), so refresh totals + the map token
+  const fa=q(".elFeatAdd"); if(fa)fa.addEventListener("change",x=>{ const v=x.target.value; x.target.value="";
+    if(v&&addElementFeature(e,v)){ tally(); renderMap(); if(rerender)rerender(); } });
+  q(".elFeats") && q(".elFeats").querySelectorAll(".tag .x").forEach(xb=>xb.onclick=()=>{ const i=+xb.parentElement.dataset.i;
+    e.features.splice(i,1); tally(); renderMap(); if(rerender)rerender(); });
   applyElStyle(row, e);
 }
 
@@ -4014,8 +4037,10 @@ function renderForceView(){
   const row=(l,v)=>`<div class="rvRow"><span class="rvLbl">${l}</span><span class="rvVal">${(v===0||v)?v:"—"}</span></div>`;
   const pct=m=>(m>=0?"+":"")+Math.round((m||0)*100)+"%";
   const els=(f.elements||[]).map((e,i)=>{
-    const mult=elementMult(e), each=round2((+e.ts||0)*mult), eachP=round2((+e.pts||0)*mult);
-    const tsCell = mult!==1 ? `${e.ts||0} → <b>${each}</b>` : `${e.ts||0}`;
+    // base multiplier (Super-Soldier etc.) scales the raw TS first, then quality applies
+    const mult=elementMult(e), bmult=elementBaseMult(e);
+    const each=round2(elementBaseTS(e)*mult), eachP=round2((+e.pts||0)*mult);
+    const tsCell = (mult!==1||bmult!==1) ? `${e.ts||0} → <b>${each}</b>` : `${e.ts||0}`;
     const ptsCell = mult!==1 ? `${e.pts||0} → ${eachP}` : `${e.pts||0}`;
     const feats=(e.features||[]).length?e.features.map(x=>`<span class="tag">${esc(x)}</span>`).join(" "):"—";
     // same layering as applyElStyle: metal frame outside, colour liner + stripe inside
@@ -4026,7 +4051,7 @@ function renderForceView(){
       <div class="elViewName">${esc(e.name||("Element "+(i+1)))}${elCount(e)>1?` <span class="note">×${elCount(e)}</span>`:""}</div>
       ${row("Class",esc(e.cls))}
       ${row("Mobility",esc(e.mob))}
-      ${row("TS "+(mult!==1?"<span class='note'>(each→modified)</span>":"<span class='note'>(each)</span>"),tsCell)}
+      ${row("TS "+((mult!==1||bmult!==1)?"<span class='note'>(each→modified)</span>":"<span class='note'>(each)</span>"),tsCell)}
       ${e.pts>0?row("(TS) <span class='note'>(each)</span>",ptsCell):""}
       ${row("WT <span class='note'>(each)</span>",e.wt||0)}
       ${row("TL",e.tl||0)}
@@ -8682,22 +8707,28 @@ async function publishViewer(){
     if(!j.ok){flash("Error: "+(j.error||"build failed"));return;}
     flash("Uploading to the site…");
     let gj=await post("/api/ghupload",{});
-    // First run (or a token that's been revoked): ask once, then it's remembered.
-    if(gj.needsSetup){
-      const body={};
-      if((gj.missing||[]).includes("repo")){
-        const t=prompt("Which GitHub repo hosts the player site?\n\nEnter it as owner/repo — for example  dastan/herald-atlas",gj.suggest||"");
+    /* Setup can need more than one round: the repo may be known while the token turns out to
+       be stale, and GitHub only rejects a token once we actually call it. So keep answering
+       whatever is still missing, and resend EVERY answer each time — the server only commits
+       them to publish.json after a successful upload, so nothing is remembered until then. */
+    const setup={};
+    for(let attempt=0; attempt<3 && gj.needsSetup; attempt++){
+      const miss=gj.missing||[]; let asked=false;
+      if(miss.includes("repo")){
+        const t=prompt("Which GitHub repo hosts the player site?\n\nEnter it as owner/repo — for example  dastanou/sovereign-atlas",gj.suggest||"");
         if(!t)return flash("Upload cancelled.");
-        body.target=t.trim();
+        setup.target=t.trim(); asked=true;
       }
-      if((gj.missing||[]).includes("token")){
+      if(miss.includes("token")){
         const tok=prompt((gj.output?gj.output+"\n\n":"")+
-          "Paste a GitHub token with 'Contents: Read and write' on that repo.\n\nIt is stored on this machine only, in publish.json next to sovereign.py.");
+          "Paste a GitHub token with 'Contents: Read and write' on that repo.\n\n"+
+          "It is stored on this machine only, in publish.json next to sovereign.py.");
         if(!tok)return flash("Upload cancelled.");
-        body.token=tok.trim();
+        setup.token=tok.trim(); asked=true;
       }
+      if(!asked)break;                       // nothing we know how to ask for — fall through to the error
       flash("Uploading to the site…");
-      gj=await post("/api/ghupload",body);
+      gj=await post("/api/ghupload",setup);
     }
     if(gj.ok) flash("Uploaded ✓ — live in about a minute.");
     else alert("The site was built, but the upload didn't complete:\n\n"+(gj.output||gj.error||"unknown"));
